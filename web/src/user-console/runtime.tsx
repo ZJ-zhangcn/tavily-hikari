@@ -11,6 +11,8 @@ import ConnectivityChecksPanel, {
 import TokenSecretField, { type TokenSecretCopyState } from '../components/TokenSecretField'
 import ManualCopyBubble from '../components/ManualCopyBubble'
 import UserConsoleHeader from '../components/UserConsoleHeader'
+import TokenListActions from './TokenListActions'
+import TokenResetDialogs from './TokenResetDialogs'
 
 import {
   createBrowserTodayWindow,
@@ -49,19 +51,11 @@ import { StatusBadge, type StatusTone } from '../components/StatusBadge'
 import UserConsoleFooter from '../components/UserConsoleFooter'
 import { Button } from '../components/ui/button'
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '../components/ui/dialog'
-import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '../components/ui/dropdown-menu'
-import { Textarea } from '../components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import { useLanguage, useTranslate, type Language } from '../i18n'
 import { copyText, isCopyIntentKey, selectAllReadonlyText, shouldPrewarmSecretCopy } from '../lib/clipboard'
@@ -2699,33 +2693,18 @@ export default function UserConsole(): JSX.Element {
                             </div>
                           </td>
                           <td>
-                            <div className="table-actions">
-                              <button
-                                type="button"
-                                className={`btn btn-outline btn-sm ${state === 'copied' ? 'btn-success' : state === 'error' ? 'btn-warning' : ''}`}
-                                onPointerEnter={() => scheduleWarmTokenSecret(item.tokenId)}
-                                onPointerLeave={() => cancelWarmTokenSecret(item.tokenId)}
-                                onBlur={() => cancelWarmTokenSecret(item.tokenId)}
-                                onPointerDown={() => warmTokenSecret(item.tokenId)}
-                                onKeyDown={(event) => {
-                                  if (!isCopyIntentKey(event.key)) return
-                                  warmTokenSecret(item.tokenId)
-                                }}
-                                onClick={(event) => void copyToken(item.tokenId, event.currentTarget)}
-                              >
-                                {state === 'copied' ? text.tokens.copied : state === 'error' ? text.tokens.copyFailed : text.tokens.copy}
-                              </button>
-                              <button type="button" className="btn btn-primary btn-sm" onClick={() => goTokenDetail(item.tokenId)}>
-                                {text.tokens.detail}
-                              </button>
-                              <button
-                                type="button"
-                                className="btn btn-warning btn-sm"
-                                onClick={() => openResetTokenDialog(item.tokenId)}
-                              >
-                                {text.tokens.reset}
-                              </button>
-                            </div>
+                            <TokenListActions
+                              tokenId={item.tokenId}
+                              text={text.tokens}
+                              copyState={state}
+                              onScheduleWarmSecret={scheduleWarmTokenSecret}
+                              onCancelWarmSecret={cancelWarmTokenSecret}
+                              onWarmSecret={warmTokenSecret}
+                              onCopy={(tokenId, anchorEl) => void copyToken(tokenId, anchorEl)}
+                              onDetail={goTokenDetail}
+                              onReset={openResetTokenDialog}
+                              isCopyIntentKey={isCopyIntentKey}
+                            />
                           </td>
                         </tr>
                       )
@@ -2781,33 +2760,19 @@ export default function UserConsole(): JSX.Element {
                         <span>{text.dashboard.monthlySuccess}</span>
                         <strong>{formatNumber(item.monthlySuccess)}</strong>
                       </div>
-                      <div className="table-actions user-console-mobile-actions">
-                        <button
-                          type="button"
-                          className={`btn btn-outline btn-sm ${state === 'copied' ? 'btn-success' : state === 'error' ? 'btn-warning' : ''}`}
-                          onPointerEnter={() => scheduleWarmTokenSecret(item.tokenId)}
-                          onPointerLeave={() => cancelWarmTokenSecret(item.tokenId)}
-                          onBlur={() => cancelWarmTokenSecret(item.tokenId)}
-                          onPointerDown={() => warmTokenSecret(item.tokenId)}
-                          onKeyDown={(event) => {
-                            if (!isCopyIntentKey(event.key)) return
-                            warmTokenSecret(item.tokenId)
-                          }}
-                          onClick={(event) => void copyToken(item.tokenId, event.currentTarget)}
-                        >
-                          {state === 'copied' ? text.tokens.copied : state === 'error' ? text.tokens.copyFailed : text.tokens.copy}
-                        </button>
-                        <button type="button" className="btn btn-primary btn-sm" onClick={() => goTokenDetail(item.tokenId)}>
-                          {text.tokens.detail}
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-warning btn-sm"
-                          onClick={() => openResetTokenDialog(item.tokenId)}
-                        >
-                          {text.tokens.reset}
-                        </button>
-                      </div>
+                      <TokenListActions
+                        tokenId={item.tokenId}
+                        text={text.tokens}
+                        copyState={state}
+                        onScheduleWarmSecret={scheduleWarmTokenSecret}
+                        onCancelWarmSecret={cancelWarmTokenSecret}
+                        onWarmSecret={warmTokenSecret}
+                        onCopy={(tokenId, anchorEl) => void copyToken(tokenId, anchorEl)}
+                        onDetail={goTokenDetail}
+                        onReset={openResetTokenDialog}
+                        isCopyIntentKey={isCopyIntentKey}
+                        className="user-console-mobile-actions"
+                      />
                     </article>
                   )
                 })
@@ -3068,80 +3033,23 @@ export default function UserConsole(): JSX.Element {
         </>
       )}
       <UserConsoleFooter strings={text.footer} versionState={versionState} />
-      <Dialog open={resetTokenId != null} onOpenChange={(open) => {
-        if (!open) closeResetTokenDialog()
-      }}>
-        <DialogContent className="sm:max-w-[480px]">
-          <DialogHeader>
-            <DialogTitle>{text.tokens.resetDialog.title}</DialogTitle>
-            <DialogDescription>
-              {formatTemplate(text.tokens.resetDialog.description, {
-                tokenId: resetTokenId ?? '',
-              })}
-            </DialogDescription>
-          </DialogHeader>
-          {resetTokenError ? (
-            <p className="user-console-token-error" role="alert">{resetTokenError}</p>
-          ) : null}
-          <div className="table-actions justify-end">
-            <Button type="button" variant="outline" onClick={closeResetTokenDialog} disabled={resettingTokenId != null}>
-              {text.tokens.resetDialog.cancel}
-            </Button>
-            <Button type="button" variant="warning" onClick={() => void handleResetToken()} disabled={resettingTokenId != null}>
-              {resettingTokenId ? text.tokens.resetDialog.running : text.tokens.resetDialog.confirm}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-      <Dialog open={resetResultToken != null} onOpenChange={(open) => {
-        if (!open) {
+      <TokenResetDialogs
+        text={text}
+        resetTokenId={resetTokenId}
+        resettingTokenId={resettingTokenId}
+        resetTokenError={resetTokenError}
+        resetResultToken={resetResultToken}
+        resetResultCopyState={resetResultCopyState}
+        resetResultFieldRef={resetResultFieldRef}
+        formatTemplate={formatTemplate}
+        onCloseResetTokenDialog={closeResetTokenDialog}
+        onResetToken={() => void handleResetToken()}
+        onCloseResetResult={() => {
           setResetResultToken(null)
           setResetResultCopyState('idle')
-        }
-      }}>
-        <DialogContent className="sm:max-w-[520px]">
-          <DialogHeader>
-            <DialogTitle>{text.tokens.resetResult.title}</DialogTitle>
-            <DialogDescription>
-              {resetResultCopyState === 'error'
-                ? text.tokens.resetResult.copyBlocked
-                : text.tokens.resetResult.copied}
-            </DialogDescription>
-          </DialogHeader>
-          <label className="sr-only" htmlFor="user-console-reset-token-result">
-            {text.tokens.resetResult.fieldLabel}
-          </label>
-          <Textarea
-            id="user-console-reset-token-result"
-            ref={resetResultFieldRef}
-            readOnly
-            rows={3}
-            className="manual-copy-bubble-field min-h-[96px] resize-none font-mono text-xs"
-            value={resetResultToken ?? ''}
-            onClick={(event) => selectAllReadonlyText(event.currentTarget)}
-            onFocus={(event) => selectAllReadonlyText(event.currentTarget)}
-          />
-          <div className="table-actions justify-end">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => {
-                setResetResultToken(null)
-                setResetResultCopyState('idle')
-              }}
-            >
-              {text.tokens.resetResult.close}
-            </Button>
-            <Button type="button" onClick={() => void handleCopyResetResultToken()}>
-              {resetResultCopyState === 'copied'
-                ? text.tokens.copied
-                : resetResultCopyState === 'error'
-                  ? text.tokens.resetResult.copyFailed
-                  : text.tokens.resetResult.copy}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+        }}
+        onCopyResetResultToken={() => void handleCopyResetResultToken()}
+      />
       <ManualCopyBubble
         open={manualCopyBubble != null}
         anchorEl={manualCopyBubble?.anchorEl ?? null}
