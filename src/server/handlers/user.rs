@@ -1105,15 +1105,15 @@ async fn rotate_user_token_secret(
     let Some(user_session) = resolve_user_session(state.as_ref(), &headers).await else {
         return Err(StatusCode::UNAUTHORIZED);
     };
-    let owned = state
+    let visible_token = state
         .proxy
-        .is_user_token_bound(&user_session.user.user_id, &id)
+        .get_user_token_secret(&user_session.user.user_id, &id)
         .await
         .map_err(|err| {
-            eprintln!("rotate user token secret ownership error: {err}");
+            eprintln!("rotate user token secret visibility error: {err}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-    if !owned {
+    if visible_token.is_none() {
         return Err(StatusCode::NOT_FOUND);
     }
     match state.proxy.rotate_access_token_secret(&id).await {

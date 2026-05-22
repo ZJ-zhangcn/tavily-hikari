@@ -45,6 +45,7 @@
 - 未启用 LinuxDo OAuth 时，用户侧 rotate API 返回 `404`。
 - 未登录用户调用 rotate API 返回 `401`。
 - 已登录用户只能 rotate 自己绑定的 Token；非本人 Token 返回 `404`。
+- 已登录用户不能 rotate 已被禁用的绑定 Token；禁用 Token 返回 `404`。
 - 成功 rotate 返回 `{ token: "th-<id>-<new-secret>" }`，且 `<id>` 与原 Token ID 一致。
 - 用户确认前不得调用 rotate API；取消确认不改变任何 Token 状态。
 - rotate 成功后前端必须清理旧 secret 缓存，后续复制/详情页展示使用新完整 Token。

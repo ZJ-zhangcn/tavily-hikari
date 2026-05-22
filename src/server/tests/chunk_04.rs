@@ -1059,6 +1059,7 @@ colo=LAX
             .create_user_session(&user, 3600)
             .await
             .expect("create user session");
+        let proxy_for_test = proxy.clone();
 
         let mut oauth_options = linuxdo_oauth_options_for_test();
         oauth_options.authorize_url = "http://oauth.internal:3000/oauth2/authorize".to_string();
@@ -1319,6 +1320,21 @@ colo=LAX
             .await
             .expect("user token logs request");
         assert_eq!(token_logs_resp.status(), reqwest::StatusCode::OK);
+
+        proxy_for_test
+            .set_access_token_enabled(&bound_token.id, false)
+            .await
+            .expect("disable user token");
+        let disabled_rotate_resp = client
+            .post(&token_rotate_url)
+            .header(reqwest::header::COOKIE, user_cookie.clone())
+            .send()
+            .await
+            .expect("disabled user token rotate request");
+        assert_eq!(
+            disabled_rotate_resp.status(),
+            reqwest::StatusCode::NOT_FOUND
+        );
 
         let forbidden_detail_url = format!("http://{}/api/user/tokens/notmine", addr);
         let forbidden_detail_resp = client
