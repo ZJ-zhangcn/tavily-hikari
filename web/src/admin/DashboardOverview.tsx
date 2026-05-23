@@ -9,6 +9,7 @@ import type {
   RequestLog,
   SummaryWindowsResponse,
 } from '../api'
+import RollingNumber from '../components/RollingNumber'
 import SegmentedTabs from '../components/ui/SegmentedTabs'
 import RequestKindBadge from '../components/RequestKindBadge'
 import { StatusBadge, type StatusTone } from '../components/StatusBadge'
@@ -63,6 +64,7 @@ export interface DashboardMetricCard {
   id: string
   label: string
   value: string
+  valueNumber?: number
   marker?: string
   markerTone?: 'primary' | 'secondary' | 'neutral'
   valueMeta?: string
@@ -80,10 +82,13 @@ export interface DashboardQuotaChargeCardData {
   title: string
   localLabel: string
   localValue: string
+  localValueNumber?: number
   upstreamLabel: string
   upstreamValue: string
+  upstreamValueNumber?: number
   deltaLabel: string
   deltaValue: string
+  deltaValueNumber?: number
   deltaTone?: 'positive' | 'negative' | 'neutral'
   coverage: string
   freshness: string
@@ -240,13 +245,29 @@ function formatChartWindow(copy: string, count: number): string {
   return copy.replace('{count}', String(count))
 }
 
-function MetricValue({ value, compact = false }: { value: string; compact?: boolean }): JSX.Element {
+function MetricValue({
+  value,
+  valueNumber,
+  compact = false,
+}: {
+  value: string
+  valueNumber?: number
+  compact?: boolean
+}): JSX.Element {
   const splitValue = value.split(' / ')
   if (splitValue.length === 2) {
     return (
       <div className={`metric-value dashboard-metric-value-split${compact ? ' dashboard-metric-value-split-compact' : ''}`}>
         <span>{splitValue[0]}</span>
         <span className="dashboard-metric-value-divider">/ {splitValue[1]}</span>
+      </div>
+    )
+  }
+
+  if (typeof valueNumber === 'number' && Number.isFinite(valueNumber)) {
+    return (
+      <div className={`metric-value dashboard-metric-value${compact ? ' dashboard-metric-value-compact' : ''}`}>
+        <RollingNumber value={valueNumber} />
       </div>
     )
   }
@@ -297,7 +318,7 @@ function SummaryMetricCard({
           ) : null}
         </div>
         <div className="dashboard-summary-card-value-row">
-          <MetricValue value={metric.value} compact={compact} />
+          <MetricValue value={metric.value} valueNumber={metric.valueNumber} compact={compact} />
           {metric.valueMeta ? <div className="dashboard-summary-card-value-meta">{metric.valueMeta}</div> : null}
         </div>
         {metric.comparison ? (
@@ -342,11 +363,11 @@ function QuotaChargeCard({
         <div className="dashboard-quota-charge-grid">
           <div className="dashboard-quota-charge-value">
             <span className="dashboard-quota-charge-label">{card.localLabel}</span>
-            <span className="metric-value dashboard-metric-value">{card.localValue}</span>
+            <MetricValue value={card.localValue} valueNumber={card.localValueNumber} />
           </div>
           <div className="dashboard-quota-charge-value">
             <span className="dashboard-quota-charge-label">{card.upstreamLabel}</span>
-            <span className="metric-value dashboard-metric-value">{card.upstreamValue}</span>
+            <MetricValue value={card.upstreamValue} valueNumber={card.upstreamValueNumber} />
           </div>
         </div>
         <div className="dashboard-quota-charge-footer">
@@ -428,7 +449,10 @@ function DashboardUsageBackdropChart({
   const chartOptions = useMemo<ChartOptions<'line'>>(() => ({
     responsive: true,
     maintainAspectRatio: false,
-    animation: false,
+    animation: {
+      duration: 560,
+      easing: 'easeOutCubic',
+    },
     events: [],
     plugins: {
       legend: { display: false },
@@ -669,9 +693,12 @@ function DashboardTrendPanel({
   const chartOptions = useMemo<ChartOptions<'bar'>>(() => {
     const isDelta = chartMode === 'resultsDelta' || chartMode === 'typesDelta'
     return {
-      responsive: true,
-      maintainAspectRatio: false,
-      animation: false,
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: {
+      duration: 560,
+      easing: 'easeOutCubic',
+    },
       plugins: {
         legend: { display: false },
         tooltip: {

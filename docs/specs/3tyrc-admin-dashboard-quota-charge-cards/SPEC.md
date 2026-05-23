@@ -140,6 +140,11 @@
 
 ![真实 admin dashboard 移动端截图](assets/admin-dashboard-mobile.png)
 
+- PR: include
+  最近一次 demo 实时更新截图，展示今日/本月卡片背景中的昨日对比线已可见，且数值会随 mock snapshot 自动刷新。
+
+![PR 视觉证据 - demo 实时更新](assets/admin-dashboard-live-update.png)
+
 - 桌面端验证：
   - Storybook `clientWidth=1425 / scrollWidth=1425`，无横向滚动。
   - 真实 `/admin/dashboard` `clientWidth=1425 / scrollWidth=1425`，无横向滚动。
