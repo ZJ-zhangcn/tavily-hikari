@@ -9479,6 +9479,7 @@ function AdminDashboard(): JSX.Element {
           monthMetrics={monthMetrics}
           monthQuotaCharge={monthQuotaCharge}
           statusMetrics={statusMetrics}
+          summaryWindows={dashboardSummaryWindows}
           hourlyRequestWindow={dashboardHourlyRequestWindow}
           chartPersistenceKey={DASHBOARD_HOURLY_CHART_PERSISTENCE_KEY}
           tokenCoverage={dashboardTokenCoverage}

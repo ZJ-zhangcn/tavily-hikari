@@ -3,22 +3,27 @@ import { useEffect, useMemo, useState } from 'react'
 import type {
   ApiKeyStats,
   AuthToken,
+  DashboardHourlyRequestBucket,
   DashboardHourlyRequestWindow,
   JobLogView,
   RecentAlertsSummary,
   RequestLog,
+  SummaryWindowsResponse,
 } from '../api'
 import SegmentedTabs from '../components/ui/SegmentedTabs'
 import RequestKindBadge from '../components/RequestKindBadge'
 import { StatusBadge, type StatusTone } from '../components/StatusBadge'
 import type { AdminModuleId } from './routes'
-import { Bar } from 'react-chartjs-2'
+import { Bar, Line } from 'react-chartjs-2'
 import {
   BarElement,
   CategoryScale,
   Chart as ChartJS,
+  Filler,
   Legend,
   LinearScale,
+  LineElement,
+  PointElement,
   Tooltip,
   type ChartData,
   type ChartOptions,
@@ -46,7 +51,7 @@ import {
   type DashboardTypeSeriesId,
 } from './dashboardHourlyCharts'
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip, Legend)
+ChartJS.register(CategoryScale, LinearScale, BarElement, LineElement, PointElement, Filler, Tooltip, Legend)
 
 export interface DashboardMetricCard {
   id: string
@@ -146,6 +151,7 @@ interface DashboardOverviewProps {
   monthMetrics: DashboardMetricCard[]
   monthQuotaCharge?: DashboardQuotaChargeCardData | null
   statusMetrics: DashboardMetricCard[]
+  summaryWindows?: SummaryWindowsResponse | null
   hourlyRequestWindow: DashboardHourlyRequestWindow
   tokenCoverage: 'ok' | 'truncated' | 'error'
   tokens: AuthToken[]
@@ -208,6 +214,45 @@ function readDashboardChartPalette(): DashboardChartPalette {
 function formatSignedValue(value: number): string {
   if (value > 0) return `+${value}`
   return String(value)
+}
+
+function withOpacity(color: string, opacity: number): string {
+  return color.startsWith('hsl(') && color.endsWith(')')
+    ? `${color.slice(0, -1)} / ${opacity})`
+    : color
+}
+
+function buildCumulativeSeries(values: ReadonlyArray<number>): number[] {
+  let runningTotal = 0
+  return values.map((value) => {
+    runningTotal += Math.max(0, value)
+    return runningTotal
+  })
+}
+
+function sumHourlyBucketRequests(bucket: DashboardHourlyRequestBucket): number {
+  return (
+    bucket.secondarySuccess
+    + bucket.primarySuccess
+    + bucket.secondaryFailure
+    + bucket.primaryFailure429
+    + bucket.primaryFailureOther
+    + bucket.unknown
+  )
+}
+
+function buildHourlyBackdropSeries(
+  hourlyRequestWindow: DashboardHourlyRequestWindow,
+  scale = 1,
+): { current: number[]; comparison: number[] } {
+  const visibleBuckets = getVisibleHourlyBuckets(hourlyRequestWindow)
+  const bucketLookup = buildHourlyBucketLookup(hourlyRequestWindow.buckets)
+  const current = visibleBuckets.map((bucket) => sumHourlyBucketRequests(bucket) * scale)
+  const comparison = visibleBuckets.map((bucket) => {
+    const previousBucket = bucketLookup.get(bucket.bucketStart - hourlyRequestWindow.bucketSeconds * 24)
+    return previousBucket ? sumHourlyBucketRequests(previousBucket) * scale : 0
+  })
+  return { current, comparison }
 }
 
 function formatChartWindow(copy: string, count: number): string {
@@ -293,6 +338,104 @@ function QuotaChargeCard({ card }: { card: DashboardQuotaChargeCardData }): JSX.
         </div>
       </div>
     </article>
+  )
+}
+
+function DashboardUsageBackdropChart({
+  ariaLabel,
+  primaryValues,
+  primaryColor,
+  comparisonValues,
+  comparisonColor,
+  className,
+}: {
+  ariaLabel: string
+  primaryValues: ReadonlyArray<number>
+  primaryColor: string
+  comparisonValues?: ReadonlyArray<number>
+  comparisonColor?: string
+  className?: string
+}): JSX.Element | null {
+  const chartData = useMemo<ChartData<'line'>>(() => {
+    if (primaryValues.length === 0) {
+      return { labels: [], datasets: [] }
+    }
+
+    const labels = primaryValues.map((_, index) => String(index + 1))
+    const datasets: ChartData<'line'>['datasets'] = [
+      {
+        label: 'current',
+        data: buildCumulativeSeries(primaryValues),
+        borderColor: primaryColor,
+        backgroundColor: withOpacity(primaryColor, 0.12),
+        fill: true,
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHitRadius: 0,
+        tension: 0.38,
+        spanGaps: true,
+        order: 1,
+      },
+    ]
+
+    if (comparisonValues && comparisonValues.length > 0) {
+      datasets.push({
+        label: 'comparison',
+        data: buildCumulativeSeries(comparisonValues),
+        borderColor: comparisonColor ?? primaryColor,
+        backgroundColor: 'transparent',
+        fill: false,
+        borderWidth: 1.5,
+        borderDash: [5, 4],
+        pointRadius: 0,
+        pointHitRadius: 0,
+        tension: 0.34,
+        spanGaps: true,
+        order: 0,
+      })
+    }
+
+    return { labels, datasets }
+  }, [comparisonColor, comparisonValues, primaryColor, primaryValues])
+
+  const chartOptions = useMemo<ChartOptions<'line'>>(() => ({
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: false,
+    events: [],
+    plugins: {
+      legend: { display: false },
+      tooltip: { enabled: false },
+    },
+    layout: {
+      padding: 0,
+    },
+    elements: {
+      line: {
+        borderCapStyle: 'round',
+        borderJoinStyle: 'round',
+      },
+    },
+    scales: {
+      x: {
+        display: false,
+        grid: { display: false },
+        border: { display: false },
+      },
+      y: {
+        display: false,
+        grid: { display: false },
+        border: { display: false },
+      },
+    },
+  }), [])
+
+  if (chartData.datasets.length === 0) return null
+
+  return (
+    <div className={className} aria-hidden="true">
+      <Line aria-label={ariaLabel} options={chartOptions} data={chartData} />
+    </div>
   )
 }
 
@@ -661,6 +804,7 @@ export default function DashboardOverview({
   monthMetrics,
   monthQuotaCharge,
   statusMetrics,
+  summaryWindows,
   hourlyRequestWindow,
   tokenCoverage,
   tokens,
@@ -737,6 +881,65 @@ export default function DashboardOverview({
   const todayDetailMetrics = todayMetrics.filter((metric) => metric.id !== 'today-total')
   const monthTotalMetric = monthMetrics.find((metric) => metric.id === 'month-total') ?? null
   const monthDetailMetrics = monthMetrics.filter((metric) => metric.id !== 'month-total')
+  const summaryWindowValues = summaryWindows ?? {
+    today: {
+      total_requests: 0,
+      success_count: 0,
+      error_count: 0,
+      quota_exhausted_count: 0,
+      valuable_success_count: 0,
+      valuable_failure_count: 0,
+      other_success_count: 0,
+      other_failure_count: 0,
+      unknown_count: 0,
+      upstream_exhausted_key_count: 0,
+      new_keys: 0,
+      new_quarantines: 0,
+    },
+    yesterday: {
+      total_requests: 0,
+      success_count: 0,
+      error_count: 0,
+      quota_exhausted_count: 0,
+      valuable_success_count: 0,
+      valuable_failure_count: 0,
+      other_success_count: 0,
+      other_failure_count: 0,
+      unknown_count: 0,
+      upstream_exhausted_key_count: 0,
+      new_keys: 0,
+      new_quarantines: 0,
+    },
+    month: {
+      total_requests: 0,
+      success_count: 0,
+      error_count: 0,
+      quota_exhausted_count: 0,
+      valuable_success_count: 0,
+      valuable_failure_count: 0,
+      other_success_count: 0,
+      other_failure_count: 0,
+      unknown_count: 0,
+      upstream_exhausted_key_count: 0,
+      new_keys: 0,
+      new_quarantines: 0,
+    },
+  }
+  const todayBackdrop = useMemo(
+    () => buildHourlyBackdropSeries(hourlyRequestWindow),
+    [hourlyRequestWindow],
+  )
+  const monthBackdrop = useMemo(() => {
+    const monthTotal = Math.max(summaryWindowValues.month.total_requests, 1)
+    const todayTotal = Math.max(summaryWindowValues.today.total_requests, 1)
+    const scale = monthTotal / todayTotal
+    return buildHourlyBackdropSeries(hourlyRequestWindow, scale)
+  }, [hourlyRequestWindow, summaryWindowValues.month.total_requests, summaryWindowValues.today.total_requests])
+  const backdropColors = {
+    today: readChartColorVar('--primary', 'hsl(262 83% 58%)'),
+    yesterday: readChartColorVar('--secondary', 'hsl(330 80% 51%)'),
+    month: readChartColorVar('--info', 'hsl(199 89% 48%)'),
+  }
   const alertGroupCount = overviewReady && recentAlerts.totalEvents > 0 ? 1 : 0
   const priorityCount = riskItems.length + alertGroupCount
   const focusMetric = todayTotalMetric ?? monthTotalMetric ?? statusMetrics[0] ?? null
@@ -803,48 +1006,68 @@ export default function DashboardOverview({
         ) : (
           <div className="dashboard-summary-layout">
             <div className="dashboard-summary-top-row">
-              <article className="dashboard-summary-block dashboard-summary-block-primary">
-                <header className="dashboard-summary-header">
-                  <div>
-                    <h2>{strings.todayTitle}</h2>
-                    <p className="panel-description">{strings.todayDescription}</p>
-                  </div>
-                </header>
-                {hasTodaySummary ? (
-                  <div className="dashboard-summary-section-stack">
-                    {todayTotalMetric ? <SummaryMetricCard metric={todayTotalMetric} /> : null}
-                    {todayQuotaCharge ? <QuotaChargeCard card={todayQuotaCharge} /> : null}
-                    <div className="dashboard-summary-metrics dashboard-summary-metrics-primary dashboard-today-grid">
-                      {todayDetailMetrics.map((metric) => (
-                        <SummaryMetricCard key={metric.id} metric={metric} />
-                      ))}
+              <article className="dashboard-summary-block dashboard-summary-block-primary dashboard-summary-block-with-backdrop">
+                <DashboardUsageBackdropChart
+                  ariaLabel={strings.todayTitle}
+                  className="dashboard-summary-block-backdrop dashboard-summary-block-backdrop-today"
+                  primaryValues={todayBackdrop.current}
+                  comparisonValues={todayBackdrop.comparison}
+                  primaryColor={backdropColors.today}
+                  comparisonColor={backdropColors.yesterday}
+                />
+                <div className="dashboard-summary-block-content">
+                  <header className="dashboard-summary-header">
+                    <div>
+                      <h2>{strings.todayTitle}</h2>
+                      <p className="panel-description">{strings.todayDescription}</p>
                     </div>
-                  </div>
-                ) : (
-                  <div className="empty-state alert dashboard-summary-empty">{strings.summaryUnavailable}</div>
-                )}
+                  </header>
+                  {hasTodaySummary ? (
+                    <div className="dashboard-summary-section-stack">
+                      {todayTotalMetric ? <SummaryMetricCard metric={todayTotalMetric} /> : null}
+                      {todayQuotaCharge ? <QuotaChargeCard card={todayQuotaCharge} /> : null}
+                      <div className="dashboard-summary-metrics dashboard-summary-metrics-primary dashboard-today-grid">
+                        {todayDetailMetrics.map((metric) => (
+                          <SummaryMetricCard key={metric.id} metric={metric} />
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="empty-state alert dashboard-summary-empty">{strings.summaryUnavailable}</div>
+                  )}
+                </div>
               </article>
 
-              <article className="dashboard-summary-block dashboard-summary-block-secondary">
-                <header className="dashboard-summary-header">
-                  <div>
-                    <h2>{strings.monthTitle}</h2>
-                    <p className="panel-description">{strings.monthDescription}</p>
-                  </div>
-                </header>
-                {hasMonthSummary ? (
-                  <div className="dashboard-summary-section-stack">
-                    {monthTotalMetric ? <SummaryMetricCard metric={monthTotalMetric} /> : null}
-                    {monthQuotaCharge ? <QuotaChargeCard card={monthQuotaCharge} /> : null}
-                    <div className="dashboard-summary-metrics dashboard-summary-metrics-compact dashboard-summary-metrics-month">
-                      {monthDetailMetrics.map((metric) => (
-                        <SummaryMetricCard key={metric.id} metric={metric} compact />
-                      ))}
+              <article className="dashboard-summary-block dashboard-summary-block-secondary dashboard-summary-block-with-backdrop">
+                <DashboardUsageBackdropChart
+                  ariaLabel={strings.monthTitle}
+                  className="dashboard-summary-block-backdrop dashboard-summary-block-backdrop-month"
+                  primaryValues={monthBackdrop.current}
+                  comparisonValues={monthBackdrop.comparison}
+                  primaryColor={backdropColors.month}
+                  comparisonColor={backdropColors.today}
+                />
+                <div className="dashboard-summary-block-content">
+                  <header className="dashboard-summary-header">
+                    <div>
+                      <h2>{strings.monthTitle}</h2>
+                      <p className="panel-description">{strings.monthDescription}</p>
                     </div>
-                  </div>
-                ) : (
-                  <div className="empty-state alert dashboard-summary-empty">{strings.summaryUnavailable}</div>
-                )}
+                  </header>
+                  {hasMonthSummary ? (
+                    <div className="dashboard-summary-section-stack">
+                      {monthTotalMetric ? <SummaryMetricCard metric={monthTotalMetric} /> : null}
+                      {monthQuotaCharge ? <QuotaChargeCard card={monthQuotaCharge} /> : null}
+                      <div className="dashboard-summary-metrics dashboard-summary-metrics-compact dashboard-summary-metrics-month">
+                        {monthDetailMetrics.map((metric) => (
+                          <SummaryMetricCard key={metric.id} metric={metric} compact />
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="empty-state alert dashboard-summary-empty">{strings.summaryUnavailable}</div>
+                  )}
+                </div>
               </article>
             </div>
 

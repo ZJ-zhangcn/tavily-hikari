@@ -982,6 +982,33 @@ button:disabled {
   gap: 12px;
 }
 
+.dashboard-summary-block-with-backdrop {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.dashboard-summary-block-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.42;
+}
+
+.dashboard-summary-block-backdrop canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.dashboard-summary-block-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
 .dashboard-summary-block-primary {
   background: hsl(var(--card) / 0.9);
 }
@@ -1042,7 +1069,7 @@ button:disabled {
   min-height: 116px;
   padding: 16px 18px;
   border-radius: 18px;
-  background: hsl(var(--background) / 0.12);
+  background: hsl(var(--card) / 0.76);
   box-shadow: none;
 }
 
@@ -1138,6 +1165,7 @@ button:disabled {
 .dashboard-quota-charge-card {
   display: grid;
   gap: 14px;
+  background: hsl(var(--card) / 0.72);
 }
 
 .dashboard-quota-charge-grid {
