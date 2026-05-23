@@ -711,6 +711,12 @@ export interface AdminTranslationsShape {
       tokensDescription: string
       addToken: string
       addingToken: string
+      tokenDelete: {
+        title: string
+        description: string
+        cancel: string
+        confirm: string
+      }
     }
     brokenKeys: {
       limitTitle: string

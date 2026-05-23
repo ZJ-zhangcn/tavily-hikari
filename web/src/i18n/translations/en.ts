@@ -716,6 +716,12 @@ export const EN: TranslationShape = {
           tokensDescription: 'This table only shows token-owned status, timestamps, and success stats. Shared quota is charted above.',
           addToken: 'Add token',
           addingToken: 'Adding…',
+          tokenDelete: {
+            title: 'Delete token?',
+            description: 'This will permanently remove the selected token from this user. Clients using it will lose access.',
+            cancel: 'Cancel',
+            confirm: 'Delete',
+          },
         },
         brokenKeys: {
           limitTitle: 'Blocked-key limit',

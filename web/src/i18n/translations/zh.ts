@@ -716,6 +716,12 @@ export const ZH: TranslationShape = {
           tokensDescription: '这里只展示令牌自己的状态、时间与成功统计；共享额度请看上方趋势图。',
           addToken: '添加令牌',
           addingToken: '添加中…',
+          tokenDelete: {
+            title: '删除令牌？',
+            description: '这会永久移除该用户绑定的所选令牌，正在使用它的客户端会失去访问权限。',
+            cancel: '取消',
+            confirm: '删除',
+          },
         },
         brokenKeys: {
           limitTitle: '封禁数限额',

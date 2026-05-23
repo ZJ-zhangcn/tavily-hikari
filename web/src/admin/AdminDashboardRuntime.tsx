@@ -1717,6 +1717,10 @@ function AdminDashboard(): JSX.Element {
   const [userQuotaSavedAt, setUserQuotaSavedAt] = useState<number | null>(null)
   const [addingUserToken, setAddingUserToken] = useState(false)
   const [deletingUserTokenId, setDeletingUserTokenId] = useState<string | null>(null)
+  const [pendingUserTokenDeleteTarget, setPendingUserTokenDeleteTarget] = useState<{
+    userId: string
+    tokenId: string
+  } | null>(null)
   const [tagCatalog, setTagCatalog] = useState<AdminUserTag[]>([])
   const [tagCatalogLoading, setTagCatalogLoading] = useState(false)
   const [tagCatalogLoadedOnce, setTagCatalogLoadedOnce] = useState(false)
@@ -5953,6 +5957,17 @@ function AdminDashboard(): JSX.Element {
     }
   }
 
+  const confirmUserTokenDelete = async () => {
+    const target = pendingUserTokenDeleteTarget
+    if (!target) return
+    setPendingUserTokenDeleteTarget(null)
+    await handleDeleteUserToken(target.userId, target.tokenId)
+  }
+
+  const cancelUserTokenDelete = () => {
+    setPendingUserTokenDeleteTarget(null)
+  }
+
   const openMonthlyBrokenDrawer = (subjectKind: 'user' | 'token', id: string, label: string) => {
     setMonthlyBrokenDrawer({ subjectKind, id, label })
   }
@@ -8245,12 +8260,38 @@ function AdminDashboard(): JSX.Element {
                     formatNumber={formatNumber}
                     formatTimestamp={(value) => formatTimestamp(value ?? null)}
                     onViewToken={navigateToken}
-                    onDeleteToken={(tokenId) => void handleDeleteUserToken(detail.userId, tokenId)}
+                    onDeleteToken={(tokenId) => setPendingUserTokenDeleteTarget({ userId: detail.userId, tokenId })}
                     deletingTokenId={deletingUserTokenId}
                   />
                 </AdminLazyBoundary>
               </div>
             </section>
+            <Dialog
+              open={pendingUserTokenDeleteTarget != null}
+              onOpenChange={(open) => {
+                if (!open) cancelUserTokenDelete()
+              }}
+            >
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>{usersStrings.detail.tokenDelete.title}</DialogTitle>
+                  <DialogDescription>{usersStrings.detail.tokenDelete.description}</DialogDescription>
+                </DialogHeader>
+                <DialogFooter className="modal-action">
+                  <Button type="button" variant="outline" onClick={cancelUserTokenDelete}>
+                    {usersStrings.detail.tokenDelete.cancel}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    onClick={() => void confirmUserTokenDelete()}
+                    disabled={!!deletingUserTokenId}
+                  >
+                    {usersStrings.detail.tokenDelete.confirm}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </>
         )}
         {appFooter}
