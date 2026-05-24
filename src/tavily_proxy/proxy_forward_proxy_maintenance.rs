@@ -46,6 +46,39 @@ impl TavilyProxy {
         Ok(())
     }
 
+    pub(crate) async fn refresh_forward_proxy_subscriptions_for_startup(
+        &self,
+    ) -> Result<(), ProxyError> {
+        let settings = {
+            let manager = self.forward_proxy.lock().await;
+            manager.settings.clone()
+        };
+        let egress_socks5_url = settings.effective_egress_socks5_url();
+        let subscription_client = self
+            .forward_proxy_clients
+            .direct_client_via_egress(egress_socks5_url.as_ref())
+            .await?;
+        let fetched = Self::fetch_forward_proxy_subscription_map_parallel(
+            &subscription_client,
+            &settings.subscription_urls,
+        )
+        .await?;
+
+        let mut manager = self.forward_proxy.lock().await;
+        manager.apply_subscription_refresh(&fetched);
+        {
+            let mut xray = self.xray_supervisor.lock().await;
+            if let Err(err) = xray
+                .sync_endpoints(&mut manager.endpoints, egress_socks5_url.as_ref())
+                .await
+            {
+                eprintln!("forward-proxy startup xray prewarm failed: {err}");
+            }
+        }
+        self.sync_forward_proxy_runtime_state(&mut manager).await?;
+        Ok(())
+    }
+
     pub(crate) async fn fetch_forward_proxy_subscription_map_with_progress(
         &self,
         subscription_urls: &[String],
@@ -93,6 +126,54 @@ impl TavilyProxy {
         }
 
         if fail_when_all_fail && !subscription_urls.is_empty() && !fetched_any_subscription {
+            return Err(ProxyError::Other(
+                "all forward proxy subscriptions failed to refresh".to_string(),
+            ));
+        }
+
+        Ok(fetched)
+    }
+
+    async fn fetch_forward_proxy_subscription_map_parallel(
+        subscription_client: &Client,
+        subscription_urls: &[String],
+    ) -> Result<HashMap<String, Vec<String>>, ProxyError> {
+        let mut fetched = HashMap::new();
+        let mut fetched_any_subscription = false;
+        let mut tasks = tokio::task::JoinSet::new();
+        for subscription_url in subscription_urls.iter().cloned() {
+            let subscription_client = subscription_client.clone();
+            tasks.spawn(async move {
+                let urls = forward_proxy::fetch_subscription_proxy_urls(
+                    &subscription_client,
+                    &subscription_url,
+                    Duration::from_secs(
+                        forward_proxy::FORWARD_PROXY_SUBSCRIPTION_VALIDATION_TIMEOUT_SECS,
+                    ),
+                )
+                .await;
+                (subscription_url, urls)
+            });
+        }
+
+        while let Some(joined) = tasks.join_next().await {
+            let (subscription_url, result) = joined.map_err(|err| {
+                ProxyError::Other(format!(
+                    "forward-proxy startup subscription fetch task failed: {err}"
+                ))
+            })?;
+            match result {
+                Ok(urls) => {
+                    fetched_any_subscription = true;
+                    fetched.insert(subscription_url, urls);
+                }
+                Err(_err) => {
+                    eprintln!("failed to refresh forward proxy subscription");
+                }
+            }
+        }
+
+        if !subscription_urls.is_empty() && !fetched_any_subscription {
             return Err(ProxyError::Other(
                 "all forward proxy subscriptions failed to refresh".to_string(),
             ));
@@ -1841,6 +1922,65 @@ impl TavilyProxy {
             _local: local_guard,
             _subject_lock: QuotaSubjectLockGuard::new(self.key_store.clone(), lease),
         })
+}
+
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{extract::State, routing::get, Router};
+    use std::sync::Arc;
+    use tokio::sync::Barrier;
+    use tokio::time::{timeout, Duration};
+
+    #[derive(Clone)]
+    struct SubscriptionTestState {
+        barrier: Arc<Barrier>,
+        body: &'static str,
     }
 
+    async fn subscription_handler(State(state): State<SubscriptionTestState>) -> &'static str {
+        state.barrier.wait().await;
+        state.body
+    }
+
+    #[tokio::test]
+    async fn startup_subscription_refresh_fetches_subscriptions_concurrently() {
+        let barrier = Arc::new(Barrier::new(2));
+        let app = Router::new()
+            .route("/sub1", get(subscription_handler))
+            .route("/sub2", get(subscription_handler))
+            .with_state(SubscriptionTestState {
+                barrier: Arc::clone(&barrier),
+                body: "http://198.51.100.8:8080",
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind subscription test server");
+        let addr = listener.local_addr().expect("subscription test addr");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("run subscription test server");
+        });
+        let client = Client::new();
+        let urls = vec![
+            format!("http://{addr}/sub1"),
+            format!("http://{addr}/sub2"),
+        ];
+
+        let fetched = timeout(
+            Duration::from_secs(2),
+            TavilyProxy::fetch_forward_proxy_subscription_map_parallel(&client, &urls),
+        )
+        .await
+        .expect("startup fetch should not hang")
+        .expect("startup fetch should succeed");
+
+        assert_eq!(fetched.len(), 2);
+        assert!(fetched.values().all(|urls| urls == &vec!["http://198.51.100.8:8080".to_string()]));
+
+        server.abort();
+    }
 }
