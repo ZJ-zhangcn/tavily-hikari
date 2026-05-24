@@ -1,3 +1,5 @@
+const FORWARD_PROXY_STARTUP_SUBSCRIPTION_FETCH_CONCURRENCY: usize = 4;
+
 impl TavilyProxy {
     pub async fn refresh_forward_proxy_subscriptions(&self) -> Result<(), ProxyError> {
         self.refresh_forward_proxy_subscriptions_with_progress(None)
@@ -140,10 +142,11 @@ impl TavilyProxy {
     ) -> Result<HashMap<String, Vec<String>>, ProxyError> {
         let mut fetched = HashMap::new();
         let mut fetched_any_subscription = false;
-        let mut tasks = tokio::task::JoinSet::new();
-        for subscription_url in subscription_urls.iter().cloned() {
-            let subscription_client = subscription_client.clone();
-            tasks.spawn(async move {
+
+        let results = futures_util::stream::iter(subscription_urls.iter().cloned().map(
+            |subscription_url| {
+                let subscription_client = subscription_client.clone();
+                async move {
                 let urls = forward_proxy::fetch_subscription_proxy_urls(
                     &subscription_client,
                     &subscription_url,
@@ -153,15 +156,14 @@ impl TavilyProxy {
                 )
                 .await;
                 (subscription_url, urls)
-            });
-        }
+                }
+            },
+        ))
+        .buffer_unordered(FORWARD_PROXY_STARTUP_SUBSCRIPTION_FETCH_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
 
-        while let Some(joined) = tasks.join_next().await {
-            let (subscription_url, result) = joined.map_err(|err| {
-                ProxyError::Other(format!(
-                    "forward-proxy startup subscription fetch task failed: {err}"
-                ))
-            })?;
+        for (subscription_url, result) in results {
             match result {
                 Ok(urls) => {
                     fetched_any_subscription = true;
@@ -1931,7 +1933,10 @@ impl TavilyProxy {
 mod tests {
     use super::*;
     use axum::{extract::State, routing::get, Router};
-    use std::sync::Arc;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
     use tokio::sync::Barrier;
     use tokio::time::{timeout, Duration};
 
@@ -1941,8 +1946,27 @@ mod tests {
         body: &'static str,
     }
 
+    #[derive(Clone)]
+    struct CountingSubscriptionTestState {
+        current: Arc<AtomicUsize>,
+        max_seen: Arc<AtomicUsize>,
+        body: &'static str,
+    }
+
     async fn subscription_handler(State(state): State<SubscriptionTestState>) -> &'static str {
         state.barrier.wait().await;
+        state.body
+    }
+
+    async fn counting_subscription_handler(
+        State(state): State<CountingSubscriptionTestState>,
+    ) -> &'static str {
+        let current = state.current.fetch_add(1, Ordering::SeqCst) + 1;
+        state
+            .max_seen
+            .fetch_max(current, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        state.current.fetch_sub(1, Ordering::SeqCst);
         state.body
     }
 
@@ -1981,6 +2005,55 @@ mod tests {
 
         assert_eq!(fetched.len(), 2);
         assert!(fetched.values().all(|urls| urls == &vec!["http://198.51.100.8:8080".to_string()]));
+
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn startup_subscription_refresh_bounds_fetch_concurrency() {
+        let current = Arc::new(AtomicUsize::new(0));
+        let max_seen = Arc::new(AtomicUsize::new(0));
+        let app = Router::new()
+            .route("/sub0", get(counting_subscription_handler))
+            .route("/sub1", get(counting_subscription_handler))
+            .route("/sub2", get(counting_subscription_handler))
+            .route("/sub3", get(counting_subscription_handler))
+            .route("/sub4", get(counting_subscription_handler))
+            .route("/sub5", get(counting_subscription_handler))
+            .with_state(CountingSubscriptionTestState {
+                current: Arc::clone(&current),
+                max_seen: Arc::clone(&max_seen),
+                body: "http://198.51.100.8:8080",
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind subscription test server");
+        let addr = listener.local_addr().expect("subscription test addr");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .await
+                .expect("run subscription test server");
+        });
+        let client = Client::new();
+        let urls = (0..6)
+            .map(|index| format!("http://{addr}/sub{index}"))
+            .collect::<Vec<_>>();
+
+        let fetched = timeout(
+            Duration::from_secs(2),
+            TavilyProxy::fetch_forward_proxy_subscription_map_parallel(&client, &urls),
+        )
+        .await
+        .expect("startup fetch should not hang")
+        .expect("startup fetch should succeed");
+
+        assert_eq!(fetched.len(), 6);
+        let peak = max_seen.load(Ordering::SeqCst);
+        assert!(peak > 1, "startup fetches should still overlap");
+        assert!(
+            peak <= FORWARD_PROXY_STARTUP_SUBSCRIPTION_FETCH_CONCURRENCY,
+            "startup fetches should be bounded"
+        );
 
         server.abort();
     }
