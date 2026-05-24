@@ -1,5 +1,5 @@
 import { Icon } from '../../lib/icons'
-import type { Meta, StoryObj } from '@storybook/react-vite'
+import type { StoryObj } from '@storybook/react-vite'
 import { addons } from 'storybook/preview-api'
 import { SELECT_STORY } from 'storybook/internal/core-events'
 import { ArrowDown, ArrowUp, ArrowUpDown, ChartColumnIncreasing } from 'lucide-react'
@@ -6270,26 +6270,7 @@ function SystemSettingsPageCanvas(): JSX.Element {
   )
 }
 
-const meta = {
-  title: 'Admin/Pages',
-  tags: ['autodocs'],
-  parameters: {
-    docs: {
-      description: {
-        component: [
-          'Route-level admin review surface covering dashboard, keys, tokens, users, jobs, system settings, and forward proxy settings.',
-          '',
-          'Public docs: [Configuration & Access](../configuration-access.html) · [Deployment & Anonymity](../deployment-anonymity.html) · [Storybook Guide](../storybook-guide.html)',
-        ].join('\n'),
-      },
-    },
-    layout: 'fullscreen',
-  },
-} satisfies Meta
-
-export default meta
-
-type Story = StoryObj<typeof meta>
+type Story = StoryObj
 
 export const Dashboard: Story = {
   render: () => <DashboardPageCanvas />,
