@@ -226,6 +226,30 @@
     box-shadow: var(--shadow-clay-button);
   }
 
+  .dark .btn-warning,
+  .dark .btn[class*="from-amber-300"][class*="to-warning"] {
+    border-color: hsl(var(--warning) / 0.36);
+    background: hsl(var(--warning) / 0.9);
+    color: hsl(var(--warning-foreground));
+    box-shadow: var(--shadow-clay-button);
+  }
+
+  .dark .btn-success,
+  .dark .btn[class*="from-emerald-300"][class*="to-success"] {
+    border-color: hsl(var(--success) / 0.36);
+    background: hsl(var(--success) / 0.9);
+    color: hsl(var(--success-foreground));
+    box-shadow: var(--shadow-clay-button);
+  }
+
+  .dark .btn-error,
+  .dark .btn[class*="from-red-400"][class*="to-destructive"] {
+    border-color: hsl(var(--destructive) / 0.36);
+    background: hsl(var(--destructive) / 0.9);
+    color: hsl(var(--destructive-foreground));
+    box-shadow: var(--shadow-clay-button);
+  }
+
   .dark .btn:hover,
   .dark .theme-toggle-trigger:hover,
   .dark .language-switcher-trigger:hover,
