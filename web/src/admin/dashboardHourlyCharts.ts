@@ -264,15 +264,26 @@ export function buildHourlyRangeSlots(
 
 export function derivePreviousMonthRange(monthStart: number): { rangeStart: number; rangeEnd: number } | null {
   if (!Number.isFinite(monthStart)) return null
-  const startDate = new Date(monthStart * 1000)
+  const utcBoundary = new Date(monthStart * 1000)
+  const secondsIntoUtcDay = (
+    utcBoundary.getUTCHours() * 3600
+    + utcBoundary.getUTCMinutes() * 60
+    + utcBoundary.getUTCSeconds()
+  )
+  const inferredLocalOffsetSeconds = secondsIntoUtcDay === 0
+    ? 0
+    : utcBoundary.getUTCDate() === 1
+      ? -secondsIntoUtcDay
+      : 24 * 3600 - secondsIntoUtcDay
+  const localMonthStart = new Date((monthStart + inferredLocalOffsetSeconds) * 1000)
   const previousMonthStart = Date.UTC(
-    startDate.getUTCFullYear(),
-    startDate.getUTCMonth() - 1,
+    localMonthStart.getUTCFullYear(),
+    localMonthStart.getUTCMonth() - 1,
     1,
-    startDate.getUTCHours(),
-    startDate.getUTCMinutes(),
-    startDate.getUTCSeconds(),
-  ) / 1000
+    0,
+    0,
+    0,
+  ) / 1000 - inferredLocalOffsetSeconds
   return {
     rangeStart: previousMonthStart,
     rangeEnd: monthStart,

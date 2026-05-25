@@ -10,6 +10,7 @@ import {
   createEmptyDashboardHourlyRequestWindow,
   DASHBOARD_RESULT_SERIES_ORDER,
   DASHBOARD_TYPE_SERIES_ORDER,
+  derivePreviousMonthRange,
   getCurrentDayHourlyBuckets,
   formatHourlyBucketLabel,
   getHourlyBucketsInRange,
@@ -132,6 +133,15 @@ describe('dashboardHourlyCharts helpers', () => {
       null,
       null,
     ])
+  })
+
+  it('derives the previous month from a server-local month boundary', () => {
+    const shanghaiAprilStart = Date.UTC(2026, 2, 31, 16, 0, 0) / 1000
+
+    expect(derivePreviousMonthRange(shanghaiAprilStart)).toEqual({
+      rangeStart: Date.UTC(2026, 1, 28, 16, 0, 0) / 1000,
+      rangeEnd: shanghaiAprilStart,
+    })
   })
 
   it('toggles absolute-series visibility without mutating the source array', () => {
