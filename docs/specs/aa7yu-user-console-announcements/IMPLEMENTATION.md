@@ -1,0 +1,36 @@
+# 用户控制台公告实现状态（#aa7yu）
+
+> 当前有效规范仍以 `./SPEC.md` 为准；这里记录实现覆盖、交付进度与 rollout 相关事实。
+
+## Current Status
+
+- Implementation: implemented
+- Lifecycle: active
+- Catalog note: 管理员控制台公告模块和用户控制台公告展示。
+
+## Coverage / rollout summary
+
+- Backend: SQLite announcement persistence, admin CRUD lifecycle APIs, and user active/history APIs are implemented.
+- Frontend: admin announcement management, user console modal/ticker/history UI, local close memory, and i18n copy are implemented.
+- Storybook: admin default/empty/mobile coverage and user console active/history announcement states are implemented.
+- Visual evidence: stored in `./assets/` and referenced from `./SPEC.md`.
+
+## Remaining Gaps
+
+- No known implementation gaps.
+
+## Related Changes
+
+- `src/models.rs`
+- `src/store/key_store_announcements.rs`
+- `src/server/handlers/admin_resources/announcements.rs`
+- `src/tavily_proxy/proxy_announcements.rs`
+- `web/src/admin/AnnouncementsModule.tsx`
+- `web/src/user-console/Announcements.tsx`
+- `web/src/UserConsole.stories.tsx`
+- `web/src/admin/AnnouncementsModule.stories.tsx`
+
+## References
+
+- `./SPEC.md`
+- `./HISTORY.md`

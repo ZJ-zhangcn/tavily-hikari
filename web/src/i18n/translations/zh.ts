@@ -221,6 +221,7 @@ export const ZH: TranslationShape = {
         requests: '请求日志',
         jobs: '任务作业',
         users: '用户管理',
+        announcements: '公告',
         alerts: '告警中心',
         systemSettings: '系统设置',
         proxySettings: '代理设置',
@@ -331,6 +332,7 @@ export const ZH: TranslationShape = {
             channels: '通知渠道',
           },
         },
+        announcements: { title: '公告', description: '发布用户控制台公告，并管理当前与历史公告。' },
         proxySettings: {
           title: '代理设置',
           description: '预留骨架页：后续接入上游、转发与限流设置。',

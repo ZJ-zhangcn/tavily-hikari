@@ -2481,6 +2481,78 @@ async fn heal_orphan_auth_tokens_from_logs_creates_soft_deleted_token() {
 }
 
 #[tokio::test]
+async fn published_announcement_update_archives_previous_version() {
+    let db_path = temp_db_path("announcement-published-update-archives");
+    let db_str = db_path.to_string_lossy().to_string();
+    let store = KeyStore::new(&db_str).await.expect("keystore created");
+
+    let draft = store
+        .create_announcement(AnnouncementMutation {
+            title: "Initial notice".to_string(),
+            body: "Initial body".to_string(),
+            display_kind: ANNOUNCEMENT_DISPLAY_MODAL.to_string(),
+        })
+        .await
+        .expect("create announcement");
+    assert_eq!(draft.status, ANNOUNCEMENT_STATUS_DRAFT);
+    assert!(
+        store
+            .list_user_active_announcements()
+            .await
+            .expect("list active before publish")
+            .is_empty()
+    );
+
+    let published = store
+        .publish_announcement(&draft.id)
+        .await
+        .expect("publish announcement")
+        .expect("published announcement exists");
+    assert_eq!(published.status, ANNOUNCEMENT_STATUS_PUBLISHED);
+    assert!(published.published_at.is_some());
+
+    let revised = store
+        .update_announcement(
+            &published.id,
+            AnnouncementMutation {
+                title: "Updated notice".to_string(),
+                body: "Updated body".to_string(),
+                display_kind: ANNOUNCEMENT_DISPLAY_MODAL.to_string(),
+            },
+        )
+        .await
+        .expect("update published announcement")
+        .expect("updated announcement exists");
+    assert_ne!(revised.id, published.id);
+    assert_eq!(revised.status, ANNOUNCEMENT_STATUS_PUBLISHED);
+    assert_eq!(revised.title, "Updated notice");
+
+    let archived = store
+        .get_announcement(&published.id)
+        .await
+        .expect("load previous announcement")
+        .expect("previous announcement exists");
+    assert_eq!(archived.status, ANNOUNCEMENT_STATUS_ARCHIVED);
+    assert!(archived.archived_at.is_some());
+
+    let active = store
+        .list_user_active_announcements()
+        .await
+        .expect("list active announcements");
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].id, revised.id);
+
+    let history = store
+        .list_user_announcement_history()
+        .await
+        .expect("list announcement history");
+    assert!(history.iter().any(|item| item.id == revised.id));
+    assert!(history.iter().any(|item| item.id == published.id));
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
 async fn oauth_login_state_is_single_use() {
     let db_path = temp_db_path("oauth-state-single-use");
     let db_str = db_path.to_string_lossy().to_string();

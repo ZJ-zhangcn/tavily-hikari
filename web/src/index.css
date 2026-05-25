@@ -4,8 +4,10 @@
 @import './styles/public.css';
 @import './styles/alerts.css';
 @import './styles/user-console.css';
+@import './styles/user-console-announcements.css';
 @import './styles/user-console-recent-requests.css';
 @import './styles/admin.css';
+@import './styles/admin-announcements.css';
 @import './styles/admin-user-console.css';
 @import './styles/admin-user-detail.css';
 @import './styles/dark.css';

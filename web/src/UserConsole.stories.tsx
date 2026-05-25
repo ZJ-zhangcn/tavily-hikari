@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 
-import type { Profile, RequestRate, RequestRateScope, UserDashboard, UserTokenSummary } from './api'
+import type { Announcement, Profile, RequestRate, RequestRateScope, UserDashboard, UserTokenSummary } from './api'
 import UserConsole from './UserConsole'
 import {
   DropdownMenu,
@@ -17,6 +17,7 @@ type LandingFocus = 'Overview Focus' | 'Token Focus'
 type TokenListState = 'Single Token' | 'Multiple Tokens' | 'Empty'
 type TokenDetailPreview = 'Overview' | 'Token Revealed'
 type PushStatusPreview = 'Live' | 'Reconnecting' | 'Unsupported'
+type AnnouncementPreview = 'Active' | 'Closed' | 'History Open' | 'None'
 
 type CopyRecoveryMode = 'none' | 'list-manual-bubble' | 'detail-inline'
 type GuideRevealMode = 'none' | 'landing-guide' | 'detail-guide'
@@ -31,6 +32,7 @@ interface UserConsoleStoryArgs {
   pushStatusPreview?: PushStatusPreview
   pushStatusBubbleOpen?: boolean
   autoOpenAccountMenu?: boolean
+  announcementPreview?: AnnouncementPreview
 }
 
 interface UserConsoleStoryState {
@@ -38,6 +40,7 @@ interface UserConsoleStoryState {
   isAdmin: boolean
   routePath: string
   tokenListMode: 'single' | 'multiple' | 'empty'
+  announcementPreview: AnnouncementPreview
 }
 
 type MockEventSourceShape = EventSource & {
@@ -179,6 +182,42 @@ const tokenLogsSample: ServerPublicTokenLogMock[] = [
   },
 ]
 
+const announcementModalSample: Announcement = {
+  id: 'ann-modal-01',
+  title: 'Maintenance window',
+  body: 'Tavily Hikari will restart tonight between 23:00 and 23:10. Existing MCP sessions may reconnect once.',
+  displayKind: 'modal',
+  status: 'published',
+  createdAt: 1_762_380_000,
+  updatedAt: 1_762_386_000,
+  publishedAt: 1_762_386_000,
+  archivedAt: null,
+}
+
+const announcementTickerSample: Announcement = {
+  id: 'ann-ticker-01',
+  title: 'Quota refresh',
+  body: 'Daily quota counters have refreshed. Token detail pages now include live request updates.',
+  displayKind: 'ticker',
+  status: 'published',
+  createdAt: 1_762_378_000,
+  updatedAt: 1_762_385_000,
+  publishedAt: 1_762_385_000,
+  archivedAt: null,
+}
+
+const announcementArchivedSample: Announcement = {
+  id: 'ann-archived-01',
+  title: 'Endpoint migration completed',
+  body: 'The previous Tavily-compatible endpoint migration has been completed and archived for reference.',
+  displayKind: 'ticker',
+  status: 'archived',
+  createdAt: 1_762_200_000,
+  updatedAt: 1_762_250_000,
+  publishedAt: 1_762_210_000,
+  archivedAt: 1_762_250_000,
+}
+
 const storyAvatarDataUrl =
   'data:image/svg+xml;utf8,' +
   encodeURIComponent(
@@ -249,6 +288,7 @@ function resolveStoryState(args: UserConsoleStoryArgs): UserConsoleStoryState {
     isAdmin: args.isAdmin,
     routePath: routePathFromView(args.consoleView, args.landingFocus, args.routePathOverride),
     tokenListMode,
+    announcementPreview: args.announcementPreview ?? 'Active',
   }
 }
 
@@ -367,6 +407,22 @@ function installUserConsoleFetchMock(state: UserConsoleStoryState): () => void {
 
     if (url.pathname === '/api/user/tokens') {
       return jsonResponse(tokenList)
+    }
+
+    if (url.pathname === '/api/user/announcements') {
+      return jsonResponse({
+        items: state.announcementPreview === 'None'
+          ? []
+          : [announcementModalSample, announcementTickerSample],
+      })
+    }
+
+    if (url.pathname === '/api/user/announcements/history') {
+      return jsonResponse({
+        items: state.announcementPreview === 'None'
+          ? []
+          : [announcementModalSample, announcementTickerSample, announcementArchivedSample],
+      })
     }
 
     const tokenRoute = url.pathname.match(/^\/api\/user\/tokens\/([^/]+)(?:\/(secret|logs)(?:\/rotate)?)?$/)
@@ -658,16 +714,41 @@ function UserConsoleStory(
     const cleanupEventSource = installEventSourceMock(pushStatusPreview)
     const cleanupClipboard = copyRecoveryMode === 'none' ? null : installClipboardFailureMock()
     window.history.replaceState(null, '', storyState.routePath)
+    const storageKey = 'tavily-hikari:user-console-announcement-closed'
+    if (storyState.announcementPreview === 'Closed') {
+      window.localStorage.setItem(storageKey, JSON.stringify({
+        [announcementModalSample.id]: 1_762_390_000,
+        [announcementTickerSample.id]: 1_762_390_120,
+      }))
+    } else {
+      window.localStorage.removeItem(storageKey)
+    }
     setReady(true)
 
     return () => {
       cleanupFetch()
       cleanupEventSource()
       cleanupClipboard?.()
+      window.localStorage.removeItem(storageKey)
       window.history.replaceState(null, '', previousLocation)
       setReady(false)
     }
-  }, [copyRecoveryMode, pushStatusPreview, storyState.isAdmin, storyState.routePath, storyState.tokenListMode])
+  }, [
+    copyRecoveryMode,
+    pushStatusPreview,
+    storyState.announcementPreview,
+    storyState.isAdmin,
+    storyState.routePath,
+    storyState.tokenListMode,
+  ])
+
+  useEffect(() => {
+    if (!ready || storyState.announcementPreview !== 'History Open') return
+    const timer = window.setTimeout(() => {
+      document.querySelector<HTMLButtonElement>('.user-console-announcements-trigger')?.click()
+    }, 180)
+    return () => window.clearTimeout(timer)
+  }, [ready, storyState.announcementPreview])
 
   useEffect(() => {
     if (!ready || !storyState.autoRevealToken) return
@@ -742,6 +823,7 @@ function UserConsoleStory(
     guideRevealMode,
     pushStatusPreview,
     pushStatusBubbleOpen ? 'push-open' : 'push-closed',
+    storyState.announcementPreview,
   ].join(':')
 
   return <UserConsole key={storyKey} />
@@ -821,6 +903,10 @@ const meta = {
       table: { disable: true },
       control: false,
     },
+    announcementPreview: {
+      table: { disable: true },
+      control: false,
+    },
   },
   render: (args) => <UserConsoleStory {...args} />,
 } satisfies Meta<UserConsoleStoryArgs>
@@ -890,6 +976,46 @@ export const ConsoleHomeAdmin: Story = {
     consoleView: 'Console Home',
     isAdmin: true,
     landingFocus: 'Overview Focus',
+  },
+}
+
+export const ConsoleHomeAnnouncements: Story = {
+  name: 'Console Home Announcements',
+  args: {
+    consoleView: 'Console Home',
+    isAdmin: false,
+    landingFocus: 'Overview Focus',
+    announcementPreview: 'Active',
+  },
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 180))
+
+    if (canvasElement.querySelector('.user-console-announcement-ticker') == null) {
+      throw new Error('Expected ticker announcement to render.')
+    }
+    if (canvasElement.ownerDocument.querySelector('.user-console-announcement-dialog') == null) {
+      throw new Error('Expected modal announcement dialog to render.')
+    }
+  },
+}
+
+export const ConsoleHomeAnnouncementHistory: Story = {
+  name: 'Console Home Announcement History',
+  args: {
+    consoleView: 'Console Home',
+    isAdmin: true,
+    landingFocus: 'Overview Focus',
+    announcementPreview: 'History Open',
+  },
+  parameters: {
+    viewport: { defaultViewport: '1440-device-desktop' },
+  },
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 260))
+
+    if (canvasElement.ownerDocument.querySelector('.user-console-announcement-history') == null) {
+      throw new Error('Expected announcement history drawer to render.')
+    }
   },
 }
 

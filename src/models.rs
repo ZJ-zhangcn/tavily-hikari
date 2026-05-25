@@ -1336,6 +1336,47 @@ pub struct RecentAlertsSummary {
     pub top_groups: Vec<AlertGroupRecord>,
 }
 
+pub const ANNOUNCEMENT_DISPLAY_MODAL: &str = "modal";
+pub const ANNOUNCEMENT_DISPLAY_TICKER: &str = "ticker";
+
+pub const ANNOUNCEMENT_STATUS_DRAFT: &str = "draft";
+pub const ANNOUNCEMENT_STATUS_PUBLISHED: &str = "published";
+pub const ANNOUNCEMENT_STATUS_ARCHIVED: &str = "archived";
+
+pub fn is_supported_announcement_display(value: &str) -> bool {
+    matches!(
+        value,
+        ANNOUNCEMENT_DISPLAY_MODAL | ANNOUNCEMENT_DISPLAY_TICKER
+    )
+}
+
+pub fn is_supported_announcement_status(value: &str) -> bool {
+    matches!(
+        value,
+        ANNOUNCEMENT_STATUS_DRAFT | ANNOUNCEMENT_STATUS_PUBLISHED | ANNOUNCEMENT_STATUS_ARCHIVED
+    )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Announcement {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    pub display_kind: String,
+    pub status: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub published_at: Option<i64>,
+    pub archived_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnnouncementMutation {
+    pub title: String,
+    pub body: String,
+    pub display_kind: String,
+}
+
 /// 汇总统计信息，用于展示整体代理运行状况。
 #[derive(Debug, Clone)]
 pub struct ProxySummary {

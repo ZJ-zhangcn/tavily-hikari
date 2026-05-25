@@ -222,6 +222,7 @@ export const EN: TranslationShape = {
         requests: 'Requests',
         jobs: 'Jobs',
         users: 'Users',
+        announcements: 'Announcements',
         alerts: 'Alerts',
         systemSettings: 'System Settings',
         proxySettings: 'Proxy Settings',
@@ -332,6 +333,7 @@ export const EN: TranslationShape = {
             channels: 'Notification channels',
           },
         },
+        announcements: { title: 'Announcements', description: 'Publish user-console notices and manage current or archived announcement history.' },
         proxySettings: {
           title: 'Proxy Settings',
           description: 'Skeleton module reserved for proxy and upstream controls.',
