@@ -24,7 +24,7 @@ function RegistrationPaused(): JSX.Element {
             <div
               className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] ${
                 isDark
-                  ? 'border border-warning/32 bg-warning/12 text-warning'
+                  ? 'border border-warning/30 bg-warning/10 text-warning'
                   : 'border border-amber-300/80 bg-amber-100 text-amber-900'
               }`}
             >
@@ -46,7 +46,7 @@ function RegistrationPaused(): JSX.Element {
         <Card
           className={`border-amber-300/60 ${
             isDark
-              ? 'border-warning/28 bg-card/92 shadow-clayCard'
+              ? 'border-warning/30 bg-card/90 shadow-clayCard'
               : 'bg-white/90 shadow-[0_28px_80px_-44px_rgba(180,83,9,0.28)]'
           }`}
         >
@@ -60,7 +60,7 @@ function RegistrationPaused(): JSX.Element {
             <div
               className={`rounded-2xl border p-4 text-sm leading-6 ${
                 isDark
-                  ? 'border-warning/24 bg-warning/10 text-foreground'
+                  ? 'border-warning/25 bg-warning/10 text-foreground'
                   : 'border-amber-200 bg-amber-50/80 text-amber-950/85'
               }`}
             >
