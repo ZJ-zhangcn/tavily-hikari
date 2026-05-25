@@ -263,7 +263,6 @@ export interface TokenUsageBucket {
   system_failure_count: number
   external_failure_count: number
 }
-
 export interface PublicTokenLog {
   id: number
   method: string
@@ -276,7 +275,6 @@ export interface PublicTokenLog {
   error_message: string | null
   created_at: number
 }
-
 interface ServerPublicTokenLog {
   id: number
   method: string
