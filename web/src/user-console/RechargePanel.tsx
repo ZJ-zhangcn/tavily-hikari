@@ -1,5 +1,6 @@
 import type { RechargeConfig, RechargeOrder } from '../api'
 import type { UserDashboard } from '../api'
+import { Minus, Plus } from 'lucide-react'
 import { Icon } from '../lib/icons'
 import { Button } from '../components/ui/button'
 import { StatusBadge, type StatusTone } from '../components/StatusBadge'
@@ -143,7 +144,7 @@ export default function RechargePanel({
                     disabled={normalizedCredits <= minCredits}
                     aria-label={`Decrease ${text.credits}`}
                   >
-                    <Icon icon="mdi:minus" width={16} height={16} aria-hidden="true" />
+                    <Minus size={16} strokeWidth={2.2} aria-hidden="true" />
                   </button>
                   <input
                     className="input input-bordered user-console-recharge-readonly"
@@ -159,7 +160,7 @@ export default function RechargePanel({
                     disabled={normalizedCredits >= maxCredits}
                     aria-label={`Increase ${text.credits}`}
                   >
-                    <Icon icon="mdi:plus" width={16} height={16} aria-hidden="true" />
+                    <Plus size={16} strokeWidth={2.2} aria-hidden="true" />
                   </button>
                 </div>
               </div>
@@ -173,7 +174,7 @@ export default function RechargePanel({
                     disabled={normalizedMonths <= minMonths}
                     aria-label={`Decrease ${text.months}`}
                   >
-                    <Icon icon="mdi:minus" width={16} height={16} aria-hidden="true" />
+                    <Minus size={16} strokeWidth={2.2} aria-hidden="true" />
                   </button>
                   <input
                     className="input input-bordered user-console-recharge-readonly"
@@ -189,7 +190,7 @@ export default function RechargePanel({
                     disabled={normalizedMonths >= maxMonths}
                     aria-label={`Increase ${text.months}`}
                   >
-                    <Icon icon="mdi:plus" width={16} height={16} aria-hidden="true" />
+                    <Plus size={16} strokeWidth={2.2} aria-hidden="true" />
                   </button>
                 </div>
               </div>

@@ -1393,7 +1393,7 @@ export default function UserConsole(): JSX.Element {
       setRechargeOrders(nextRechargeOrders)
       if (nextRechargeConfig) {
         setRechargeCredits((current) => {
-          const next = current > 0 ? current : nextRechargeConfig.defaultCredits
+          const next = current > 0 && current !== DEFAULT_RECHARGE_UNIT_CREDITS ? current : nextRechargeConfig.defaultCredits
           const { minCredits, maxCredits, creditsStep } = nextRechargeConfig
           return clampRechargeStep(next, minCredits, maxCredits, creditsStep)
         })

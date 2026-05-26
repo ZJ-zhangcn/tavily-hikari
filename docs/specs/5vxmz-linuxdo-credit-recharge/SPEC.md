@@ -158,7 +158,9 @@
 
 ## Visual Evidence
 
-![User console recharge card](./visual-evidence/linuxdo-recharge-story.png)
+![Normal recharge quota controls](./assets/recharge-normal-story.png)
+
+![Test-price recharge quota controls](./assets/recharge-test-price-story.png)
 
 ## Related PRs
 

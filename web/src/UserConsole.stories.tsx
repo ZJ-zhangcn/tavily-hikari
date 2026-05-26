@@ -17,6 +17,7 @@ type LandingFocus = 'Overview Focus' | 'Token Focus'
 type TokenListState = 'Single Token' | 'Multiple Tokens' | 'Empty'
 type TokenDetailPreview = 'Overview' | 'Token Revealed'
 type PushStatusPreview = 'Live' | 'Reconnecting' | 'Unsupported'
+type RechargePreview = 'normal' | 'test-price'
 
 type CopyRecoveryMode = 'none' | 'list-manual-bubble' | 'detail-inline'
 type GuideRevealMode = 'none' | 'landing-guide' | 'detail-guide'
@@ -31,11 +32,13 @@ interface UserConsoleStoryArgs {
   pushStatusPreview?: PushStatusPreview
   pushStatusBubbleOpen?: boolean
   autoOpenAccountMenu?: boolean
+  rechargePreview?: RechargePreview
 }
 
 interface UserConsoleStoryState {
   autoRevealToken: boolean
   isAdmin: boolean
+  rechargePreview: RechargePreview
   routePath: string
   tokenListMode: 'single' | 'multiple' | 'empty'
 }
@@ -104,6 +107,17 @@ const rechargeConfigSample: RechargeConfig = {
   currentMonthStart: 1_762_041_600,
   currentEntitlementCredits: 3000,
   effectiveUntilMonthStart: 1_767_225_600,
+}
+
+const rechargeTestPriceConfigSample: RechargeConfig = {
+  ...rechargeConfigSample,
+  unitCredits: 1,
+  unitPriceLdc: 1,
+  minCredits: 1,
+  creditsStep: 1,
+  defaultCredits: 1,
+  testPriceEnabled: true,
+  currentEntitlementCredits: 1,
 }
 
 const rechargeOrdersSample: RechargeOrder[] = [
@@ -307,6 +321,7 @@ function resolveStoryState(args: UserConsoleStoryArgs): UserConsoleStoryState {
   return {
     autoRevealToken: args.consoleView === 'Token Detail' && args.tokenDetailPreview === 'Token Revealed',
     isAdmin: args.isAdmin,
+    rechargePreview: args.rechargePreview ?? 'normal',
     routePath: routePathFromView(args.consoleView, args.landingFocus, args.routePathOverride),
     tokenListMode,
   }
@@ -418,7 +433,9 @@ function installUserConsoleFetchMock(state: UserConsoleStoryState): () => void {
     }
 
     if (url.pathname === '/api/user/recharge/config') {
-      return jsonResponse(rechargeConfigSample)
+      return jsonResponse(state.rechargePreview === 'test-price'
+        ? rechargeTestPriceConfigSample
+        : rechargeConfigSample)
     }
 
     if (url.pathname === '/api/user/recharge/orders') {
@@ -727,7 +744,15 @@ function UserConsoleStory(
   const [ready, setReady] = useState(false)
   const storyState = useMemo(
     () => resolveStoryState(args),
-    [args.consoleView, args.isAdmin, args.landingFocus, args.tokenListState, args.tokenDetailPreview, args.routePathOverride],
+    [
+      args.consoleView,
+      args.isAdmin,
+      args.landingFocus,
+      args.rechargePreview,
+      args.tokenDetailPreview,
+      args.tokenListState,
+      args.routePathOverride,
+    ],
   )
   const copyRecoveryMode = args.copyRecoveryMode ?? 'none'
   const guideRevealMode = args.guideRevealMode ?? 'none'
@@ -749,7 +774,14 @@ function UserConsoleStory(
       window.history.replaceState(null, '', previousLocation)
       setReady(false)
     }
-  }, [copyRecoveryMode, pushStatusPreview, storyState.isAdmin, storyState.routePath, storyState.tokenListMode])
+  }, [
+    copyRecoveryMode,
+    pushStatusPreview,
+    storyState.isAdmin,
+    storyState.rechargePreview,
+    storyState.routePath,
+    storyState.tokenListMode,
+  ])
 
   useEffect(() => {
     if (!ready || !storyState.autoRevealToken) return
@@ -820,6 +852,7 @@ function UserConsoleStory(
     storyState.routePath,
     storyState.isAdmin ? 'admin' : 'user',
     storyState.tokenListMode,
+    storyState.rechargePreview,
     storyState.autoRevealToken ? 'revealed' : 'hidden',
     guideRevealMode,
     pushStatusPreview,
@@ -955,6 +988,19 @@ export const ConsoleHomeDark: Story = {
     },
   },
   play: ConsoleHome.play,
+}
+
+export const ConsoleHomeRechargeTestPrice: Story = {
+  name: 'Console Home Recharge Test Price',
+  args: {
+    consoleView: 'Console Home',
+    isAdmin: false,
+    landingFocus: 'Overview Focus',
+    rechargePreview: 'test-price',
+  },
+  globals: {
+    language: 'zh',
+  },
 }
 
 export const ConsoleHomeRoot: Story = {
