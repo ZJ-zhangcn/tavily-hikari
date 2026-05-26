@@ -894,6 +894,7 @@ export const ZH: TranslationShape = {
           prev: '上一页',
           next: '下一页',
           page: '第 {page}/{total} 页',
+          perPage: '每页',
         },
         table: {
           id: 'ID',
@@ -921,6 +922,19 @@ export const ZH: TranslationShape = {
           delete: '删除令牌',
           viewLeaderboard: '查看未关联令牌用量',
         },
+        filters: {
+          searchPlaceholder: '按 ID、关联用户或备注搜索', search: '筛选', clear: '清除筛选', selectedSuffix: '项',
+          owner: '关联用户', ownerAll: '全部', ownerBound: '已关联', ownerUnbound: '未关联',
+          quota: '限额状态', quotaAll: '全部', status: '令牌状态', statusAll: '全部',
+          statusActive: '已激活', statusFrozen: '已冻结',
+        },
+        bulk: {
+          selected: '已选 {count} 个令牌', pageSelected: '当前页已选 {count}/{total}', clear: '清空选择',
+          activate: '激活', freeze: '冻结', delete: '删除', running: '处理中…', result: '已更新 {updated} 个令牌。',
+          missing: '{count} 个令牌已不存在。', confirmTitle: '删除所选令牌',
+          confirmDescription: '将删除已选的 {count} 个访问令牌，正在使用它们的客户端会收到 401。',
+          cancel: '取消', confirmDelete: '删除',
+        },
         statusBadges: {
           disabled: '已禁用的令牌',
         },
@@ -946,21 +960,11 @@ export const ZH: TranslationShape = {
           },
         },
         batchDialog: {
-          title: '批量创建令牌',
-          groupPlaceholder: '分组名（必填）',
-          confirm: '创建',
-          creating: '创建中…',
-          cancel: '取消',
-          done: '完成',
-          createdN: '已创建 {n} 个令牌',
-          copyAll: '复制全部链接',
+          title: '批量创建令牌', groupPlaceholder: '分组名（必填）', confirm: '创建', creating: '创建中…',
+          cancel: '取消', done: '完成', createdN: '已创建 {n} 个令牌', copyAll: '复制全部链接',
         },
         groups: {
-          label: '分组',
-          all: '全部',
-          ungrouped: '未分组',
-          moreShow: '展开全部分组',
-          moreHide: '收起分组',
+          label: '分组', all: '全部', ungrouped: '未分组', moreShow: '展开全部分组', moreHide: '收起分组',
         },
       },
       unboundTokenUsage: {

@@ -894,6 +894,7 @@ export const EN: TranslationShape = {
           prev: 'Prev',
           next: 'Next',
           page: 'Page {page} of {total}',
+          perPage: 'Per page',
         },
         table: {
           id: 'ID',
@@ -921,6 +922,19 @@ export const EN: TranslationShape = {
           delete: 'Delete token',
           viewLeaderboard: 'View unbound token usage',
         },
+        filters: {
+          searchPlaceholder: 'Search ID, owner, or note', search: 'Filter', clear: 'Clear filters',
+          selectedSuffix: 'selected', owner: 'Owner', ownerAll: 'All', ownerBound: 'Linked', ownerUnbound: 'Unbound',
+          quota: 'Rate limit', quotaAll: 'All', status: 'Token status', statusAll: 'All',
+          statusActive: 'Active', statusFrozen: 'Frozen',
+        },
+        bulk: {
+          selected: '{count} tokens selected', pageSelected: '{count}/{total} selected on this page', clear: 'Clear selection',
+          activate: 'Activate', freeze: 'Freeze', delete: 'Delete', running: 'Working…', result: 'Updated {updated} tokens.',
+          missing: '{count} tokens no longer exist.', confirmTitle: 'Delete selected tokens',
+          confirmDescription: 'This will delete {count} selected access tokens. Clients using them will receive 401.',
+          cancel: 'Cancel', confirmDelete: 'Delete',
+        },
         statusBadges: {
           disabled: 'Disabled token',
         },
@@ -946,21 +960,11 @@ export const EN: TranslationShape = {
           },
         },
         batchDialog: {
-          title: 'Batch Create Tokens',
-          groupPlaceholder: 'Group (required)',
-          confirm: 'Create',
-          creating: 'Creating…',
-          cancel: 'Cancel',
-          done: 'Done',
-          createdN: 'Created {n} tokens',
-          copyAll: 'Copy all links',
+          title: 'Batch Create Tokens', groupPlaceholder: 'Group (required)', confirm: 'Create', creating: 'Creating…',
+          cancel: 'Cancel', done: 'Done', createdN: 'Created {n} tokens', copyAll: 'Copy all links',
         },
         groups: {
-          label: 'Groups',
-          all: 'All',
-          ungrouped: 'Ungrouped',
-          moreShow: 'Show all groups',
-          moreHide: 'Collapse groups',
+          label: 'Groups', all: 'All', ungrouped: 'Ungrouped', moreShow: 'Show all groups', moreHide: 'Collapse groups',
         },
       },
       unboundTokenUsage: {

@@ -2027,6 +2027,8 @@ async fn spawn_admin_tokens_server(proxy: TavilyProxy, dev_open_admin: bool) -> 
     let app = Router::new()
         .route("/api/tokens", get(list_tokens))
         .route("/api/tokens/unbound-usage", get(list_unbound_token_usage))
+        .route("/api/tokens/batch/status", patch(update_tokens_status_batch))
+        .route("/api/tokens/batch", delete(delete_tokens_batch))
         .route("/api/tokens/:id", get(get_token_detail))
         .route("/api/tokens/:id/logs", get(get_token_logs))
         .route("/api/tokens/:id/logs/page", get(get_token_logs_page))

@@ -221,6 +221,8 @@ pub async fn serve(
         .route("/api/tokens", post(create_token))
         .route("/api/tokens/groups", get(list_token_groups))
         .route("/api/tokens/batch", post(create_tokens_batch))
+        .route("/api/tokens/batch/status", patch(update_tokens_status_batch))
+        .route("/api/tokens/batch", delete(delete_tokens_batch))
         .route("/api/tokens/:id", delete(delete_token))
         .route("/api/tokens/:id/status", patch(update_token_status))
         .route("/api/tokens/:id/note", patch(update_token_note))

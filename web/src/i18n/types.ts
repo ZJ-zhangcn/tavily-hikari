@@ -182,6 +182,15 @@ export interface PublicTranslations {
   }
 }
 
+type TokenListFilterKey =
+  | 'searchPlaceholder' | 'search' | 'clear' | 'selectedSuffix' | 'owner' | 'ownerAll' | 'ownerBound'
+  | 'ownerUnbound' | 'quota' | 'quotaAll' | 'status' | 'statusAll' | 'statusActive' | 'statusFrozen'
+type TokenListBulkKey =
+  | 'selected' | 'pageSelected' | 'clear' | 'activate' | 'freeze' | 'delete' | 'running' | 'result'
+  | 'missing' | 'confirmTitle' | 'confirmDescription' | 'cancel' | 'confirmDelete'
+type TokenListFiltersTranslations = Record<TokenListFilterKey, string>
+type TokenListBulkTranslations = Record<TokenListBulkKey, string>
+
 export interface AdminTranslationsShape {
   header: {
     title: string
@@ -889,6 +898,7 @@ export interface AdminTranslationsShape {
       prev: string
       next: string
       page: string
+      perPage: string
     }
     table: {
       id: string
@@ -916,6 +926,8 @@ export interface AdminTranslationsShape {
       delete: string
       viewLeaderboard: string
     }
+    filters: TokenListFiltersTranslations
+    bulk: TokenListBulkTranslations
     statusBadges: {
       disabled: string
     }
