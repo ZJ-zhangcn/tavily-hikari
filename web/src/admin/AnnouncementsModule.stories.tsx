@@ -114,7 +114,13 @@ function installAnnouncementsFetchMock(items: Announcement[]): () => void {
   }
 }
 
-function AnnouncementsModuleStory({ items = sampleAnnouncements }: { items?: Announcement[] }): JSX.Element {
+function AnnouncementsModuleStory({
+  items = sampleAnnouncements,
+  initialMode = 'list',
+}: {
+  items?: Announcement[]
+  initialMode?: 'list' | 'create'
+}): JSX.Element {
   const [ready, setReady] = useState(false)
 
   useLayoutEffect(() => {
@@ -131,7 +137,7 @@ function AnnouncementsModuleStory({ items = sampleAnnouncements }: { items?: Ann
 
   return (
     <div style={{ padding: 24, background: 'hsl(var(--background))' }}>
-      <AnnouncementsModule language="zh" />
+      <AnnouncementsModule language="zh" initialMode={initialMode} />
     </div>
   )
 }
@@ -152,6 +158,7 @@ const meta = {
   args: {
     language: 'zh',
     refreshToken: 0,
+    initialMode: 'list',
   },
   render: () => <AnnouncementsModuleStory />,
 } satisfies Meta<typeof AnnouncementsModule>
@@ -163,17 +170,33 @@ type Story = StoryObj<typeof meta>
 export const Default: Story = {
   play: async ({ canvasElement }) => {
     await new Promise((resolve) => window.setTimeout(resolve, 180))
-    if (canvasElement.querySelector('.announcements-editor') == null) {
-      throw new Error('Expected announcements editor to render.')
+    if (canvasElement.querySelector('.announcements-editor') != null) {
+      throw new Error('Expected list view to keep the editor off the page.')
     }
     if (canvasElement.querySelector('.announcements-table') == null) {
       throw new Error('Expected announcements table to render.')
+    }
+    if (canvasElement.querySelector('.announcements-list-header') == null) {
+      throw new Error('Expected announcements list header to render.')
     }
   },
 }
 
 export const Empty: Story = {
   render: () => <AnnouncementsModuleStory items={emptyAnnouncements} />,
+}
+
+export const CreateAnnouncement: Story = {
+  render: () => <AnnouncementsModuleStory initialMode="create" />,
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 180))
+    if (canvasElement.querySelector('.announcements-table') != null) {
+      throw new Error('Expected create view to hide the announcement list.')
+    }
+    if (canvasElement.querySelector('.announcements-editor') == null) {
+      throw new Error('Expected create editor to render.')
+    }
+  },
 }
 
 export const Mobile: Story = {
