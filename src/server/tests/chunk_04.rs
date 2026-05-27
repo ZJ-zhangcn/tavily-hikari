@@ -1408,8 +1408,8 @@ colo=LAX
     }
 
     #[tokio::test]
-    async fn user_recharge_feature_switch_hides_config_and_rejects_orders() {
-        let db_path = temp_db_path("linuxdo-recharge-feature-off");
+    async fn user_recharge_default_switches_hide_config_and_reject_orders() {
+        let db_path = temp_db_path("linuxdo-recharge-default-off");
         let db_str = db_path.to_string_lossy().to_string();
         let proxy = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
             .await
@@ -1417,9 +1417,9 @@ colo=LAX
         let user = proxy
             .upsert_oauth_account(&OAuthAccountProfile {
                 provider: "linuxdo".to_string(),
-                provider_user_id: "linuxdo-recharge-feature-user".to_string(),
-                username: Some("feature_user".to_string()),
-                name: Some("Feature User".to_string()),
+                provider_user_id: "linuxdo-recharge-default-user".to_string(),
+                username: Some("default_user".to_string()),
+                name: Some("Default User".to_string()),
                 avatar_template: None,
                 active: true,
                 trust_level: Some(2),
@@ -1431,16 +1431,6 @@ colo=LAX
             .create_user_session(&user, 3600)
             .await
             .expect("create user session");
-        let mut settings = proxy
-            .get_system_settings()
-            .await
-            .expect("load system settings");
-        settings.recharge_feature_enabled = false;
-        settings.recharge_user_enabled = true;
-        proxy
-            .set_system_settings(&settings)
-            .await
-            .expect("disable recharge feature");
 
         let addr =
             spawn_user_oauth_recharge_server(proxy.clone(), linuxdo_credit_options_for_test(), true)

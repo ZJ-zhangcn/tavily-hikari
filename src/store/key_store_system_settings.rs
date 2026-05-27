@@ -53,12 +53,12 @@ impl KeyStore {
         let recharge_feature_enabled = self
             .get_meta_i64(META_KEY_RECHARGE_FEATURE_ENABLED_V1)
             .await?
-            .unwrap_or(1)
+            .unwrap_or(0)
             != 0;
         let recharge_user_enabled = self
             .get_meta_i64(META_KEY_RECHARGE_USER_ENABLED_V1)
             .await?
-            .unwrap_or(1)
+            .unwrap_or(0)
             != 0;
         let user_blocked_key_base_limit = self.fetch_user_blocked_key_base_limit().await?;
         let global_ip_limit = self
