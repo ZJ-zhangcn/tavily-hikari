@@ -208,10 +208,10 @@ export const CreateAnnouncement: Story = {
       throw new Error('Expected create editor to avoid persistent toolbar chrome.')
     }
     if (canvasElement.querySelector('.announcements-body-milkdown-preview') == null) {
-      throw new Error('Expected split mode to render a Milkdown-backed read-only preview.')
+      throw new Error('Expected split mode to render a Milkdown-backed read-only render.')
     }
-    if (canvasElement.querySelector('.announcements-preview') == null) {
-      throw new Error('Expected user-side announcement preview to render.')
+    if (canvasElement.querySelector('.announcements-preview') != null) {
+      throw new Error('Expected create editor to avoid editor-side user preview.')
     }
     if (!canvasElement.textContent?.includes('保存并发布')) {
       throw new Error('Expected create editor to expose save-and-publish action.')
@@ -229,8 +229,31 @@ export const CreateAnnouncementMobile: Story = {
     if (canvasElement.querySelector('.announcements-editor-actions') == null) {
       throw new Error('Expected mobile create view to render editor actions.')
     }
-    if (canvasElement.querySelector('.announcements-preview') == null) {
-      throw new Error('Expected mobile create view to render preview.')
+    if (canvasElement.querySelector('.announcements-preview') != null) {
+      throw new Error('Expected mobile create view to avoid editor-side preview.')
+    }
+  },
+}
+
+export const PreviewFromList: Story = {
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 180))
+    const previewButtons = Array.from(canvasElement.querySelectorAll('button'))
+      .filter((button) => button.textContent?.trim() === '预览') as HTMLButtonElement[]
+    if (previewButtons.length < 2) {
+      throw new Error('Expected list rows to expose preview actions.')
+    }
+
+    previewButtons[1].click()
+    await new Promise((resolve) => window.setTimeout(resolve, 120))
+    if (canvasElement.querySelector('.user-console-announcement-ticker') == null) {
+      throw new Error('Expected ticker preview to reuse the user-console ticker display.')
+    }
+
+    previewButtons[0].click()
+    await new Promise((resolve) => window.setTimeout(resolve, 120))
+    if (document.body.querySelector('.user-console-announcement-dialog') == null) {
+      throw new Error('Expected modal preview to reuse the user-console dialog display.')
     }
   },
 }

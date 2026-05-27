@@ -18,6 +18,8 @@ import SegmentedTabs, { type SegmentedTabsOption } from '../components/ui/Segmen
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
+import UserConsoleAnnouncements from '../user-console/Announcements'
+import { EN as USER_CONSOLE_EN, ZH as USER_CONSOLE_ZH } from '../user-console/text'
 import { Icon } from '../lib/icons'
 import type { Language } from '../i18n'
 
@@ -79,13 +81,11 @@ function copy(language: Language) {
         bodyModeMarkdown: 'Markdown',
         bodyModeSplit: '左右对比',
         bodyModeWysiwyg: '所见即所得',
-        bodyModePreviewLabel: 'Milkdown 只读预览',
+        bodyModeRenderLabel: 'Milkdown 只读渲染',
+        bodyModeRenderEmpty: '正文为空。',
         displayLabel: '展示方式',
         modal: '弹窗',
         ticker: '滚动',
-        previewTitle: '用户侧预览',
-        previewEmpty: '填写标题和正文后显示预览。',
-        previewAcknowledge: '知道了',
         saveDraft: '保存草稿',
         saveChanges: '保存修改',
         saveAndPublish: '保存并发布',
@@ -106,6 +106,7 @@ function copy(language: Language) {
           actions: '操作',
         },
         actions: {
+          preview: '预览',
           edit: '编辑',
           publish: '发布',
           archive: '归档',
@@ -144,13 +145,11 @@ function copy(language: Language) {
         bodyModeMarkdown: 'Markdown',
         bodyModeSplit: 'Split',
         bodyModeWysiwyg: 'WYSIWYG',
-        bodyModePreviewLabel: 'Milkdown read-only preview',
+        bodyModeRenderLabel: 'Milkdown read-only render',
+        bodyModeRenderEmpty: 'The body is empty.',
         displayLabel: 'Display',
         modal: 'Modal',
         ticker: 'Ticker',
-        previewTitle: 'User preview',
-        previewEmpty: 'Add a title and body to show the preview.',
-        previewAcknowledge: 'Got it',
         saveDraft: 'Save draft',
         saveChanges: 'Save changes',
         saveAndPublish: 'Save and publish',
@@ -171,6 +170,7 @@ function copy(language: Language) {
           actions: 'Actions',
         },
         actions: {
+          preview: 'Preview',
           edit: 'Edit',
           publish: 'Publish',
           archive: 'Archive',
@@ -238,63 +238,6 @@ function editorDescription(mode: AnnouncementEditorMode, strings: AnnouncementCo
   return strings.formDescriptionEdit
 }
 
-function AnnouncementDisplayPreview({
-  draft,
-  strings,
-}: {
-  draft: AnnouncementDraft
-  strings: AnnouncementCopy
-}): JSX.Element {
-  const title = draft.title.trim()
-  const body = draft.body.trim()
-  const hasContent = title.length > 0 || body.length > 0
-  const previewTitle = title || strings.titlePlaceholder
-  const previewBody = body || strings.previewEmpty
-
-  return (
-    <section className="announcements-preview" aria-labelledby="announcement-preview-label">
-      <div className="announcements-preview-header">
-        <span id="announcement-preview-label">{strings.previewTitle}</span>
-        <StatusBadge tone="neutral">
-          {displayLabel(draft.displayKind, strings)}
-        </StatusBadge>
-      </div>
-      {draft.displayKind === 'ticker' ? (
-        <div className="announcements-preview-ticker" aria-label={strings.ticker}>
-          <div className="announcements-preview-icon" aria-hidden="true">
-            <Icon icon="mdi:bullhorn-outline" width={18} height={18} />
-          </div>
-          <div className="announcements-preview-copy">
-            <strong>{previewTitle}</strong>
-            <MilkdownPreviewContent
-              value={previewBody}
-              label={strings.previewTitle}
-              compact={!hasContent}
-            />
-          </div>
-        </div>
-      ) : (
-        <div className="announcements-preview-modal" aria-label={strings.modal}>
-          <div className="announcements-preview-modal-header">
-            <Icon icon="mdi:bullhorn-outline" width={18} height={18} aria-hidden="true" />
-            <strong>{previewTitle}</strong>
-          </div>
-          <MilkdownPreviewContent
-            value={previewBody}
-            label={strings.previewTitle}
-            className="announcements-preview-body"
-          />
-          <div className="announcements-preview-modal-actions">
-            <Button type="button" size="xs" disabled>
-              {strings.previewAcknowledge}
-            </Button>
-          </div>
-        </div>
-      )}
-    </section>
-  )
-}
-
 function AnnouncementBodyEditor({
   mode,
   draft,
@@ -330,8 +273,8 @@ function AnnouncementBodyEditor({
       <div className="announcements-body-split">
         {textarea}
         <MilkdownPreviewContent
-          value={draft.body || strings.previewEmpty}
-          label={strings.bodyModePreviewLabel}
+          value={draft.body || strings.bodyModeRenderEmpty}
+          label={strings.bodyModeRenderLabel}
           className="announcements-body-milkdown-preview"
         />
       </div>
@@ -356,12 +299,10 @@ function AnnouncementBodyEditor({
 function MilkdownPreviewContent({
   value,
   label,
-  compact = false,
   className,
 }: {
   value: string
   label: string
-  compact?: boolean
   className?: string
 }): JSX.Element {
   return (
@@ -372,7 +313,6 @@ function MilkdownPreviewContent({
       readOnly
       className={[
         'announcements-milkdown-preview',
-        compact ? 'announcements-milkdown-preview--compact' : '',
         className ?? '',
       ].filter(Boolean).join(' ')}
       onChange={() => {}}
@@ -381,7 +321,7 @@ function MilkdownPreviewContent({
           className="textarea announcements-body-fallback announcements-body-fallback--readonly"
           value={value}
           aria-label={label}
-          rows={compact ? 2 : 5}
+          rows={5}
           readOnly
         />
       )}
@@ -466,29 +406,26 @@ function AnnouncementEditorPanel({
           </SelectContent>
         </Select>
       </label>
-      <div className="announcements-editor-body-grid">
-        <div className="announcements-field">
-          <div className="announcements-body-heading">
-            <span id="announcement-body-editor-label">{strings.bodyLabel}</span>
-            <SegmentedTabs<AnnouncementBodyMode>
-              value={bodyMode}
-              onChange={setBodyMode}
-              options={bodyModeOptions}
-              ariaLabel={strings.bodyModeLabel}
-              className="announcements-body-mode-tabs"
-              disabled={saving}
-            />
-          </div>
-          <span id="announcement-body-editor-hint" className="sr-only">{strings.bodyA11yHint}</span>
-          <AnnouncementBodyEditor
-            mode={bodyMode}
-            draft={draft}
-            strings={strings}
-            saving={saving}
-            onChangeDraft={onChangeDraft}
+      <div className="announcements-field">
+        <div className="announcements-body-heading">
+          <span id="announcement-body-editor-label">{strings.bodyLabel}</span>
+          <SegmentedTabs<AnnouncementBodyMode>
+            value={bodyMode}
+            onChange={setBodyMode}
+            options={bodyModeOptions}
+            ariaLabel={strings.bodyModeLabel}
+            className="announcements-body-mode-tabs"
+            disabled={saving}
           />
         </div>
-        <AnnouncementDisplayPreview draft={draft} strings={strings} />
+        <span id="announcement-body-editor-hint" className="sr-only">{strings.bodyA11yHint}</span>
+        <AnnouncementBodyEditor
+          mode={bodyMode}
+          draft={draft}
+          strings={strings}
+          saving={saving}
+          onChangeDraft={onChangeDraft}
+        />
       </div>
       <div className="announcements-editor-actions">
         <Button type="button" variant="outline" onClick={onBack} disabled={saving}>
@@ -584,6 +521,7 @@ function AnnouncementsListPanel({
   language,
   onCreate,
   onEdit,
+  onPreview,
   onAct,
 }: {
   items: Announcement[]
@@ -594,6 +532,7 @@ function AnnouncementsListPanel({
   language: Language
   onCreate: () => void
   onEdit: (item: Announcement) => void
+  onPreview: (item: Announcement) => void
   onAct: (id: string, action: 'publish' | 'archive') => void
 }): JSX.Element {
   return (
@@ -653,6 +592,9 @@ function AnnouncementsListPanel({
                       <td>{formatTimestamp(item.updatedAt, language)}</td>
                       <td>
                         <div className="table-actions announcements-actions">
+                          <Button type="button" variant="outline" size="xs" onClick={() => onPreview(item)}>
+                            {strings.actions.preview}
+                          </Button>
                           <Button type="button" variant="outline" size="xs" onClick={() => onEdit(item)}>
                             {strings.actions.edit}
                           </Button>
@@ -706,6 +648,9 @@ function AnnouncementsListPanel({
                     <strong>{formatTimestamp(item.updatedAt, language)}</strong>
                   </div>
                   <div className="table-actions announcements-mobile-actions">
+                    <Button type="button" variant="outline" size="xs" onClick={() => onPreview(item)}>
+                      {strings.actions.preview}
+                    </Button>
                     <Button type="button" variant="outline" size="xs" onClick={() => onEdit(item)}>
                       {strings.actions.edit}
                     </Button>
@@ -741,6 +686,33 @@ function AnnouncementsListPanel({
   )
 }
 
+function AnnouncementUserPreview({
+  item,
+  language,
+  onClose,
+}: {
+  item: Announcement | null
+  language: Language
+  onClose: () => void
+}): JSX.Element | null {
+  if (!item) return null
+
+  return (
+    <div className="announcements-user-preview">
+      <UserConsoleAnnouncements
+        language={language}
+        text={language === 'zh' ? USER_CONSOLE_ZH : USER_CONSOLE_EN}
+        activeAnnouncements={[item]}
+        historyAnnouncements={[]}
+        closedRecords={{}}
+        historyOpen={false}
+        onHistoryOpenChange={() => {}}
+        onCloseAnnouncement={onClose}
+      />
+    </div>
+  )
+}
+
 export default function AnnouncementsModule({
   language,
   refreshToken = 0,
@@ -758,6 +730,7 @@ export default function AnnouncementsModule({
   )
   const [submittingAction, setSubmittingAction] = useState<AnnouncementSubmitAction | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
+  const [previewItem, setPreviewItem] = useState<Announcement | null>(null)
 
   const load = useCallback(async (signal?: AbortSignal, mode: 'initial' | 'refresh' = 'refresh') => {
     if (mode === 'initial') {
@@ -789,6 +762,7 @@ export default function AnnouncementsModule({
   const startCreate = () => {
     setEditorMode({ kind: 'create' })
     setDraft(EMPTY_DRAFT)
+    setPreviewItem(null)
     setMessage(null)
     setError(null)
   }
@@ -796,6 +770,7 @@ export default function AnnouncementsModule({
   const startEdit = (item: Announcement) => {
     setEditorMode({ kind: 'edit', id: item.id, status: item.status })
     setDraft(toDraft(item))
+    setPreviewItem(null)
     setMessage(null)
     setError(null)
   }
@@ -835,6 +810,7 @@ export default function AnnouncementsModule({
 
   const act = async (id: string, action: 'publish' | 'archive') => {
     setBusyId(id)
+    setPreviewItem(null)
     setError(null)
     try {
       if (action === 'publish') {
@@ -891,17 +867,25 @@ export default function AnnouncementsModule({
           onSubmit={(action) => void submit(action)}
         />
       ) : (
-        <AnnouncementsListPanel
-          items={items}
-          loading={loading}
-          error={error}
-          busyId={busyId}
-          strings={strings}
-          language={language}
-          onCreate={startCreate}
-          onEdit={startEdit}
-          onAct={(id, action) => void act(id, action)}
-        />
+        <>
+          <AnnouncementUserPreview
+            item={previewItem}
+            language={language}
+            onClose={() => setPreviewItem(null)}
+          />
+          <AnnouncementsListPanel
+            items={items}
+            loading={loading}
+            error={error}
+            busyId={busyId}
+            strings={strings}
+            language={language}
+            onCreate={startCreate}
+            onEdit={startEdit}
+            onPreview={setPreviewItem}
+            onAct={(id, action) => void act(id, action)}
+          />
+        </>
       )}
     </section>
   )

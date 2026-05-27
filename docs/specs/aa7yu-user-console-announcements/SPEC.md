@@ -47,7 +47,8 @@
 - 管理员只能通过既有 admin 判定访问公告管理 API。
 - 管理端公告模块必须按列表、创建/编辑功能拆分；新增公告不得常驻在列表页内。
 - 管理端创建/编辑公告正文必须提供 Markdown 编辑器，不能只提供纯文本输入框。
-- 公告正文必须按 Markdown 原文保存，并在管理端预览和用户端公告展示中安全渲染。
+- 公告正文必须按 Markdown 原文保存，并在管理端列表预览和用户端公告展示中安全渲染。
+- 管理端创建/编辑视图只承载正文编辑模式，不提供自制用户侧预览；列表页预览必须复用真实用户端弹窗或滚动公告展示组件。
 - 公告 Markdown 不得执行或渲染原始 HTML；图片禁用，危险链接必须降级为不可点击文本。
 - 草稿可编辑；已发布公告更新时必须生成新公告 ID 并归档旧公告，确保用户浏览器把更新后的公告视为新提醒。
 - 归档公告编辑时必须保留旧归档记录并生成新草稿，避免覆盖历史公告内容。
@@ -102,6 +103,7 @@
 ### UI / Storybook
 
 - Storybook 覆盖管理端公告模块的列表/编辑/发布态。
+- Storybook 覆盖管理端公告列表页预览，确保预览复用用户端弹窗/滚动公告展示。
 - Storybook 覆盖管理端公告模块的独立创建视图，确保新增公告不嵌在列表页。
 - Storybook 覆盖用户控制台弹窗、滚动公告、Markdown 正文和通知历史入口。
 - 视觉证据写入本 spec 的 `## Visual Evidence`。
@@ -136,26 +138,26 @@
   image:
   ![Admin announcements create](./assets/admin-announcements-create-split.png)
 
-- source_type: mock_ui
-  story_id_or_title: `http://127.0.0.1:62400/admin/announcements`
-  state: admin announcement create view with polished Milkdown editor
-  evidence_note: 新建公告页面使用真实 Milkdown Crepe 编辑器；空状态不暴露残缺工具条，正文与用户侧预览双栏展示，保存草稿和保存并发布操作同屏可达。
-  image:
-  ![Admin announcements polished editor](./assets/admin-announcements-editor-polished.png)
-
-- source_type: mock_ui
-  story_id_or_title: `http://127.0.0.1:62400/admin/announcements`
+- source_type: storybook_canvas
+  story_id_or_title: `Admin/AnnouncementsModule/Create Announcement`
   state: admin announcement editor Markdown, split, and WYSIWYG modes
-  evidence_note: 正文编辑器提供 Markdown、左右对比、所见即所得三种模式；左右对比和用户侧预览都由 Milkdown 只读实例渲染，避免独立实现预览效果。
+  evidence_note: 正文编辑器提供 Markdown、左右对比、所见即所得三种模式；编辑器内只保留编辑相关渲染，不再提供自制用户侧预览。
   image:
   ![Admin announcement editor modes](./assets/admin-announcements-editor-modes.png)
 
-- source_type: mock_ui
-  story_id_or_title: `http://127.0.0.1:62400/admin/announcements`
-  state: mobile admin announcement create view with sticky actions
-  evidence_note: 移动端创建公告时正文、用户侧预览和保存动作保持单栏阅读，保存草稿与保存并发布作为底部 sticky 操作可达。
+- source_type: storybook_canvas
+  story_id_or_title: `Admin/AnnouncementsModule/Default`
+  state: admin list preview using user-console ticker display
+  evidence_note: 管理端列表页点击滚动公告预览时，直接渲染用户控制台的滚动公告组件，而不是编辑器内仿制预览。
   image:
-  ![Admin announcements polished editor mobile](./assets/admin-announcements-editor-mobile-polished.png)
+  ![Admin announcements ticker preview](./assets/admin-announcements-list-preview-ticker.png)
+
+- source_type: storybook_canvas
+  story_id_or_title: `Admin/AnnouncementsModule/Preview From List`
+  state: admin list preview using user-console modal display
+  evidence_note: 管理端列表页点击弹窗公告预览时，直接打开用户控制台的弹窗公告组件，展示方式与用户端保持一致。
+  image:
+  ![Admin announcements modal preview](./assets/admin-announcements-list-preview-modal.png)
 
 ## Related PRs
 
