@@ -5,6 +5,7 @@ import {
 } from '../lib/mcpProbe'
 import type { TokenLogRequestKindOption } from '../tokenLogRequestKinds'
 import type { ClientIpHeaderValue } from './clientIp'
+import type { AuthToken, AuthTokenSecret } from './tokens'
 import { normalizeUserDashboard, normalizeUserTokenSummary, normalizeUserTokenSummaryList } from './userConsoleNormalization'
 
 export interface Summary {
@@ -885,36 +886,10 @@ export interface ApiKeyListFacets {
   regions: ApiKeyFacetOption[]
 }
 
-// ---- Access Tokens (for /mcp auth) ----
 export interface TokenOwnerSummary {
   userId: string
   displayName: string | null
   username: string | null
-}
-
-export interface AuthToken {
-  id: string // 4-char code
-  enabled: boolean
-  note: string | null
-  group: string | null
-  owner?: TokenOwnerSummary | null
-  total_requests: number
-  created_at: number
-  last_used_at: number | null
-  quota_state: 'normal' | 'hour' | 'day' | 'month'
-  quota_hourly_used: number
-  quota_hourly_limit: number
-  quota_daily_used: number
-  quota_daily_limit: number
-  quota_monthly_used: number
-  quota_monthly_limit: number
-  quota_hourly_reset_at: number | null
-  quota_daily_reset_at: number | null
-  quota_monthly_reset_at: number | null
-}
-
-export interface AuthTokenSecret {
-  token: string // th-<id>-<secret>
 }
 
 export interface TodayWindowRange {
@@ -2776,51 +2751,6 @@ export async function unbindAdminUserTag(userId: string, tagId: string): Promise
   await requestNoContent(`/api/users/${encodedUserId}/tags/${encodedTagId}`, { method: 'DELETE' })
 }
 
-export interface TokenGroup {
-  name: string
-  tokenCount: number
-  latestCreatedAt: number
-}
-
-export function fetchTokens(
-  page = 1,
-  perPage = 10,
-  options?: { group?: string | null; ungrouped?: boolean },
-  signal?: AbortSignal,
-): Promise<Paginated<AuthToken>> {
-  const params = new URLSearchParams({ page: String(page), per_page: String(perPage) })
-  if (options?.ungrouped) {
-    params.set('no_group', 'true')
-  } else if (options?.group && options.group.trim().length > 0) {
-    params.set('group', options.group.trim())
-  }
-  return requestJson(`/api/tokens?${params.toString()}`, { signal })
-}
-
-export async function createToken(note?: string): Promise<AuthTokenSecret> {
-  return await requestJson('/api/tokens', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ note }),
-  })
-}
-
-export async function deleteToken(id: string): Promise<void> {
-  const encoded = encodeURIComponent(id)
-  const res = await fetch(`/api/tokens/${encoded}`, { method: 'DELETE' })
-  if (!res.ok) throw new Error(`Failed to delete token: ${res.status}`)
-}
-
-export async function setTokenEnabled(id: string, enabled: boolean): Promise<void> {
-  const encoded = encodeURIComponent(id)
-  const res = await fetch(`/api/tokens/${encoded}/status`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled }),
-  })
-  if (!res.ok) throw new Error(`Failed to update token status: ${res.status}`)
-}
-
 export async function updateTokenNote(id: string, note: string): Promise<void> {
   const encoded = encodeURIComponent(id)
   const res = await fetch(`/api/tokens/${encoded}/note`, {
@@ -2831,30 +2761,9 @@ export async function updateTokenNote(id: string, note: string): Promise<void> {
   if (!res.ok) throw new Error(`Failed to update token note: ${res.status}`)
 }
 
-export function fetchTokenSecret(id: string, signal?: AbortSignal): Promise<AuthTokenSecret> {
-  const encoded = encodeURIComponent(id)
-  return requestJson(`/api/tokens/${encoded}/secret`, { signal })
-}
-
 export async function rotateTokenSecret(id: string): Promise<AuthTokenSecret> {
   const encoded = encodeURIComponent(id)
   return await requestJson(`/api/tokens/${encoded}/secret/rotate`, { method: 'POST' })
-}
-
-export interface BatchCreateTokensResponse {
-  tokens: string[]
-}
-
-export async function createTokensBatch(group: string, count: number, note?: string): Promise<BatchCreateTokensResponse> {
-  return await requestJson('/api/tokens/batch', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ group, count, note }),
-  })
-}
-
-export function fetchTokenGroups(signal?: AbortSignal): Promise<TokenGroup[]> {
-  return requestJson('/api/tokens/groups', { signal })
 }
 
 export function fetchTokenHourlyBuckets(id: string, hours = 25, signal?: AbortSignal): Promise<TokenHourlyBucket[]> {

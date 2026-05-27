@@ -1819,24 +1819,32 @@ tbody tr:hover {
   text-overflow: ellipsis;
 }
 
-.tokens-table th:nth-child(1),
-.tokens-table td:nth-child(1) {
+.tokens-table .token-id-col {
   width: 10%;
 }
 
-.tokens-table th:nth-child(3),
-.tokens-table td:nth-child(3) {
+.tokens-table .token-select-col {
+  width: 44px;
+  min-width: 44px;
+  max-width: 44px;
+  overflow: visible;
+  text-overflow: clip;
+  text-align: center;
+}
+
+.tokens-table th:nth-child(4),
+.tokens-table td:nth-child(4) {
   width: 12ch;
 }
 
-.tokens-table th:nth-child(5),
-.tokens-table td:nth-child(5) {
+.tokens-table th:nth-child(6),
+.tokens-table td:nth-child(6) {
   width: 21ch;
 }
 
 /* Token table: keep the actions column wide enough for icon buttons */
-.tokens-table th:nth-child(6),
-.tokens-table td:nth-child(6) {
+.tokens-table th:last-child,
+.tokens-table td:last-child {
   width: 182px;
 }
 

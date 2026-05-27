@@ -67,12 +67,62 @@ impl TavilyProxy {
         page: i64,
         per_page: i64,
     ) -> Result<(Vec<AuthToken>, i64), ProxyError> {
+        self.list_access_tokens_filtered_paged(page, per_page, AdminTokenListFilters::default())
+            .await
+    }
+
+    pub async fn list_access_tokens_filtered_paged(
+        &self,
+        page: i64,
+        per_page: i64,
+        filters: AdminTokenListFilters,
+    ) -> Result<(Vec<AuthToken>, i64), ProxyError> {
+        if filters.quota_state.is_some() {
+            let mut tokens = self.key_store.list_access_tokens_for_filters(&filters).await?;
+            self.populate_token_quota(&mut tokens).await?;
+            let quota_state = filters.quota_state.as_deref().unwrap_or("normal");
+            tokens.retain(|token| {
+                token
+                    .quota
+                    .as_ref()
+                    .map(|quota| quota.state_key())
+                    .unwrap_or("normal")
+                    == quota_state
+            });
+            let total = tokens.len() as i64;
+            let page = page.max(1);
+            let per_page = per_page.clamp(1, 200);
+            let start = ((page - 1) * per_page).max(0) as usize;
+            let end = start.saturating_add(per_page as usize).min(tokens.len());
+            let items = if start >= tokens.len() {
+                Vec::new()
+            } else {
+                tokens[start..end].to_vec()
+            };
+            return Ok((items, total));
+        }
+
         let (mut tokens, total) = self
             .key_store
-            .list_access_tokens_paged(page, per_page)
+            .list_access_tokens_filtered_paged(page, per_page, &filters)
             .await?;
         self.populate_token_quota(&mut tokens).await?;
         Ok((tokens, total))
+    }
+
+    pub async fn set_access_tokens_enabled(
+        &self,
+        ids: &[String],
+        enabled: bool,
+    ) -> Result<AdminTokenBatchMutationResult, ProxyError> {
+        self.key_store.set_access_tokens_enabled(ids, enabled).await
+    }
+
+    pub async fn delete_access_tokens(
+        &self,
+        ids: &[String],
+    ) -> Result<AdminTokenBatchMutationResult, ProxyError> {
+        self.key_store.delete_access_tokens(ids).await
     }
 
     pub(crate) async fn populate_token_quota(
