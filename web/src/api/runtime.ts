@@ -1786,13 +1786,15 @@ export interface UserDashboard {
   dailyFailure: number
   monthlySuccess: number
   lastActivity: number | null
+  recharge: UserDashboardRechargeSummary
+}
+
+export interface UserDashboardRechargeSummary {
+  currentMonthStart: number; currentEntitlementCredits: number; effectiveUntilMonthStart: number | null
 }
 
 export interface UserTokenSummary {
-  tokenId: string
-  enabled: boolean
-  note: string | null
-  lastUsedAt: number | null
+  tokenId: string; enabled: boolean; note: string | null; lastUsedAt: number | null
   requestRate: RequestRate
   hourlyAnyUsed: number
   hourlyAnyLimit: number
@@ -2882,6 +2884,8 @@ export interface SystemSettings {
   rebalanceMcpSessionPercent: number
   apiRebalanceEnabled: boolean
   apiRebalancePercent: number
+  rechargeFeatureEnabled: boolean
+  rechargeUserEnabled: boolean
   userBlockedKeyBaseLimit: number
   globalIpLimit: number
   trustedProxyCidrs: string[]
@@ -2910,6 +2914,8 @@ export interface UpdateSystemSettingsPayload {
   rebalanceMcpSessionPercent: number
   apiRebalanceEnabled: boolean
   apiRebalancePercent: number
+  rechargeFeatureEnabled: boolean
+  rechargeUserEnabled: boolean
   trustedProxyCidrs: string[]
   trustedClientIpHeaders: string[]
   userBlockedKeyBaseLimit: number
@@ -3053,6 +3059,8 @@ function createEmptySystemSettings(): SystemSettings {
     rebalanceMcpSessionPercent: 100,
     apiRebalanceEnabled: false,
     apiRebalancePercent: 0,
+    rechargeFeatureEnabled: false,
+    rechargeUserEnabled: false,
     userBlockedKeyBaseLimit: 5,
     globalIpLimit: 5,
     trustedProxyCidrs: ['127.0.0.0/8', '::1/128'],

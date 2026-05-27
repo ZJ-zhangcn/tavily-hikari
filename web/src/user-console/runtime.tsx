@@ -11,9 +11,11 @@ import ConnectivityChecksPanel, {
 import TokenSecretField, { type TokenSecretCopyState } from '../components/TokenSecretField'
 import ManualCopyBubble from '../components/ManualCopyBubble'
 import UserConsoleHeader from '../components/UserConsoleHeader'
+import DashboardQuotaGrid from './DashboardQuotaGrid'
 import TokenListActions from './TokenListActions'
+import RechargePanel from './RechargePanel'
+import { DEFAULT_RECHARGE_UNIT_CREDITS, normalizeRechargeSelection } from './rechargeControls'
 import TokenResetDialogs from './TokenResetDialogs'
-
 import {
   createBrowserTodayWindow,
   fetchVersion,
@@ -31,6 +33,9 @@ import {
   probeMcpToolsCall,
   probeMcpToolsList,
   fetchUserDashboard,
+  fetchUserRechargeConfig,
+  fetchUserRechargeOrders,
+  createUserRechargeOrder,
   fetchUserTokenDetail,
   buildUserTokenEventsUrl,
   fetchUserTokenLogs,
@@ -41,6 +46,8 @@ import {
   parseUserTokenEventSnapshot,
   type Profile,
   type PublicTokenLog,
+  type RechargeConfig,
+  type RechargeOrder,
   type UserTokenEventSnapshot,
   type UserDashboard,
   type UserTokenSummary,
@@ -1138,6 +1145,8 @@ export default function UserConsole(): JSX.Element {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [dashboard, setDashboard] = useState<UserDashboard | null>(null)
   const [tokens, setTokens] = useState<UserTokenSummary[]>([])
+  const [rechargeConfig, setRechargeConfig] = useState<RechargeConfig | null>(null)
+  const [rechargeOrders, setRechargeOrders] = useState<RechargeOrder[]>([])
   const [versionState, setVersionState] = useState<
     { status: 'loading' } | { status: 'error' } | { status: 'ready'; value: VersionInfo | null }
   >({ status: 'loading' })
@@ -1148,6 +1157,10 @@ export default function UserConsole(): JSX.Element {
   const [loading, setLoading] = useState(true)
   const [detailLoading, setDetailLoading] = useState(false)
   const [todayWindow, setTodayWindow] = useState(() => createBrowserTodayWindow())
+  const [rechargeCredits, setRechargeCredits] = useState(DEFAULT_RECHARGE_UNIT_CREDITS)
+  const [rechargeMonths, setRechargeMonths] = useState(1)
+  const [rechargeBusy, setRechargeBusy] = useState(false)
+  const [rechargeError, setRechargeError] = useState<string | null>(null)
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1209,6 +1222,8 @@ export default function UserConsole(): JSX.Element {
   const clearConsoleData = useCallback(() => {
     setDashboard(null)
     setTokens([])
+    setRechargeConfig(null)
+    setRechargeOrders([])
     setDetail(null)
     setDetailLogs([])
     setDetailLogsPushIssue(null)
@@ -1365,14 +1380,27 @@ export default function UserConsole(): JSX.Element {
         return
       }
 
-      const [nextDashboard, nextTokens] = await Promise.all([
+      const [nextDashboard, nextTokens, nextRechargeConfig, nextRechargeOrders] = await Promise.all([
         fetchUserDashboard(todayWindow, signal),
         fetchUserTokens(todayWindow, signal),
+        fetchUserRechargeConfig(signal).catch(() => null),
+        fetchUserRechargeOrders(signal).catch(() => []),
       ])
       if (signal.aborted || baseLoadRunIdRef.current !== runId) return
       setDashboard(nextDashboard)
       setTokens(nextTokens)
+      setRechargeConfig(nextRechargeConfig)
+      setRechargeOrders(nextRechargeOrders)
+      if (nextRechargeConfig) {
+        setRechargeCredits((current) => {
+          const next = current > 0 && current !== DEFAULT_RECHARGE_UNIT_CREDITS ? current : nextRechargeConfig.defaultCredits
+          return next
+        })
+        setRechargeMonths((current) =>
+          Math.min(nextRechargeConfig.maxMonths, Math.max(nextRechargeConfig.minMonths, current)))
+      }
       setError(null)
+      setRechargeError(null)
     } catch (err) {
       if (signal.aborted || baseLoadRunIdRef.current !== runId) return
       const message = err instanceof Error ? err.message : text.errors.load
@@ -2010,6 +2038,24 @@ export default function UserConsole(): JSX.Element {
   const showTokenListLoading = loading && tokens.length === 0
   const showEmptyTokens = !loading && tokens.length === 0
   const showLandingGuide = shouldRenderLandingGuide(route, tokens.length)
+  const rechargeMinMonths = rechargeConfig?.minMonths ?? 1, rechargeMaxMonths = rechargeConfig?.maxMonths ?? 12
+  const showRechargePanel = rechargeConfig?.visible ?? false
+
+  const handleRechargeSubmit = useCallback(async () => {
+    if (!rechargeConfig?.enabled || rechargeBusy) return
+    const rechargeSelection = normalizeRechargeSelection(rechargeCredits, rechargeMonths, rechargeConfig)
+    setRechargeBusy(true)
+    setRechargeError(null)
+    try {
+      const result = await createUserRechargeOrder(rechargeSelection)
+      window.location.href = result.paymentUrl
+    } catch (err) {
+      setRechargeError(formatTemplate(text.recharge.createFailed, {
+        message: getProbeErrorMessage(err),
+      }))
+      setRechargeBusy(false)
+    }
+  }, [rechargeBusy, rechargeConfig?.enabled, rechargeCredits, rechargeMonths, text.recharge.createFailed])
 
   const scrollToLandingSection = useCallback((section: UserConsoleLandingSection, behavior: ScrollBehavior = 'auto') => {
     const target = section === 'dashboard' ? dashboardSectionRef.current : tokensSectionRef.current
@@ -2570,52 +2616,35 @@ export default function UserConsole(): JSX.Element {
               </div>
             </header>
             <div className="access-stats">
-              <div className="access-stat">
-                <div className="access-stat-title">{text.dashboard.dailySuccess}</div>
-                <p><RollingNumber value={loading ? null : dashboard?.dailySuccess ?? 0} /></p>
-              </div>
-              <div className="access-stat">
-                <div className="access-stat-title">{text.dashboard.dailyFailure}</div>
-                <p><RollingNumber value={loading ? null : dashboard?.dailyFailure ?? 0} /></p>
-              </div>
-              <div className="access-stat">
-                <div className="access-stat-title">{text.dashboard.monthlySuccessUtc}</div>
-                <p><RollingNumber value={loading ? null : dashboard?.monthlySuccess ?? 0} /></p>
-              </div>
+              <div className="access-stat"><div className="access-stat-title">{text.dashboard.dailySuccess}</div><p><RollingNumber value={loading ? null : dashboard?.dailySuccess ?? 0} /></p></div>
+              <div className="access-stat"><div className="access-stat-title">{text.dashboard.dailyFailure}</div><p><RollingNumber value={loading ? null : dashboard?.dailyFailure ?? 0} /></p></div>
+              <div className="access-stat"><div className="access-stat-title">{text.dashboard.monthlySuccessUtc}</div><p><RollingNumber value={loading ? null : dashboard?.monthlySuccess ?? 0} /></p></div>
             </div>
-            <div className="access-stats">
-              <div className="access-stat quota-stat-card">
-                <div className="quota-stat-label">
-                  {formatRequestRateSummary(resolveRequestRate(dashboard, 'user'), language)}
-                </div>
-                <div className="quota-stat-value">
-                  {formatNumber(resolveRequestRate(dashboard, 'user').used)}
-                  <span>/ {formatNumber(resolveRequestRate(dashboard, 'user').limit)}</span>
-                </div>
-              </div>
-              <div className="access-stat quota-stat-card">
-                <div className="quota-stat-label">{text.dashboard.hourly}</div>
-                <div className="quota-stat-value">
-                  {formatNumber(dashboard?.quotaHourlyUsed ?? 0)}
-                  <span>/ {formatNumber(dashboard?.quotaHourlyLimit ?? 0)}</span>
-                </div>
-              </div>
-              <div className="access-stat quota-stat-card">
-                <div className="quota-stat-label">{text.dashboard.daily}</div>
-                <div className="quota-stat-value">
-                  {formatNumber(dashboard?.quotaDailyUsed ?? 0)}
-                  <span>/ {formatNumber(dashboard?.quotaDailyLimit ?? 0)}</span>
-                </div>
-              </div>
-              <div className="access-stat quota-stat-card">
-                <div className="quota-stat-label">{text.dashboard.monthly}</div>
-                <div className="quota-stat-value">
-                  {formatNumber(dashboard?.quotaMonthlyUsed ?? 0)}
-                  <span>/ {formatNumber(dashboard?.quotaMonthlyLimit ?? 0)}</span>
-                </div>
-              </div>
-            </div>
+            <DashboardQuotaGrid
+              text={text.dashboard}
+              rateLabel={formatRequestRateSummary(resolveRequestRate(dashboard, 'user'), language)}
+              rate={resolveRequestRate(dashboard, 'user')}
+              hourlyUsed={dashboard?.quotaHourlyUsed ?? 0}
+              hourlyLimit={dashboard?.quotaHourlyLimit ?? 0}
+              dailyUsed={dashboard?.quotaDailyUsed ?? 0}
+              dailyLimit={dashboard?.quotaDailyLimit ?? 0}
+              monthlyUsed={dashboard?.quotaMonthlyUsed ?? 0}
+              monthlyLimit={dashboard?.quotaMonthlyLimit ?? 0}
+              formatNumber={formatNumber}
+            />
           </section>
+
+          {showRechargePanel ? (
+            <RechargePanel
+              text={text.recharge} dashboard={dashboard}
+              config={rechargeConfig} orders={rechargeOrders}
+              credits={rechargeCredits} months={rechargeMonths}
+              busy={rechargeBusy} error={rechargeError}
+              onCreditsChange={setRechargeCredits}
+              onMonthsChange={(value) => setRechargeMonths(Math.min(rechargeMaxMonths, Math.max(rechargeMinMonths, value)))}
+              onCreateOrder={() => void handleRechargeSubmit()}
+            />
+          ) : null}
 
           <section
             ref={tokensSectionRef}
@@ -2807,51 +2836,22 @@ export default function UserConsole(): JSX.Element {
             </header>
 
             <div className="access-stats">
-              <div className="access-stat">
-                <div className="access-stat-title">{text.dashboard.dailySuccess}</div>
-                <p><RollingNumber value={detailLoading ? null : detail?.dailySuccess ?? 0} /></p>
-              </div>
-              <div className="access-stat">
-                <div className="access-stat-title">{text.dashboard.dailyFailure}</div>
-                <p><RollingNumber value={detailLoading ? null : detail?.dailyFailure ?? 0} /></p>
-              </div>
-              <div className="access-stat">
-                <div className="access-stat-title">{text.dashboard.monthlySuccessUtc}</div>
-                <p><RollingNumber value={detailLoading ? null : detail?.monthlySuccess ?? 0} /></p>
-              </div>
+              <div className="access-stat"><div className="access-stat-title">{text.dashboard.dailySuccess}</div><p><RollingNumber value={detailLoading ? null : detail?.dailySuccess ?? 0} /></p></div>
+              <div className="access-stat"><div className="access-stat-title">{text.dashboard.dailyFailure}</div><p><RollingNumber value={detailLoading ? null : detail?.dailyFailure ?? 0} /></p></div>
+              <div className="access-stat"><div className="access-stat-title">{text.dashboard.monthlySuccessUtc}</div><p><RollingNumber value={detailLoading ? null : detail?.monthlySuccess ?? 0} /></p></div>
             </div>
-            <div className="access-stats">
-              <div className="access-stat quota-stat-card">
-                <div className="quota-stat-label">
-                  {formatRequestRateSummary(resolveRequestRate(detail, 'token'), language)}
-                </div>
-                <div className="quota-stat-value">
-                  {formatNumber(resolveRequestRate(detail, 'token').used)}
-                  <span>/ {formatNumber(resolveRequestRate(detail, 'token').limit)}</span>
-                </div>
-              </div>
-              <div className="access-stat quota-stat-card">
-                <div className="quota-stat-label">{text.dashboard.hourly}</div>
-                <div className="quota-stat-value">
-                  {formatNumber(detail?.quotaHourlyUsed ?? 0)}
-                  <span>/ {formatNumber(detail?.quotaHourlyLimit ?? 0)}</span>
-                </div>
-              </div>
-              <div className="access-stat quota-stat-card">
-                <div className="quota-stat-label">{text.dashboard.daily}</div>
-                <div className="quota-stat-value">
-                  {formatNumber(detail?.quotaDailyUsed ?? 0)}
-                  <span>/ {formatNumber(detail?.quotaDailyLimit ?? 0)}</span>
-                </div>
-              </div>
-              <div className="access-stat quota-stat-card">
-                <div className="quota-stat-label">{text.dashboard.monthly}</div>
-                <div className="quota-stat-value">
-                  {formatNumber(detail?.quotaMonthlyUsed ?? 0)}
-                  <span>/ {formatNumber(detail?.quotaMonthlyLimit ?? 0)}</span>
-                </div>
-              </div>
-            </div>
+            <DashboardQuotaGrid
+              text={text.dashboard}
+              rateLabel={formatRequestRateSummary(resolveRequestRate(detail, 'token'), language)}
+              rate={resolveRequestRate(detail, 'token')}
+              hourlyUsed={detail?.quotaHourlyUsed ?? 0}
+              hourlyLimit={detail?.quotaHourlyLimit ?? 0}
+              dailyUsed={detail?.quotaDailyUsed ?? 0}
+              dailyLimit={detail?.quotaDailyLimit ?? 0}
+              monthlyUsed={detail?.quotaMonthlyUsed ?? 0}
+              monthlyLimit={detail?.quotaMonthlyLimit ?? 0}
+              formatNumber={formatNumber}
+            />
 
             <TokenSecretField
               inputId={`user-console-token-${route.id}`}
