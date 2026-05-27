@@ -1,5 +1,6 @@
 import type { Announcement } from '../api'
 import { StatusBadge } from '../components/StatusBadge'
+import MarkdownContent from '../components/MarkdownContent'
 import { Button } from '../components/ui/button'
 import {
   Dialog,
@@ -87,7 +88,7 @@ export default function UserConsoleAnnouncements({
           </div>
           <div className="user-console-announcement-ticker-copy">
             <strong>{tickerAnnouncement.title}</strong>
-            <span>{tickerAnnouncement.body}</span>
+            <MarkdownContent content={tickerAnnouncement.body} compact />
           </div>
           <Button
             type="button"
@@ -118,9 +119,10 @@ export default function UserConsoleAnnouncements({
                 {strings.modalDescription}
               </DialogDescription>
             </DialogHeader>
-            <div className="user-console-announcement-dialog-body">
-              {modalAnnouncement.body}
-            </div>
+            <MarkdownContent
+              content={modalAnnouncement.body}
+              className="user-console-announcement-dialog-body"
+            />
             <DialogFooter>
               <Button type="button" onClick={() => onCloseAnnouncement(modalAnnouncement.id)}>
                 {strings.modalAcknowledge}
@@ -155,7 +157,10 @@ export default function UserConsoleAnnouncements({
                       {item.status === 'published' ? strings.published : strings.archived}
                     </StatusBadge>
                   </header>
-                  <p>{item.body}</p>
+                  <MarkdownContent
+                    content={item.body}
+                    className="user-console-announcement-history-body"
+                  />
                   {isClosed(item, closedRecords) ? (
                     <div className="user-console-announcement-closed">
                       <Icon icon="mdi:check-circle-outline" width={16} height={16} aria-hidden="true" />

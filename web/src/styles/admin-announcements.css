@@ -40,8 +40,8 @@
 .announcements-editor-header p,
 .announcements-list-header p,
 .announcements-field span,
-.announcements-title-cell span,
-.announcements-mobile-card p {
+.announcements-title-cell .markdown-content,
+.announcements-mobile-body {
   color: hsl(var(--muted-foreground));
 }
 
@@ -134,7 +134,7 @@
 }
 
 .announcements-title-cell strong,
-.announcements-title-cell span {
+.announcements-title-cell .markdown-content {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -150,11 +150,6 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
-}
-
-.announcements-mobile-card p {
-  margin: 0;
-  line-height: 1.5;
 }
 
 @media (max-width: 720px) {

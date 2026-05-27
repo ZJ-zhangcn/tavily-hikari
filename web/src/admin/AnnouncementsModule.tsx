@@ -12,6 +12,7 @@ import {
   type AnnouncementStatus,
 } from '../api'
 import AdminLoadingRegion from '../components/AdminLoadingRegion'
+import MarkdownContent from '../components/MarkdownContent'
 import { StatusBadge, type StatusTone } from '../components/StatusBadge'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
@@ -345,7 +346,7 @@ function AnnouncementsListPanel({
                       <td>
                         <div className="announcements-title-cell">
                           <strong>{item.title}</strong>
-                          <span>{item.body}</span>
+                          <MarkdownContent content={item.body} compact />
                         </div>
                       </td>
                       <td>{displayLabel(item.displayKind, strings)}</td>
@@ -397,7 +398,10 @@ function AnnouncementsListPanel({
                       {strings.status[item.status]}
                     </StatusBadge>
                   </header>
-                  <p>{item.body}</p>
+                  <MarkdownContent
+                    content={item.body}
+                    className="announcements-mobile-body"
+                  />
                   <div className="admin-mobile-kv">
                     <span>{strings.table.display}</span>
                     <strong>{displayLabel(item.displayKind, strings)}</strong>

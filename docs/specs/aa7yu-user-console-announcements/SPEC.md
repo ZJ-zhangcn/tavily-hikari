@@ -43,9 +43,11 @@
 
 ### MUST
 
-- 公告必须包含标题、正文、展示方式、状态、创建/更新时间，发布和归档时间按状态记录。
+- 公告必须包含标题、Markdown 正文、展示方式、状态、创建/更新时间，发布和归档时间按状态记录。
 - 管理员只能通过既有 admin 判定访问公告管理 API。
 - 管理端公告模块必须按列表、创建/编辑功能拆分；新增公告不得常驻在列表页内。
+- 公告正文必须按 Markdown 原文保存，并在管理端预览和用户端公告展示中安全渲染。
+- 公告 Markdown 不得执行或渲染原始 HTML；图片禁用，危险链接必须降级为不可点击文本。
 - 草稿可编辑；已发布公告更新时必须生成新公告 ID 并归档旧公告，确保用户浏览器把更新后的公告视为新提醒。
 - 归档公告编辑时必须保留旧归档记录并生成新草稿，避免覆盖历史公告内容。
 - 归档公告再次发布时必须保留旧归档记录并生成新公告 ID，避免被旧浏览器关闭记录吞掉。
@@ -100,7 +102,7 @@
 
 - Storybook 覆盖管理端公告模块的列表/编辑/发布态。
 - Storybook 覆盖管理端公告模块的独立创建视图，确保新增公告不嵌在列表页。
-- Storybook 覆盖用户控制台弹窗、滚动公告和通知历史入口。
+- Storybook 覆盖用户控制台弹窗、滚动公告、Markdown 正文和通知历史入口。
 - 视觉证据写入本 spec 的 `## Visual Evidence`。
 
 ### Quality checks
@@ -115,16 +117,16 @@
 - source_type: storybook_canvas
   story_id_or_title: `User Console/UserConsole/Console Home Announcements`
   state: active modal and ticker announcements
-  evidence_note: 用户控制台会显示滚动公告，并打开当前弹窗公告；页头通知入口显示未关闭数量。
+  evidence_note: 用户控制台会显示滚动公告，并打开当前弹窗公告；公告正文按 Markdown 渲染粗体、列表与行内代码。
   image:
-  ![User console announcements](./assets/user-console-announcements.png)
+  ![User console announcements](./assets/user-console-announcements-markdown.png)
 
 - source_type: storybook_canvas
   story_id_or_title: `Admin/AnnouncementsModule/Default`
   state: admin announcement list only
-  evidence_note: 管理端公告列表页只展示列表、状态和发布/归档/编辑操作，新增入口以按钮进入独立功能视图。
+  evidence_note: 管理端公告列表页只展示列表、状态和发布/归档/编辑操作，并用紧凑 Markdown 预览公告正文。
   image:
-  ![Admin announcements list](./assets/admin-announcements-list-split.png)
+  ![Admin announcements list](./assets/admin-announcements-markdown.png)
 
 - source_type: storybook_canvas
   story_id_or_title: `Admin/AnnouncementsModule/Create Announcement`

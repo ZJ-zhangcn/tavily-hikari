@@ -185,7 +185,7 @@ const tokenLogsSample: ServerPublicTokenLogMock[] = [
 const announcementModalSample: Announcement = {
   id: 'ann-modal-01',
   title: 'Maintenance window',
-  body: 'Tavily Hikari will restart tonight between 23:00 and 23:10. Existing MCP sessions may reconnect once.',
+  body: '**Tavily Hikari will restart tonight** between 23:00 and 23:10.\n\n- Existing MCP sessions may reconnect once.\n- API requests should retry normally.',
   displayKind: 'modal',
   status: 'published',
   createdAt: 1_762_380_000,
@@ -197,7 +197,7 @@ const announcementModalSample: Announcement = {
 const announcementTickerSample: Announcement = {
   id: 'ann-ticker-01',
   title: 'Quota refresh',
-  body: 'Daily quota counters have refreshed. Token detail pages now include live request updates.',
+  body: 'Daily quota counters have refreshed. Token detail pages now include `live request` updates.',
   displayKind: 'ticker',
   status: 'published',
   createdAt: 1_762_378_000,
@@ -209,7 +209,7 @@ const announcementTickerSample: Announcement = {
 const announcementArchivedSample: Announcement = {
   id: 'ann-archived-01',
   title: 'Endpoint migration completed',
-  body: 'The previous Tavily-compatible endpoint migration has been completed and archived for reference.',
+  body: 'The previous Tavily-compatible endpoint migration has been completed. See [migration notes](https://example.com).',
   displayKind: 'ticker',
   status: 'archived',
   createdAt: 1_762_200_000,

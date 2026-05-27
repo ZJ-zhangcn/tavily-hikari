@@ -8,7 +8,7 @@ const sampleAnnouncements: Announcement[] = [
   {
     id: 'ann-modal-01',
     title: '维护窗口通知',
-    body: '今晚 23:00 至 23:10 会重启 Tavily Hikari 服务，MCP 会话可能短暂重连。',
+    body: '**今晚 23:00 至 23:10** 会重启 Tavily Hikari 服务。\n\n- MCP 会话可能短暂重连\n- HTTP API 会自动重试',
     displayKind: 'modal',
     status: 'published',
     createdAt: 1_762_380_000,
@@ -19,7 +19,7 @@ const sampleAnnouncements: Announcement[] = [
   {
     id: 'ann-ticker-01',
     title: '额度计数已刷新',
-    body: '每日额度窗口已刷新，用户控制台的 Token 详情现在也显示实时请求更新。',
+    body: '每日额度窗口已刷新，用户控制台的 `Token` 详情现在也显示实时请求更新。',
     displayKind: 'ticker',
     status: 'draft',
     createdAt: 1_762_378_000,
@@ -30,7 +30,7 @@ const sampleAnnouncements: Announcement[] = [
   {
     id: 'ann-archived-01',
     title: '端点迁移完成',
-    body: 'Tavily 兼容端点迁移已完成，此公告保留为历史记录。',
+    body: 'Tavily 兼容端点迁移已完成，详见 [迁移记录](https://example.com)。',
     displayKind: 'ticker',
     status: 'archived',
     createdAt: 1_762_200_000,

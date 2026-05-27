@@ -3,6 +3,7 @@
 @import './styles/base-public.css';
 @import './styles/public.css';
 @import './styles/alerts.css';
+@import './styles/markdown-content.css';
 @import './styles/user-console.css';
 @import './styles/user-console-announcements.css';
 @import './styles/user-console-recent-requests.css';
