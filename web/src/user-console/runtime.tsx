@@ -2038,8 +2038,7 @@ export default function UserConsole(): JSX.Element {
   const showTokenListLoading = loading && tokens.length === 0
   const showEmptyTokens = !loading && tokens.length === 0
   const showLandingGuide = shouldRenderLandingGuide(route, tokens.length)
-  const rechargeMinMonths = rechargeConfig?.minMonths ?? 1
-  const rechargeMaxMonths = rechargeConfig?.maxMonths ?? 12
+  const rechargeMinMonths = rechargeConfig?.minMonths ?? 1, rechargeMaxMonths = rechargeConfig?.maxMonths ?? 12
   const showRechargePanel = rechargeConfig?.visible ?? false
 
   const handleRechargeSubmit = useCallback(async () => {
@@ -2637,17 +2636,12 @@ export default function UserConsole(): JSX.Element {
 
           {showRechargePanel ? (
             <RechargePanel
-              text={text.recharge}
-              dashboard={dashboard}
-              config={rechargeConfig}
-              orders={rechargeOrders}
-              credits={rechargeCredits}
-              months={rechargeMonths}
-              busy={rechargeBusy}
-              error={rechargeError}
+              text={text.recharge} dashboard={dashboard}
+              config={rechargeConfig} orders={rechargeOrders}
+              credits={rechargeCredits} months={rechargeMonths}
+              busy={rechargeBusy} error={rechargeError}
               onCreditsChange={setRechargeCredits}
-              onMonthsChange={(value) =>
-                setRechargeMonths(Math.min(rechargeMaxMonths, Math.max(rechargeMinMonths, value)))}
+              onMonthsChange={(value) => setRechargeMonths(Math.min(rechargeMaxMonths, Math.max(rechargeMinMonths, value)))}
               onCreateOrder={() => void handleRechargeSubmit()}
             />
           ) : null}
