@@ -67,6 +67,91 @@
   resize: vertical;
 }
 
+.markdown-editor-shell {
+  overflow: hidden;
+  min-height: 220px;
+  border: 1px solid hsl(var(--border) / 0.82);
+  border-radius: 18px;
+  background: hsl(var(--background) / 0.86);
+  box-shadow: var(--shadow-clay-pressed);
+}
+
+.markdown-editor-shell .milkdown {
+  min-height: inherit;
+}
+
+.markdown-editor-shell .ProseMirror {
+  min-height: 220px;
+  padding: 16px 18px;
+  color: hsl(var(--foreground));
+  font-family: var(--font-sans);
+  font-size: 0.95rem;
+  line-height: 1.62;
+  outline: none;
+}
+
+.markdown-editor-shell .ProseMirror:focus-visible {
+  box-shadow: inset 0 0 0 2px hsl(var(--ring) / 0.44);
+}
+
+.markdown-editor-shell--storybook {
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.markdown-editor-storybook-toolbar {
+  display: flex;
+  gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid hsl(var(--border) / 0.72);
+  background: hsl(var(--muted) / 0.24);
+}
+
+.markdown-editor-storybook-toolbar span {
+  min-width: 30px;
+  padding: 5px 7px;
+  border: 1px solid hsl(var(--border) / 0.68);
+  border-radius: 10px;
+  background: hsl(var(--background) / 0.72);
+  color: hsl(var(--muted-foreground));
+  font-size: 0.8rem;
+  font-weight: 800;
+  line-height: 1;
+  text-align: center;
+}
+
+.markdown-editor-storybook-input {
+  min-height: 180px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  resize: vertical;
+}
+
+.markdown-editor-shell .ProseMirror > * {
+  margin-top: 0;
+  margin-bottom: 0.75em;
+}
+
+.markdown-editor-shell .ProseMirror > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-editor-shell .ProseMirror p.is-editor-empty:first-child::before {
+  height: 0;
+  color: hsl(var(--muted-foreground));
+  content: attr(data-placeholder);
+  float: left;
+  pointer-events: none;
+}
+
+.markdown-editor-shell :where(.milkdown-toolbar, .crepe-toolbar, [data-milkdown-toolbar]) {
+  border-color: hsl(var(--border) / 0.72);
+  background: hsl(var(--card) / 0.96);
+  color: hsl(var(--foreground));
+}
+
 .announcements-editor-actions,
 .announcements-actions,
 .announcements-mobile-actions {
@@ -158,5 +243,9 @@
   .announcements-empty-state {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .markdown-editor-shell .ProseMirror {
+    padding: 14px;
   }
 }

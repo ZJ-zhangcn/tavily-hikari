@@ -196,6 +196,9 @@ export const CreateAnnouncement: Story = {
     if (canvasElement.querySelector('.announcements-editor') == null) {
       throw new Error('Expected create editor to render.')
     }
+    if (canvasElement.querySelector('.markdown-editor-shell') == null) {
+      throw new Error('Expected Markdown editor to render.')
+    }
   },
 }
 

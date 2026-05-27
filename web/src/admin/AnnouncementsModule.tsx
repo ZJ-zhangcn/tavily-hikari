@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 
 import {
   archiveAnnouncement,
@@ -17,7 +17,6 @@ import { StatusBadge, type StatusTone } from '../components/StatusBadge'
 import { Button } from '../components/ui/button'
 import { Input } from '../components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
-import { Textarea } from '../components/ui/textarea'
 import { Icon } from '../lib/icons'
 import type { Language } from '../i18n'
 
@@ -44,6 +43,8 @@ const EMPTY_DRAFT: AnnouncementDraft = {
   body: '',
   displayKind: 'modal',
 }
+
+const MarkdownEditor = lazy(() => import('../components/MarkdownEditor'))
 
 function copy(language: Language) {
   return language === 'zh'
@@ -238,16 +239,25 @@ function AnnouncementEditorPanel({
           maxLength={120}
         />
       </label>
-      <label className="announcements-field">
-        <span>{strings.bodyLabel}</span>
-        <Textarea
+      <div className="announcements-field">
+        <span id="announcement-body-editor-label">{strings.bodyLabel}</span>
+        <LazyMarkdownEditor
+          ariaLabelledBy="announcement-body-editor-label"
           value={draft.body}
           placeholder={strings.bodyPlaceholder}
-          rows={7}
-          maxLength={4000}
-          onChange={(event) => onChangeDraft({ ...draft, body: event.target.value })}
+          disabled={saving}
+          onChange={(body) => onChangeDraft({ ...draft, body })}
+          fallback={(
+            <TextareaFallback
+              ariaLabelledBy="announcement-body-editor-label"
+              value={draft.body}
+              placeholder={strings.bodyPlaceholder}
+              disabled={saving}
+              onChange={(body) => onChangeDraft({ ...draft, body })}
+            />
+          )}
         />
-      </label>
+      </div>
       <label className="announcements-field">
         <span>{strings.displayLabel}</span>
         <Select
@@ -277,6 +287,53 @@ function AnnouncementEditorPanel({
         </Button>
       </div>
     </form>
+  )
+}
+
+function TextareaFallback({
+  value,
+  placeholder,
+  ariaLabelledBy,
+  disabled,
+  onChange,
+}: {
+  value: string
+  placeholder: string
+  ariaLabelledBy: string
+  disabled: boolean
+  onChange: (value: string) => void
+}): JSX.Element {
+  return (
+    <textarea
+      className="textarea announcements-body-fallback"
+      value={value}
+      aria-labelledby={ariaLabelledBy}
+      placeholder={placeholder}
+      rows={7}
+      maxLength={4000}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+    />
+  )
+}
+
+interface LazyMarkdownEditorProps {
+  value: string
+  placeholder: string
+  ariaLabelledBy: string
+  disabled: boolean
+  onChange: (value: string) => void
+  fallback: JSX.Element
+}
+
+function LazyMarkdownEditor({
+  fallback,
+  ...editorProps
+}: LazyMarkdownEditorProps): JSX.Element {
+  return (
+    <Suspense fallback={fallback}>
+      <MarkdownEditor {...editorProps} />
+    </Suspense>
   )
 }
 

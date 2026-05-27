@@ -46,6 +46,7 @@
 - 公告必须包含标题、Markdown 正文、展示方式、状态、创建/更新时间，发布和归档时间按状态记录。
 - 管理员只能通过既有 admin 判定访问公告管理 API。
 - 管理端公告模块必须按列表、创建/编辑功能拆分；新增公告不得常驻在列表页内。
+- 管理端创建/编辑公告正文必须提供 Markdown 编辑器，不能只提供纯文本输入框。
 - 公告正文必须按 Markdown 原文保存，并在管理端预览和用户端公告展示中安全渲染。
 - 公告 Markdown 不得执行或渲染原始 HTML；图片禁用，危险链接必须降级为不可点击文本。
 - 草稿可编辑；已发布公告更新时必须生成新公告 ID 并归档旧公告，确保用户浏览器把更新后的公告视为新提醒。
@@ -134,6 +135,13 @@
   evidence_note: 新增公告在独立创建视图中完成，页面不同时展示公告列表表格。
   image:
   ![Admin announcements create](./assets/admin-announcements-create-split.png)
+
+- source_type: mock_ui
+  story_id_or_title: `http://127.0.0.1:62400/admin/announcements`
+  state: admin announcement create view with Milkdown editor
+  evidence_note: 新建公告页面使用真实 Milkdown Crepe 编辑器加载正文区域；块插入菜单默认不展开，发布前编辑路径保留原 Markdown 字符串。
+  image:
+  ![Admin announcements Milkdown editor](./assets/admin-announcements-milkdown-editor.png)
 
 ## Related PRs
 
