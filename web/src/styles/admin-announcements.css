@@ -212,6 +212,8 @@
 .announcements-actions {
   justify-content: flex-end;
   flex-wrap: nowrap;
+  width: max-content;
+  margin-inline-start: auto;
   white-space: nowrap;
 }
 
@@ -241,27 +243,27 @@
 }
 
 .announcements-table {
-  table-layout: fixed;
+  table-layout: auto;
 }
 
 .announcements-col-title {
-  width: 27%;
+  width: 100%;
 }
 
 .announcements-col-display {
-  width: 10%;
+  width: 1%;
 }
 
 .announcements-col-status {
-  width: 12%;
+  width: 1%;
 }
 
 .announcements-col-updated {
-  width: 17%;
+  width: 1%;
 }
 
 .announcements-col-actions {
-  width: 34%;
+  width: 1%;
 }
 
 .announcements-empty-state {
@@ -273,27 +275,33 @@
 
 .announcements-table th:nth-child(1),
 .announcements-table td:nth-child(1) {
-  width: 27%;
+  width: 100%;
+  white-space: normal;
 }
 
 .announcements-table th:nth-child(2),
 .announcements-table td:nth-child(2) {
-  width: 10%;
+  width: 1%;
+  white-space: nowrap;
 }
 
 .announcements-table th:nth-child(3),
 .announcements-table td:nth-child(3) {
-  width: 12%;
+  width: 1%;
+  white-space: nowrap;
 }
 
 .announcements-table th:nth-child(4),
 .announcements-table td:nth-child(4) {
-  width: 17%;
+  width: 1%;
+  white-space: nowrap;
 }
 
 .jobs-table.announcements-table th:nth-child(5),
 .jobs-table.announcements-table td:nth-child(5) {
-  width: 34%;
+  width: 1%;
+  white-space: nowrap;
+  text-align: right;
 }
 
 .announcements-title-cell {
