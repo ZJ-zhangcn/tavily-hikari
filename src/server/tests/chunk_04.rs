@@ -1219,6 +1219,84 @@ colo=LAX
     }
 
     #[tokio::test]
+    async fn announcement_http_allows_bodyless_ticker_but_rejects_bodyless_modal() {
+        let db_path = temp_db_path("announcement-http-bodyless-ticker");
+        let db_str = db_path.to_string_lossy().to_string();
+        let proxy = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
+            .await
+            .expect("proxy created");
+        let forward_auth = ForwardAuthConfig::new(
+            Some(HeaderName::from_static("x-forward-user")),
+            Some("admin".to_string()),
+            None,
+            None,
+        );
+        let admin_addr = spawn_keys_admin_server(proxy, forward_auth, false).await;
+        let client = Client::new();
+        let admin_base = format!("http://{admin_addr}");
+
+        let ticker_resp = client
+            .post(format!("{admin_base}/api/announcements"))
+            .header("x-forward-user", "admin")
+            .json(&serde_json::json!({
+                "title": "Bodyless banner",
+                "body": "",
+                "displayKind": "ticker"
+            }))
+            .send()
+            .await
+            .expect("create bodyless ticker request");
+        assert_eq!(ticker_resp.status(), reqwest::StatusCode::OK);
+        let ticker: serde_json::Value = ticker_resp.json().await.expect("ticker json");
+        assert_eq!(ticker.get("body").and_then(|value| value.as_str()), Some(""));
+        assert_eq!(
+            ticker.get("displayKind").and_then(|value| value.as_str()),
+            Some("ticker")
+        );
+        let ticker_id = ticker
+            .get("id")
+            .and_then(|value| value.as_str())
+            .expect("ticker id")
+            .to_string();
+
+        let modal_resp = client
+            .post(format!("{admin_base}/api/announcements"))
+            .header("x-forward-user", "admin")
+            .json(&serde_json::json!({
+                "title": "Bodyless modal",
+                "body": "",
+                "displayKind": "modal"
+            }))
+            .send()
+            .await
+            .expect("create bodyless modal request");
+        assert_eq!(modal_resp.status(), reqwest::StatusCode::BAD_REQUEST);
+        let modal_error = modal_resp.text().await.expect("modal error text");
+        assert!(modal_error.contains("body is required"));
+
+        let updated_resp = client
+            .patch(format!("{admin_base}/api/announcements/{ticker_id}"))
+            .header("x-forward-user", "admin")
+            .json(&serde_json::json!({
+                "title": "Still bodyless",
+                "body": "   ",
+                "displayKind": "ticker"
+            }))
+            .send()
+            .await
+            .expect("update bodyless ticker request");
+        assert_eq!(updated_resp.status(), reqwest::StatusCode::OK);
+        let updated: serde_json::Value = updated_resp.json().await.expect("updated ticker json");
+        assert_eq!(updated.get("body").and_then(|value| value.as_str()), Some(""));
+        assert_eq!(
+            updated.get("displayKind").and_then(|value| value.as_str()),
+            Some("ticker")
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
     async fn user_profile_and_user_token_reflect_linuxdo_session() {
         let db_path = temp_db_path("linuxdo-profile-token");
         let db_str = db_path.to_string_lossy().to_string();
