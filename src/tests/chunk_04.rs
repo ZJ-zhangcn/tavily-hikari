@@ -2637,6 +2637,34 @@ async fn published_announcement_update_archives_previous_version() {
 }
 
 #[tokio::test]
+async fn ticker_announcements_may_omit_body_but_modal_announcements_may_not() {
+    let db_path = temp_db_path("announcement-ticker-empty-body");
+    let db_str = db_path.to_string_lossy().to_string();
+    let store = KeyStore::new(&db_str).await.expect("keystore created");
+
+    let ticker = store
+        .create_announcement(AnnouncementMutation {
+            title: "Ticker without details".to_string(),
+            body: "   ".to_string(),
+            display_kind: ANNOUNCEMENT_DISPLAY_TICKER.to_string(),
+        })
+        .await
+        .expect("create ticker without body");
+    assert_eq!(ticker.body, "");
+
+    let modal = store
+        .create_announcement(AnnouncementMutation {
+            title: "Modal without details".to_string(),
+            body: "   ".to_string(),
+            display_kind: ANNOUNCEMENT_DISPLAY_MODAL.to_string(),
+        })
+        .await;
+    assert!(modal.is_err(), "modal announcements still require body content");
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
 async fn oauth_login_state_is_single_use() {
     let db_path = temp_db_path("oauth-state-single-use");
     let db_str = db_path.to_string_lossy().to_string();

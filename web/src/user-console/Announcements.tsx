@@ -64,6 +64,10 @@ function announcementHistoryTime(item: Announcement): number | null {
   return item.publishedAt ?? item.updatedAt
 }
 
+function hasAnnouncementBody(item: Announcement): boolean {
+  return item.body.trim().length > 0
+}
+
 export default function UserConsoleAnnouncements({
   language,
   text,
@@ -80,38 +84,59 @@ export default function UserConsoleAnnouncements({
     ?? null
   const tickerAnnouncement = activeAnnouncements.find((item) => item.displayKind === 'ticker' && !isClosed(item, closedRecords))
     ?? null
-  const tickerDetailAnnouncement = tickerAnnouncement?.id === tickerDetailId ? tickerAnnouncement : null
+  const tickerHasBody = tickerAnnouncement ? hasAnnouncementBody(tickerAnnouncement) : false
+  const tickerDetailAnnouncement = tickerAnnouncement?.id === tickerDetailId && tickerHasBody ? tickerAnnouncement : null
 
   return (
     <>
       {tickerAnnouncement ? (
         <section className="surface user-console-announcement-ticker" aria-live="polite">
-          <button
-            type="button"
-            className="user-console-announcement-ticker-main"
-            aria-haspopup="dialog"
-            aria-label={strings.tickerOpen.replace('{title}', tickerAnnouncement.title)}
-            onClick={() => setTickerDetailId(tickerAnnouncement.id)}
-          >
-            <span className="user-console-announcement-ticker-icon" aria-hidden="true">
-              <Icon icon="mdi:bullhorn-outline" width={18} height={18} />
-            </span>
-            <span className="user-console-announcement-ticker-copy">
-              <strong>{tickerAnnouncement.title}</strong>
-            </span>
-          </button>
+          {tickerHasBody ? (
+            <button
+              type="button"
+              className="user-console-announcement-ticker-main"
+              aria-haspopup="dialog"
+              aria-label={strings.tickerOpen.replace('{title}', tickerAnnouncement.title)}
+              onClick={() => setTickerDetailId(tickerAnnouncement.id)}
+            >
+              <span className="user-console-announcement-ticker-icon" aria-hidden="true">
+                <Icon icon="mdi:bullhorn-outline" width={18} height={18} />
+              </span>
+              <span className="user-console-announcement-ticker-copy">
+                <strong>{tickerAnnouncement.title}</strong>
+              </span>
+            </button>
+          ) : (
+            <div className="user-console-announcement-ticker-main user-console-announcement-ticker-main--static">
+              <span className="user-console-announcement-ticker-icon" aria-hidden="true">
+                <Icon icon="mdi:bullhorn-outline" width={18} height={18} />
+              </span>
+              <span className="user-console-announcement-ticker-copy">
+                <strong>{tickerAnnouncement.title}</strong>
+              </span>
+            </div>
+          )}
           <Button
             type="button"
             variant="ghost"
             size="xs"
             className="user-console-announcement-close"
-            aria-label={strings.tickerClose}
+            aria-label={tickerHasBody ? strings.tickerOpen.replace('{title}', tickerAnnouncement.title) : strings.tickerClose}
             onClick={() => {
+              if (tickerHasBody) {
+                setTickerDetailId(tickerAnnouncement.id)
+                return
+              }
               setTickerDetailId(null)
               onCloseAnnouncement(tickerAnnouncement.id)
             }}
           >
-            <Icon icon="mdi:close" width={16} height={16} aria-hidden="true" />
+            <Icon
+              icon={tickerHasBody ? 'mdi:open-in-new' : 'mdi:close'}
+              width={16}
+              height={16}
+              aria-hidden="true"
+            />
           </Button>
         </section>
       ) : null}

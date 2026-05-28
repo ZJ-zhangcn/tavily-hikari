@@ -103,7 +103,7 @@ describe('admin user tag api helpers', () => {
     }
     const updatePayload = {
       title: 'Updated notice',
-      body: 'Updated maintenance window',
+      body: '',
       displayKind: 'ticker' as const,
     }
 

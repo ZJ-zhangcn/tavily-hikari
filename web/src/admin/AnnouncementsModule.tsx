@@ -77,7 +77,9 @@ function copy(language: Language) {
         titleLabel: '标题',
         titlePlaceholder: '例如：维护窗口通知',
         bodyLabel: '正文',
+        bodyOptionalLabel: '正文（滚动公告可留空）',
         bodyPlaceholder: '写给用户看的公告内容。',
+        bodyOptionalPlaceholder: '可选：补充点击后展示的公告详情。',
         bodyA11yHint: '正文支持 Markdown，保存时保留 Markdown 原文。',
         bodyModeLabel: '正文编辑模式',
         bodyModeMarkdown: 'Markdown',
@@ -115,6 +117,7 @@ function copy(language: Language) {
         },
         actionBusy: '处理中…',
         validation: '标题和正文不能为空。',
+        validationTitle: '标题不能为空。',
         saved: '公告已保存。',
         savedAndPublished: '公告已保存并发布。',
         published: '公告已发布。',
@@ -139,7 +142,9 @@ function copy(language: Language) {
         titleLabel: 'Title',
         titlePlaceholder: 'For example: maintenance window',
         bodyLabel: 'Body',
+        bodyOptionalLabel: 'Body (optional for ticker)',
         bodyPlaceholder: 'Write the user-facing announcement body.',
+        bodyOptionalPlaceholder: 'Optional: add details shown after opening the ticker.',
         bodyA11yHint: 'The body supports Markdown and is saved as the original Markdown text.',
         bodyModeLabel: 'Body editor mode',
         bodyModeMarkdown: 'Markdown',
@@ -177,6 +182,7 @@ function copy(language: Language) {
         },
         actionBusy: 'Working…',
         validation: 'Title and body are required.',
+        validationTitle: 'Title is required.',
         saved: 'Announcement saved.',
         savedAndPublished: 'Announcement saved and published.',
         published: 'Announcement published.',
@@ -229,6 +235,10 @@ function toPayload(draft: AnnouncementDraft): AnnouncementMutationPayload {
     body: draft.body.trim(),
     displayKind: draft.displayKind,
   }
+}
+
+export function isAnnouncementBodyRequired(displayKind: AnnouncementDisplayKind): boolean {
+  return displayKind !== 'ticker'
 }
 
 function editorDescription(mode: AnnouncementEditorMode, strings: AnnouncementCopy): string {
@@ -348,6 +358,7 @@ function AnnouncementEditorPanel({
 }): JSX.Element {
   const saving = submittingAction != null
   const isPublishedEdit = mode.kind === 'edit' && mode.status === 'published'
+  const bodyRequired = isAnnouncementBodyRequired(draft.displayKind)
   const [bodyMode, setBodyMode] = useState<AnnouncementBodyMode>('split')
   const bodyModeOptions: ReadonlyArray<SegmentedTabsOption<AnnouncementBodyMode>> = [
     { value: 'markdown', label: strings.bodyModeMarkdown },
@@ -408,7 +419,9 @@ function AnnouncementEditorPanel({
       </label>
       <div className="announcements-field">
         <div className="announcements-body-heading">
-          <span id="announcement-body-editor-label">{strings.bodyLabel}</span>
+          <span id="announcement-body-editor-label">
+            {bodyRequired ? strings.bodyLabel : strings.bodyOptionalLabel}
+          </span>
           <SegmentedTabs<AnnouncementBodyMode>
             value={bodyMode}
             onChange={setBodyMode}
@@ -422,7 +435,10 @@ function AnnouncementEditorPanel({
         <AnnouncementBodyEditor
           mode={bodyMode}
           draft={draft}
-          strings={strings}
+          strings={{
+            ...strings,
+            bodyPlaceholder: bodyRequired ? strings.bodyPlaceholder : strings.bodyOptionalPlaceholder,
+          }}
           saving={saving}
           onChangeDraft={onChangeDraft}
         />
@@ -796,7 +812,11 @@ export default function AnnouncementsModule({
 
   const submit = async (action: AnnouncementSubmitAction) => {
     const payload = toPayload(draft)
-    if (!payload.title || !payload.body) {
+    if (!payload.title) {
+      setError(strings.validationTitle)
+      return
+    }
+    if (isAnnouncementBodyRequired(payload.displayKind) && !payload.body) {
       setError(strings.validation)
       return
     }

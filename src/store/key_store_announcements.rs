@@ -11,6 +11,14 @@ fn normalize_announcement_text(value: &str, field: &str, max_len: usize) -> Resu
     Ok(trimmed.to_string())
 }
 
+fn normalize_announcement_body(value: &str, display_kind: &str) -> Result<String, ProxyError> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() && display_kind == ANNOUNCEMENT_DISPLAY_TICKER {
+        return Ok(String::new());
+    }
+    normalize_announcement_text(value, "body", 4000)
+}
+
 fn normalize_announcement_display(value: &str) -> Result<String, ProxyError> {
     let normalized = value.trim().to_ascii_lowercase();
     if !is_supported_announcement_display(&normalized) {
@@ -20,10 +28,11 @@ fn normalize_announcement_display(value: &str) -> Result<String, ProxyError> {
 }
 
 fn normalize_announcement_mutation(input: AnnouncementMutation) -> Result<AnnouncementMutation, ProxyError> {
+    let display_kind = normalize_announcement_display(&input.display_kind)?;
     Ok(AnnouncementMutation {
         title: normalize_announcement_text(&input.title, "title", 120)?,
-        body: normalize_announcement_text(&input.body, "body", 4000)?,
-        display_kind: normalize_announcement_display(&input.display_kind)?,
+        body: normalize_announcement_body(&input.body, &display_kind)?,
+        display_kind,
     })
 }
 

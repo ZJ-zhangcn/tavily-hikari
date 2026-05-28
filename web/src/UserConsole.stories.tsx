@@ -17,7 +17,7 @@ type LandingFocus = 'Overview Focus' | 'Token Focus'
 type TokenListState = 'Single Token' | 'Multiple Tokens' | 'Empty'
 type TokenDetailPreview = 'Overview' | 'Token Revealed'
 type PushStatusPreview = 'Live' | 'Reconnecting' | 'Unsupported'
-type AnnouncementPreview = 'Active' | 'Closed' | 'History Open' | 'None'
+type AnnouncementPreview = 'Active' | 'Ticker Bodyless' | 'Closed' | 'History Open' | 'None'
 
 type CopyRecoveryMode = 'none' | 'list-manual-bubble' | 'detail-inline'
 type GuideRevealMode = 'none' | 'landing-guide' | 'detail-guide'
@@ -204,6 +204,13 @@ const announcementTickerSample: Announcement = {
   updatedAt: 1_762_385_000,
   publishedAt: 1_762_385_000,
   archivedAt: null,
+}
+
+const announcementBodylessTickerSample: Announcement = {
+  ...announcementTickerSample,
+  id: 'ann-ticker-empty-01',
+  title: 'Quota refresh complete',
+  body: '',
 }
 
 const announcementArchivedSample: Announcement = {
@@ -410,18 +417,24 @@ function installUserConsoleFetchMock(state: UserConsoleStoryState): () => void {
     }
 
     if (url.pathname === '/api/user/announcements') {
+      const activeAnnouncements = state.announcementPreview === 'Ticker Bodyless'
+        ? [announcementBodylessTickerSample]
+        : [announcementModalSample, announcementTickerSample]
       return jsonResponse({
         items: state.announcementPreview === 'None'
           ? []
-          : [announcementModalSample, announcementTickerSample],
+          : activeAnnouncements,
       })
     }
 
     if (url.pathname === '/api/user/announcements/history') {
+      const historyAnnouncements = state.announcementPreview === 'Ticker Bodyless'
+        ? [announcementBodylessTickerSample, announcementArchivedSample]
+        : [announcementModalSample, announcementTickerSample, announcementArchivedSample]
       return jsonResponse({
         items: state.announcementPreview === 'None'
           ? []
-          : [announcementModalSample, announcementTickerSample, announcementArchivedSample],
+          : historyAnnouncements,
       })
     }
 
@@ -719,6 +732,7 @@ function UserConsoleStory(
       window.localStorage.setItem(storageKey, JSON.stringify({
         [announcementModalSample.id]: 1_762_390_000,
         [announcementTickerSample.id]: 1_762_390_120,
+        [announcementBodylessTickerSample.id]: 1_762_390_120,
       }))
     } else {
       window.localStorage.removeItem(storageKey)
@@ -1005,7 +1019,8 @@ export const ConsoleHomeAnnouncements: Story = {
     acknowledgeButton?.click()
     await new Promise((resolve) => window.setTimeout(resolve, 120))
 
-    canvasElement.querySelector<HTMLButtonElement>('.user-console-announcement-ticker-main')?.click()
+    const tickerAction = canvasElement.querySelector<HTMLButtonElement>('.user-console-announcement-ticker .user-console-announcement-close')
+    tickerAction?.click()
     await new Promise((resolve) => window.setTimeout(resolve, 120))
 
     const tickerDialog = canvasElement.ownerDocument.querySelector<HTMLElement>('.user-console-announcement-dialog')
@@ -1014,6 +1029,41 @@ export const ConsoleHomeAnnouncements: Story = {
     }
     if (!tickerDialog.textContent?.includes('Daily quota counters have refreshed')) {
       throw new Error('Expected ticker detail dialog to render the announcement body.')
+    }
+    if (canvasElement.querySelector('.user-console-announcement-ticker') == null) {
+      throw new Error('Expected ticker detail action to avoid directly dismissing the announcement.')
+    }
+  },
+}
+
+export const ConsoleHomeBodylessTicker: Story = {
+  name: 'Console Home Bodyless Ticker',
+  args: {
+    consoleView: 'Console Home',
+    isAdmin: false,
+    landingFocus: 'Overview Focus',
+    announcementPreview: 'Ticker Bodyless',
+  },
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 180))
+
+    const ticker = canvasElement.querySelector<HTMLElement>('.user-console-announcement-ticker')
+    if (ticker == null) {
+      throw new Error('Expected bodyless ticker announcement to render.')
+    }
+    if (canvasElement.querySelector('.user-console-announcement-ticker-main--static') == null) {
+      throw new Error('Expected bodyless ticker copy to render without a details trigger.')
+    }
+
+    const closeAction = canvasElement.querySelector<HTMLButtonElement>('.user-console-announcement-ticker .user-console-announcement-close')
+    closeAction?.click()
+    await new Promise((resolve) => window.setTimeout(resolve, 120))
+
+    if (canvasElement.querySelector('.user-console-announcement-ticker') != null) {
+      throw new Error('Expected bodyless ticker close action to dismiss the announcement.')
+    }
+    if (canvasElement.ownerDocument.querySelector('.user-console-announcement-dialog') != null) {
+      throw new Error('Expected bodyless ticker close action to avoid opening a detail dialog.')
     }
   },
 }

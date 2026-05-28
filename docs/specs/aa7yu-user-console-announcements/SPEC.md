@@ -43,7 +43,7 @@
 
 ### MUST
 
-- 公告必须包含标题、Markdown 正文、展示方式、状态、创建/更新时间，发布和归档时间按状态记录。
+- 公告必须包含标题、展示方式、状态、创建/更新时间，发布和归档时间按状态记录；弹窗公告必须包含 Markdown 正文，滚动公告正文可为空。
 - 管理员只能通过既有 admin 判定访问公告管理 API。
 - 管理端公告模块必须按列表、创建/编辑功能拆分；新增公告不得常驻在列表页内。
 - 管理端公告页的页面级标题必须由 admin shell 拥有；公告模块内部只渲染业务区标题与工具条，避免重复页头。
@@ -52,7 +52,7 @@
 - 管理端创建/编辑公告正文必须提供 Markdown 编辑器，不能只提供纯文本输入框。
 - 公告正文必须按 Markdown 原文保存，并在管理端列表预览和用户端公告展示中安全渲染。
 - 用户端弹窗公告只能展示管理员填写的标题、正文和固定确认操作，不展示非管理员填写的说明文案。
-- 用户端滚动公告条幅只能直接展示标题；正文详情必须在用户点击条幅后使用公告弹窗展示。
+- 用户端滚动公告条幅只能直接展示标题；有正文时，点击条幅或右侧详情操作后使用公告弹窗展示 Markdown 正文详情，且条幅内不提供直接关闭操作；无正文时，条幅不提供详情入口，右侧操作直接关闭公告。
 - 管理端创建/编辑视图只承载正文编辑模式，不提供自制用户侧预览；列表页预览必须复用真实用户端弹窗或滚动公告展示组件。
 - 公告 Markdown 不得执行或渲染原始 HTML；图片禁用，危险链接必须降级为不可点击文本。
 - 草稿可编辑；已发布公告更新时必须生成新公告 ID 并归档旧公告，确保用户浏览器把更新后的公告视为新提醒。
@@ -90,6 +90,10 @@
   When 用户访问 `/console`
   Then 滚动公告标题展示在控制台内容上方，用户点击条幅后可在弹窗中查看正文详情，关闭公告后同一浏览器不再自动展示同一公告。
 
+- Given 管理员创建并发布无正文滚动公告
+  When 用户访问 `/console`
+  Then 滚动公告标题展示在控制台内容上方，用户可直接关闭公告，且不会打开空详情弹窗。
+
 - Given 已发布公告被管理员编辑
   When 保存更新
   Then 旧公告被归档，新公告使用新 ID 发布，用户浏览器会重新看到更新后的公告。
@@ -111,6 +115,7 @@
 - Storybook 覆盖管理端公告列表页预览，确保预览复用用户端弹窗/滚动公告展示。
 - Storybook 覆盖管理端公告模块的独立创建视图，确保新增公告不嵌在列表页。
 - Storybook 覆盖用户控制台弹窗、滚动公告标题入口、滚动公告详情弹窗、Markdown 正文和通知历史入口。
+- Storybook 覆盖有正文滚动公告的详情入口，以及无正文滚动公告的直接关闭路径。
 - 视觉证据写入本 spec 的 `## Visual Evidence`。
 
 ### Quality checks
@@ -132,9 +137,16 @@
 - source_type: storybook_canvas
   story_id_or_title: `User Console/UserConsole/Console Home Announcements`
   state: ticker announcement title with click-through detail dialog
-  evidence_note: 用户控制台滚动公告条幅只展示标题，点击条幅后使用公告弹窗展示 Markdown 正文详情。
+  evidence_note: 用户控制台滚动公告条幅只展示标题；当公告有正文时，右侧操作变为详情入口，点击后使用公告弹窗展示 Markdown 正文详情，条幅本身仍保留在页面上。
   image:
-  ![User console ticker detail](./assets/user-console-ticker-title-detail.png)
+  ![User console ticker detail](./assets/user-console-ticker-detail-action.png)
+
+- source_type: storybook_canvas
+  story_id_or_title: `User Console/UserConsole/Console Home`
+  state: bodyless ticker announcement with direct close affordance
+  evidence_note: 无正文滚动公告只展示标题和右侧关闭操作，不提供详情触发器；关闭动作可直接移除该条公告。
+  image:
+  ![User console bodyless ticker close](./assets/user-console-bodyless-ticker-close.png)
 
 - source_type: storybook_canvas
   story_id_or_title: `Admin/AnnouncementsModule/Default`

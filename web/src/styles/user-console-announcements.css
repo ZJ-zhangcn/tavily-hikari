@@ -64,6 +64,14 @@
   color: hsl(var(--primary));
 }
 
+.user-console-announcement-ticker-main--static {
+  cursor: default;
+}
+
+.user-console-announcement-ticker-main--static:hover .user-console-announcement-ticker-copy strong {
+  color: inherit;
+}
+
 .user-console-announcement-ticker-icon {
   display: inline-flex;
   align-items: center;
