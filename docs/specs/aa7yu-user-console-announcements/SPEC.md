@@ -52,6 +52,7 @@
 - 管理端创建/编辑公告正文必须提供 Markdown 编辑器，不能只提供纯文本输入框。
 - 公告正文必须按 Markdown 原文保存，并在管理端列表预览和用户端公告展示中安全渲染。
 - 用户端弹窗公告只能展示管理员填写的标题、正文和固定确认操作，不展示非管理员填写的说明文案。
+- 用户端滚动公告条幅只能直接展示标题；正文详情必须在用户点击条幅后使用公告弹窗展示。
 - 管理端创建/编辑视图只承载正文编辑模式，不提供自制用户侧预览；列表页预览必须复用真实用户端弹窗或滚动公告展示组件。
 - 公告 Markdown 不得执行或渲染原始 HTML；图片禁用，危险链接必须降级为不可点击文本。
 - 草稿可编辑；已发布公告更新时必须生成新公告 ID 并归档旧公告，确保用户浏览器把更新后的公告视为新提醒。
@@ -87,7 +88,7 @@
 
 - Given 管理员创建并发布滚动公告
   When 用户访问 `/console`
-  Then 滚动公告展示在控制台内容上方，关闭后同一浏览器不再自动展示同一公告。
+  Then 滚动公告标题展示在控制台内容上方，用户点击条幅后可在弹窗中查看正文详情，关闭公告后同一浏览器不再自动展示同一公告。
 
 - Given 已发布公告被管理员编辑
   When 保存更新
@@ -109,7 +110,7 @@
 - Storybook 覆盖管理端公告模块的列表/编辑/发布态。
 - Storybook 覆盖管理端公告列表页预览，确保预览复用用户端弹窗/滚动公告展示。
 - Storybook 覆盖管理端公告模块的独立创建视图，确保新增公告不嵌在列表页。
-- Storybook 覆盖用户控制台弹窗、滚动公告、Markdown 正文和通知历史入口。
+- Storybook 覆盖用户控制台弹窗、滚动公告标题入口、滚动公告详情弹窗、Markdown 正文和通知历史入口。
 - 视觉证据写入本 spec 的 `## Visual Evidence`。
 
 ### Quality checks
@@ -127,6 +128,13 @@
   evidence_note: 用户控制台会显示滚动公告，并打开当前弹窗公告；公告正文按 Markdown 渲染粗体、列表与行内代码。
   image:
   ![User console announcements](./assets/user-console-announcements-markdown.png)
+
+- source_type: storybook_canvas
+  story_id_or_title: `User Console/UserConsole/Console Home Announcements`
+  state: ticker announcement title with click-through detail dialog
+  evidence_note: 用户控制台滚动公告条幅只展示标题，点击条幅后使用公告弹窗展示 Markdown 正文详情。
+  image:
+  ![User console ticker detail](./assets/user-console-ticker-title-detail.png)
 
 - source_type: storybook_canvas
   story_id_or_title: `Admin/AnnouncementsModule/Default`

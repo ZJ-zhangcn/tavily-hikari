@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 import type { Announcement } from '../api'
 import { StatusBadge } from '../components/StatusBadge'
 import MarkdownContent from '../components/MarkdownContent'
@@ -73,29 +75,41 @@ export default function UserConsoleAnnouncements({
   onCloseAnnouncement,
 }: UserConsoleAnnouncementsProps): JSX.Element {
   const strings = text.announcements
+  const [tickerDetailId, setTickerDetailId] = useState<string | null>(null)
   const modalAnnouncement = activeAnnouncements.find((item) => item.displayKind === 'modal' && !isClosed(item, closedRecords))
     ?? null
   const tickerAnnouncement = activeAnnouncements.find((item) => item.displayKind === 'ticker' && !isClosed(item, closedRecords))
     ?? null
+  const tickerDetailAnnouncement = tickerAnnouncement?.id === tickerDetailId ? tickerAnnouncement : null
 
   return (
     <>
       {tickerAnnouncement ? (
         <section className="surface user-console-announcement-ticker" aria-live="polite">
-          <div className="user-console-announcement-ticker-icon" aria-hidden="true">
-            <Icon icon="mdi:bullhorn-outline" width={18} height={18} />
-          </div>
-          <div className="user-console-announcement-ticker-copy">
-            <strong>{tickerAnnouncement.title}</strong>
-            <MarkdownContent content={tickerAnnouncement.body} compact />
-          </div>
+          <button
+            type="button"
+            className="user-console-announcement-ticker-main"
+            aria-haspopup="dialog"
+            aria-label={strings.tickerOpen.replace('{title}', tickerAnnouncement.title)}
+            onClick={() => setTickerDetailId(tickerAnnouncement.id)}
+          >
+            <span className="user-console-announcement-ticker-icon" aria-hidden="true">
+              <Icon icon="mdi:bullhorn-outline" width={18} height={18} />
+            </span>
+            <span className="user-console-announcement-ticker-copy">
+              <strong>{tickerAnnouncement.title}</strong>
+            </span>
+          </button>
           <Button
             type="button"
             variant="ghost"
             size="xs"
             className="user-console-announcement-close"
             aria-label={strings.tickerClose}
-            onClick={() => onCloseAnnouncement(tickerAnnouncement.id)}
+            onClick={() => {
+              setTickerDetailId(null)
+              onCloseAnnouncement(tickerAnnouncement.id)
+            }}
           >
             <Icon icon="mdi:close" width={16} height={16} aria-hidden="true" />
           </Button>
@@ -121,6 +135,25 @@ export default function UserConsoleAnnouncements({
             />
             <DialogFooter>
               <Button type="button" onClick={() => onCloseAnnouncement(modalAnnouncement.id)}>
+                {strings.modalAcknowledge}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
+
+      <Dialog open={tickerDetailAnnouncement != null} onOpenChange={(open) => !open && setTickerDetailId(null)}>
+        {tickerDetailAnnouncement ? (
+          <DialogContent className="user-console-announcement-dialog" aria-describedby={undefined}>
+            <DialogHeader>
+              <DialogTitle>{tickerDetailAnnouncement.title}</DialogTitle>
+            </DialogHeader>
+            <MarkdownContent
+              content={tickerDetailAnnouncement.body}
+              className="user-console-announcement-dialog-body"
+            />
+            <DialogFooter>
+              <Button type="button" onClick={() => setTickerDetailId(null)}>
                 {strings.modalAcknowledge}
               </Button>
             </DialogFooter>

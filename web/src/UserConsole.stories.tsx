@@ -993,8 +993,27 @@ export const ConsoleHomeAnnouncements: Story = {
     if (canvasElement.querySelector('.user-console-announcement-ticker') == null) {
       throw new Error('Expected ticker announcement to render.')
     }
+    const ticker = canvasElement.querySelector<HTMLElement>('.user-console-announcement-ticker')
+    if (ticker?.textContent?.includes('Daily quota counters have refreshed')) {
+      throw new Error('Expected ticker announcement to show title only before opening details.')
+    }
     if (canvasElement.ownerDocument.querySelector('.user-console-announcement-dialog') == null) {
       throw new Error('Expected modal announcement dialog to render.')
+    }
+    const acknowledgeButton = Array.from(canvasElement.ownerDocument.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => ['Got it', '知道了'].includes(button.textContent?.trim() ?? ''))
+    acknowledgeButton?.click()
+    await new Promise((resolve) => window.setTimeout(resolve, 120))
+
+    canvasElement.querySelector<HTMLButtonElement>('.user-console-announcement-ticker-main')?.click()
+    await new Promise((resolve) => window.setTimeout(resolve, 120))
+
+    const tickerDialog = canvasElement.ownerDocument.querySelector<HTMLElement>('.user-console-announcement-dialog')
+    if (!tickerDialog?.textContent?.includes(announcementTickerSample.title)) {
+      throw new Error('Expected clicking ticker announcement to open its detail dialog.')
+    }
+    if (!tickerDialog.textContent?.includes('Daily quota counters have refreshed')) {
+      throw new Error('Expected ticker detail dialog to render the announcement body.')
     }
   },
 }
