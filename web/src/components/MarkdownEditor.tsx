@@ -55,17 +55,18 @@ export default function MarkdownEditor({
     let cancelled = false
     root.innerHTML = ''
     setFallback(false)
+    const interactiveTools = !readonly
 
     const editor = new Crepe({
       root,
       defaultValue: value,
       features: {
         [CrepeFeature.Cursor]: true,
-        [CrepeFeature.BlockEdit]: false,
-        [CrepeFeature.Toolbar]: false,
+        [CrepeFeature.BlockEdit]: interactiveTools,
+        [CrepeFeature.Toolbar]: interactiveTools,
         [CrepeFeature.Placeholder]: true,
-        [CrepeFeature.ListItem]: false,
-        [CrepeFeature.LinkTooltip]: false,
+        [CrepeFeature.ListItem]: true,
+        [CrepeFeature.LinkTooltip]: interactiveTools,
         [CrepeFeature.Table]: true,
         [CrepeFeature.CodeMirror]: true,
         [CrepeFeature.ImageBlock]: false,

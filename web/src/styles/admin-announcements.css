@@ -1,6 +1,7 @@
 .announcements-module {
   display: grid;
   gap: 18px;
+  --announcements-body-editor-min-height: 760px;
 }
 
 .announcements-editor,
@@ -78,7 +79,7 @@
 }
 
 .announcements-body-fallback {
-  min-height: 190px;
+  min-height: var(--announcements-body-editor-min-height);
   resize: vertical;
 }
 
@@ -91,7 +92,7 @@
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 0;
   overflow: hidden;
-  min-height: 190px;
+  min-height: var(--announcements-body-editor-min-height);
   border: 1px solid hsl(var(--border) / 0.82);
   border-radius: 18px;
   background: hsl(var(--background) / 0.86);
@@ -100,7 +101,7 @@
 
 .announcements-body-split > .announcements-body-fallback,
 .announcements-body-split > .markdown-editor-shell {
-  min-height: 190px;
+  min-height: var(--announcements-body-editor-min-height);
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -121,8 +122,9 @@
 }
 
 .markdown-editor-shell {
+  position: relative;
   overflow: hidden;
-  min-height: 190px;
+  min-height: var(--announcements-body-editor-min-height);
   border: 1px solid hsl(var(--border) / 0.82);
   border-radius: 18px;
   background: hsl(var(--background) / 0.86);
@@ -138,7 +140,7 @@
 }
 
 .markdown-editor-shell .ProseMirror {
-  min-height: 190px;
+  min-height: var(--announcements-body-editor-min-height);
   padding: 16px 18px;
   color: hsl(var(--foreground));
   font-family: var(--font-sans);
@@ -154,6 +156,59 @@
 
 .markdown-editor-shell--storybook {
   display: grid;
+}
+
+.markdown-editor-shell--storybook .milkdown-toolbar {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid hsl(var(--border) / 0.72);
+  border-radius: 14px;
+  background: hsl(var(--card) / 0.96);
+  box-shadow: var(--shadow-clay-button);
+  transform: translateX(-50%);
+}
+
+.markdown-editor-shell--storybook .milkdown-toolbar .toolbar-item,
+.markdown-editor-shell--storybook .milkdown-block-handle .operation-item {
+  min-width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: hsl(var(--foreground));
+  font: inherit;
+  font-weight: 800;
+}
+
+.markdown-editor-shell--storybook .milkdown-toolbar .toolbar-item.active,
+.markdown-editor-shell--storybook .milkdown-toolbar .toolbar-item:hover,
+.markdown-editor-shell--storybook .milkdown-block-handle .operation-item:hover {
+  background: hsl(var(--primary) / 0.12);
+  color: hsl(var(--primary));
+}
+
+.markdown-editor-shell--storybook .milkdown-toolbar .divider {
+  width: 1px;
+  height: 24px;
+  background: hsl(var(--border) / 0.76);
+}
+
+.markdown-editor-shell--storybook .milkdown-block-handle {
+  position: absolute;
+  top: 72px;
+  left: 12px;
+  z-index: 2;
+  padding: 4px;
+  border: 1px solid hsl(var(--border) / 0.64);
+  border-radius: 14px;
+  background: hsl(var(--card) / 0.92);
+  box-shadow: var(--shadow-clay-button);
 }
 
 .markdown-editor-storybook-input {
@@ -220,7 +275,7 @@
 
 .announcements-body-milkdown-preview.markdown-editor-shell,
 .announcements-body-milkdown-preview.markdown-editor-shell .ProseMirror {
-  min-height: 190px;
+  min-height: var(--announcements-body-editor-min-height);
 }
 
 .announcements-user-preview {
@@ -358,6 +413,10 @@
 }
 
 @media (max-width: 720px) {
+  .announcements-module {
+    --announcements-body-editor-min-height: 520px;
+  }
+
   .announcements-editor-header,
   .announcements-list-header,
   .announcements-empty-state {
@@ -376,7 +435,7 @@
 
   .markdown-editor-shell,
   .markdown-editor-shell .ProseMirror {
-    min-height: 180px;
+    min-height: var(--announcements-body-editor-min-height);
   }
 
   .announcements-body-heading {

@@ -36,6 +36,19 @@ export default function MarkdownEditorStorybook({
       aria-labelledby={ariaLabelledBy}
       aria-describedby={ariaDescribedBy}
     >
+      {!readOnly && !disabled ? (
+        <>
+          <div className="milkdown-toolbar" data-show="true" aria-hidden="true">
+            <button className="toolbar-item active" type="button">B</button>
+            <button className="toolbar-item" type="button">I</button>
+            <span className="divider" />
+            <button className="toolbar-item" type="button">Link</button>
+          </div>
+          <div className="milkdown-block-handle" data-show="true" aria-hidden="true">
+            <button className="operation-item" type="button">+</button>
+          </div>
+        </>
+      ) : null}
       <textarea
         id={id}
         name={name}

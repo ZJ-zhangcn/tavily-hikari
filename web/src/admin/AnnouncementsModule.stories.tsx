@@ -222,9 +222,6 @@ export const CreateAnnouncement: Story = {
         throw new Error(`Expected create editor to expose ${modeLabel} mode.`)
       }
     }
-    if (canvasElement.querySelector('.markdown-editor-storybook-toolbar') != null) {
-      throw new Error('Expected create editor to avoid persistent toolbar chrome.')
-    }
     if (canvasElement.querySelector('.announcements-body-milkdown-preview') == null) {
       throw new Error('Expected split mode to render a Milkdown-backed read-only render.')
     }
@@ -236,17 +233,35 @@ export const CreateAnnouncement: Story = {
     }
     const splitStyle = window.getComputedStyle(splitEditor)
     const previewStyle = window.getComputedStyle(splitPreview)
+    const splitHeight = splitEditor.getBoundingClientRect().height
     if (splitStyle.gap !== '0px') {
       throw new Error('Expected split mode panes to share one surface without a wide gap.')
     }
     if (previewStyle.borderLeftWidth !== '1px') {
       throw new Error('Expected split mode preview to use a light divider.')
     }
+    if (splitHeight < 760) {
+      throw new Error('Expected split mode editor to provide a large writing workspace.')
+    }
     if (canvasElement.querySelector('.announcements-preview') != null) {
       throw new Error('Expected create editor to avoid editor-side user preview.')
     }
     if (!canvasElement.textContent?.includes('保存并发布')) {
       throw new Error('Expected create editor to expose save-and-publish action.')
+    }
+    const wysiwygTab = Array.from(canvasElement.querySelectorAll<HTMLElement>('button, [role="radio"]'))
+      .find((element) => element.textContent?.trim() === '所见即所得')
+    wysiwygTab?.click()
+    await new Promise((resolve) => window.setTimeout(resolve, 420))
+    const wysiwygEditor = canvasElement.querySelector<HTMLElement>('.markdown-editor-shell:not(.markdown-editor-shell--readonly)')
+    if (wysiwygEditor == null || wysiwygEditor.getBoundingClientRect().height < 760) {
+      throw new Error('Expected WYSIWYG mode to keep the enlarged editor workspace.')
+    }
+    if (canvasElement.querySelector('.milkdown-toolbar') == null) {
+      throw new Error('Expected WYSIWYG mode to expose the floating formatting toolbar.')
+    }
+    if (canvasElement.querySelector('.milkdown-block-handle') == null) {
+      throw new Error('Expected WYSIWYG mode to expose the floating block handle.')
     }
   },
 }
