@@ -170,6 +170,13 @@
   image:
   ![Admin announcement toolbar visible](./assets/admin-announcements-toolbar-visible.png)
 
+- source_type: local_preview
+  story_id_or_title: `http://127.0.0.1:58910/admin/announcements`
+  state: create form bottom action spacing
+  evidence_note: 真实管理页中，新建公告表单底部的取消、保存草稿、保存并发布按钮保持右对齐，并以 12px 横向间隔分组。
+  image:
+  ![Admin announcement action spacing](./assets/admin-announcements-actions-gap.png)
+
 - source_type: storybook_canvas
   story_id_or_title: `Admin/AnnouncementsModule/Default`
   state: admin list preview using user-console ticker display
