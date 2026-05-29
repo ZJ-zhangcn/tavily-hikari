@@ -1031,7 +1031,70 @@ export const ConsoleHomeAnnouncements: Story = {
       throw new Error('Expected ticker detail dialog to render the announcement body.')
     }
     if (canvasElement.querySelector('.user-console-announcement-ticker') == null) {
-      throw new Error('Expected ticker detail action to avoid directly dismissing the announcement.')
+      throw new Error('Expected ticker announcement to remain visible while its detail dialog is open.')
+    }
+
+    const tickerAcknowledgeButton = Array.from(tickerDialog.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => ['Got it', '知道了'].includes(button.textContent?.trim() ?? ''))
+    if (tickerAcknowledgeButton == null) {
+      throw new Error('Expected ticker detail dialog to render an acknowledge action.')
+    }
+    tickerAcknowledgeButton?.click()
+    await new Promise((resolve) => window.setTimeout(resolve, 120))
+
+    if (canvasElement.querySelector('.user-console-announcement-ticker') != null) {
+      throw new Error('Expected acknowledging ticker details to dismiss the ticker announcement.')
+    }
+    if (canvasElement.ownerDocument.querySelector('.user-console-announcement-dialog') != null) {
+      throw new Error('Expected acknowledging ticker details to close the detail dialog.')
+    }
+  },
+}
+
+export const ConsoleHomeTickerDetailClose: Story = {
+  name: 'Console Home Ticker Detail Close',
+  args: {
+    consoleView: 'Console Home',
+    isAdmin: false,
+    landingFocus: 'Overview Focus',
+    announcementPreview: 'Active',
+  },
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 180))
+
+    const modalAcknowledgeButton = Array.from(canvasElement.ownerDocument.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => ['Got it', '知道了'].includes(button.textContent?.trim() ?? ''))
+    if (modalAcknowledgeButton == null) {
+      throw new Error('Expected initial modal announcement to render an acknowledge action.')
+    }
+    modalAcknowledgeButton?.click()
+    await new Promise((resolve) => window.setTimeout(resolve, 120))
+
+    const tickerMain = canvasElement.querySelector<HTMLButtonElement>('.user-console-announcement-ticker-main')
+    if (tickerMain == null) {
+      throw new Error('Expected bodyful ticker announcement to render a title trigger.')
+    }
+    tickerMain?.click()
+    await new Promise((resolve) => window.setTimeout(resolve, 120))
+
+    const tickerDialog = canvasElement.ownerDocument.querySelector<HTMLElement>('.user-console-announcement-dialog')
+    if (!tickerDialog?.textContent?.includes(announcementTickerSample.title)) {
+      throw new Error('Expected clicking ticker title to open its detail dialog.')
+    }
+
+    const closeButton = Array.from(tickerDialog.querySelectorAll<HTMLButtonElement>('button'))
+      .find((button) => button.textContent?.trim() === 'Close')
+    if (closeButton == null) {
+      throw new Error('Expected ticker detail dialog to render a close button.')
+    }
+    closeButton?.click()
+    await new Promise((resolve) => window.setTimeout(resolve, 120))
+
+    if (canvasElement.querySelector('.user-console-announcement-ticker') != null) {
+      throw new Error('Expected closing ticker details to dismiss the ticker announcement.')
+    }
+    if (canvasElement.ownerDocument.querySelector('.user-console-announcement-dialog') != null) {
+      throw new Error('Expected closing ticker details to close the detail dialog.')
     }
   },
 }

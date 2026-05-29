@@ -86,6 +86,10 @@ export default function UserConsoleAnnouncements({
     ?? null
   const tickerHasBody = tickerAnnouncement ? hasAnnouncementBody(tickerAnnouncement) : false
   const tickerDetailAnnouncement = tickerAnnouncement?.id === tickerDetailId && tickerHasBody ? tickerAnnouncement : null
+  const closeTickerDetailAnnouncement = (id: string) => {
+    setTickerDetailId(null)
+    onCloseAnnouncement(id)
+  }
 
   return (
     <>
@@ -167,7 +171,14 @@ export default function UserConsoleAnnouncements({
         ) : null}
       </Dialog>
 
-      <Dialog open={tickerDetailAnnouncement != null} onOpenChange={(open) => !open && setTickerDetailId(null)}>
+      <Dialog
+        open={tickerDetailAnnouncement != null}
+        onOpenChange={(open) => {
+          if (!open && tickerDetailAnnouncement) {
+            closeTickerDetailAnnouncement(tickerDetailAnnouncement.id)
+          }
+        }}
+      >
         {tickerDetailAnnouncement ? (
           <DialogContent className="user-console-announcement-dialog" aria-describedby={undefined}>
             <DialogHeader>
@@ -178,7 +189,10 @@ export default function UserConsoleAnnouncements({
               className="user-console-announcement-dialog-body"
             />
             <DialogFooter>
-              <Button type="button" onClick={() => setTickerDetailId(null)}>
+              <Button
+                type="button"
+                onClick={() => closeTickerDetailAnnouncement(tickerDetailAnnouncement.id)}
+              >
                 {strings.modalAcknowledge}
               </Button>
             </DialogFooter>

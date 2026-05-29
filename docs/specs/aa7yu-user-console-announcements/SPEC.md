@@ -52,7 +52,7 @@
 - 管理端创建/编辑公告正文必须提供 Markdown 编辑器，不能只提供纯文本输入框。
 - 公告正文必须按 Markdown 原文保存，并在管理端列表预览和用户端公告展示中安全渲染。
 - 用户端弹窗公告只能展示管理员填写的标题、正文和固定确认操作，不展示非管理员填写的说明文案。
-- 用户端横幅公告条幅只能直接展示标题；有正文时，点击条幅或右侧详情操作后使用公告弹窗展示 Markdown 正文详情，且条幅内不提供直接关闭操作；无正文时，条幅不提供详情入口，右侧操作直接关闭公告。
+- 用户端横幅公告条幅只能直接展示标题；有正文时，点击条幅或右侧详情操作后使用公告弹窗展示 Markdown 正文详情，且条幅内不提供直接关闭操作；用户在详情弹窗点击“知道了”或关闭按钮后，视为关闭该横幅公告并写入本地关闭记录；无正文时，条幅不提供详情入口，右侧操作直接关闭公告。
 - 管理端创建/编辑视图只承载正文编辑模式，不提供自制用户侧预览；列表页预览必须复用真实用户端弹窗或横幅公告展示组件。
 - 公告 Markdown 不得执行或渲染原始 HTML；图片禁用，危险链接必须降级为不可点击文本。
 - 草稿可编辑；已发布公告更新时必须生成新公告 ID 并归档旧公告，确保用户浏览器把更新后的公告视为新提醒。
@@ -88,7 +88,7 @@
 
 - Given 管理员创建并发布横幅公告
   When 用户访问 `/console`
-  Then 横幅公告标题展示在控制台内容上方，用户点击条幅后可在弹窗中查看正文详情，关闭公告后同一浏览器不再自动展示同一公告。
+  Then 横幅公告标题展示在控制台内容上方，用户点击条幅后可在弹窗中查看正文详情，并且在详情弹窗点击“知道了”或关闭按钮后，同一浏览器不再自动展示同一公告。
 
 - Given 管理员创建并发布无正文横幅公告
   When 用户访问 `/console`
@@ -137,9 +137,16 @@
 - source_type: storybook_canvas
   story_id_or_title: `User Console/UserConsole/Console Home Announcements`
   state: ticker announcement title with click-through detail dialog
-  evidence_note: 用户控制台横幅公告条幅只展示标题；当公告有正文时，右侧操作变为详情入口，点击后使用公告弹窗展示 Markdown 正文详情，条幅本身仍保留在页面上。
+  evidence_note: 用户控制台横幅公告条幅只展示标题；当公告有正文时，右侧操作变为详情入口，点击后使用公告弹窗展示 Markdown 正文详情，用户点击“知道了”或关闭弹窗会将该横幅公告写入本地关闭记录并隐藏条幅。
   image:
   ![User console ticker detail](./assets/user-console-ticker-detail-action.png)
+
+- source_type: storybook_canvas
+  story_id_or_title: `User Console/UserConsole/Console Home Announcements`
+  state: ticker announcement hidden after detail acknowledgement
+  evidence_note: Storybook play 先关闭当前弹窗公告，再打开横幅公告详情并点击“知道了”；最终控制台不再显示该横幅公告，证明有正文横幅在详情确认后会进入本地关闭状态。
+  image:
+  ![User console ticker detail dismissed](./assets/user-console-ticker-detail-dismissed.png)
 
 - source_type: storybook_canvas
   story_id_or_title: `User Console/UserConsole/Console Home`
