@@ -6,6 +6,7 @@
 - Added HA startup role detection from EdgeOne current origin.
 - Added admin endpoints for HA status, SQLite snapshot export/import, promote, finalize, and recovery import.
 - Added standby snapshot restore through `ATTACH` on the current SQLite pool so the process does not need to replace an open database file.
+- Added optional active-to-standby snapshot push loop controlled by `HA_SYNC_PEER_URL`, `HA_INTERNAL_TOKEN`, and `HA_SYNC_INTERVAL_SECS`.
 - Added recovery batch idempotency, HA sync watermarks, failover operation persistence, and node state persistence.
 - Adjusted EdgeOne origin switching to send host and origin port separately.
 - Added full-master fencing for system settings, upstream key creation, user token management, user quota changes, registration settings, OAuth login start, recharge order creation, and payment notify.
@@ -21,6 +22,5 @@
 
 ## Remaining Hardening
 
-- Wire automatic 5-15 second peer push/pull scheduling once direct node-to-node URLs and internal auth token policy are configured.
 - Store full request/response EdgeOne audit payloads from inside the EdgeOne client rather than only operation-level failover rows.
 - Add multi-node mock integration tests for EdgeOne concurrent promote.

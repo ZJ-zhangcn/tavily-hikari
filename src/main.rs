@@ -264,6 +264,18 @@ struct Cli {
         default_value = "https://teo.intl.tencentcloudapi.com"
     )]
     edgeone_api_endpoint: String,
+
+    /// Direct standby/admin peer URL for HA snapshot sync.
+    #[arg(long, env = "HA_SYNC_PEER_URL")]
+    ha_sync_peer_url: Option<String>,
+
+    /// Shared internal token for node-to-node HA sync calls.
+    #[arg(long, env = "HA_INTERNAL_TOKEN", hide_env_values = true)]
+    ha_internal_token: Option<String>,
+
+    /// HA snapshot sync interval in seconds, clamped to 5-15.
+    #[arg(long, env = "HA_SYNC_INTERVAL_SECS", default_value_t = 15)]
+    ha_sync_interval_secs: u64,
 }
 
 #[tokio::main]
@@ -461,6 +473,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         edgeone_secret_id: trim_optional(cli.edgeone_secret_id),
         edgeone_secret_key: trim_optional(cli.edgeone_secret_key),
         edgeone_api_endpoint: cli.edgeone_api_endpoint.trim().to_string(),
+        sync_peer_url: trim_optional(cli.ha_sync_peer_url),
+        internal_token: trim_optional(cli.ha_internal_token),
+        sync_interval_secs: cli.ha_sync_interval_secs,
     };
 
     let static_dir = cli.static_dir.or_else(|| {

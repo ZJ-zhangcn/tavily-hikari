@@ -40,6 +40,7 @@ pub async fn serve(
         usage_base: usage_base.clone(),
         api_key_ip_geo_origin,
     });
+    spawn_ha_snapshot_sync_task(state.clone());
 
     println!(
         "Admin auth modes: forward_enabled={} builtin_enabled={} dev_open_admin={}",
@@ -421,6 +422,84 @@ pub async fn serve(
     .await?;
     println!("Server shut down gracefully.");
     Ok(())
+}
+
+fn spawn_ha_snapshot_sync_task(state: Arc<AppState>) {
+    let Some(peer_url) = state.ha.sync_peer_url() else {
+        return;
+    };
+    let Some(internal_token) = state.ha.internal_token() else {
+        eprintln!(
+            "HA snapshot sync disabled: HA_INTERNAL_TOKEN is required when HA_SYNC_PEER_URL is set"
+        );
+        return;
+    };
+    let interval = std::time::Duration::from_secs(state.ha.sync_interval_secs());
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        loop {
+            tokio::time::sleep(interval).await;
+            if !state.ha.role().await.allows_basic_business() {
+                continue;
+            }
+            let Some(db_path) = state.ha.database_path() else {
+                eprintln!("HA snapshot sync skipped: database path is not configured");
+                continue;
+            };
+            if let Err(err) = state.proxy.ha_wal_checkpoint().await {
+                eprintln!("HA snapshot sync checkpoint failed: {err}");
+                continue;
+            }
+            let bytes = match tokio::fs::read(&db_path).await {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    eprintln!("HA snapshot sync read failed: {err}");
+                    continue;
+                }
+            };
+            let status = state.ha.status().await;
+            let generated_at = Utc::now().timestamp();
+            let target = format!(
+                "{}/api/admin/ha/snapshot?sourceNodeId={}&generatedAt={}",
+                peer_url,
+                urlencoding::encode(&status.node_id),
+                generated_at
+            );
+            match client
+                .put(target)
+                .header("x-ha-internal-token", &internal_token)
+                .body(bytes)
+                .send()
+                .await
+            {
+                Ok(response) if response.status().is_success() => {
+                    let detail = format!("snapshot pushed to {peer_url}");
+                    if let Err(err) = state
+                        .proxy
+                        .persist_ha_sync_watermark(
+                            "snapshot_push",
+                            Some(&status.node_id),
+                            None,
+                            generated_at,
+                            Some(&detail),
+                        )
+                        .await
+                    {
+                        eprintln!("HA snapshot sync watermark failed: {err}");
+                    }
+                }
+                Ok(response) => {
+                    eprintln!(
+                        "HA snapshot sync push failed with status {}",
+                        response.status()
+                    );
+                }
+                Err(err) => {
+                    eprintln!("HA snapshot sync push failed: {err}");
+                }
+            }
+        }
+    });
 }
 
 async fn wait_for_ctrl_c() -> &'static str {

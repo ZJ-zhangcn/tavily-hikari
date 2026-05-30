@@ -69,6 +69,9 @@ pub struct HaConfig {
     pub edgeone_secret_id: Option<String>,
     pub edgeone_secret_key: Option<String>,
     pub edgeone_api_endpoint: String,
+    pub sync_peer_url: Option<String>,
+    pub internal_token: Option<String>,
+    pub sync_interval_secs: u64,
 }
 
 impl Default for HaConfig {
@@ -84,6 +87,9 @@ impl Default for HaConfig {
             edgeone_secret_id: None,
             edgeone_secret_key: None,
             edgeone_api_endpoint: "https://teo.intl.tencentcloudapi.com".to_string(),
+            sync_peer_url: None,
+            internal_token: None,
+            sync_interval_secs: 15,
         }
     }
 }
@@ -265,6 +271,37 @@ impl HaRuntime {
             .as_deref()
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
+    }
+
+    pub fn sync_peer_url(&self) -> Option<String> {
+        self.config
+            .sync_peer_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(|value| value.trim_end_matches('/').to_string())
+    }
+
+    pub fn internal_token(&self) -> Option<String> {
+        self.config
+            .internal_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string)
+    }
+
+    pub fn internal_token_matches(&self, candidate: Option<&str>) -> bool {
+        match (self.config.internal_token.as_deref(), candidate) {
+            (Some(expected), Some(candidate)) => {
+                !expected.trim().is_empty() && expected.trim() == candidate.trim()
+            }
+            _ => false,
+        }
+    }
+
+    pub fn sync_interval_secs(&self) -> u64 {
+        self.config.sync_interval_secs.clamp(5, 15)
     }
 
     pub async fn role(&self) -> HaNodeRole {

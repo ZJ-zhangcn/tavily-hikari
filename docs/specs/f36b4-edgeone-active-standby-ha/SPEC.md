@@ -60,6 +60,9 @@ Tavily Hikari 的高可用方案采用单活主备热备，而不是一主多从
 - `EDGEONE_EXPECTED_ORIGIN`
 - `EDGEONE_SECRET_ID`
 - `EDGEONE_SECRET_KEY`
+- `HA_SYNC_PEER_URL`
+- `HA_INTERNAL_TOKEN`
+- `HA_SYNC_INTERVAL_SECS`
 
 ## UI Contract
 

@@ -19,6 +19,16 @@ struct HaSnapshotUploadQuery {
     generated_at: Option<i64>,
 }
 
+fn is_ha_admin_or_internal(state: &AppState, headers: &HeaderMap) -> bool {
+    if is_admin_request(state, headers) {
+        return true;
+    }
+    let token = headers
+        .get("x-ha-internal-token")
+        .and_then(|value| value.to_str().ok());
+    state.ha.internal_token_matches(token)
+}
+
 async fn get_admin_ha_status(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -33,7 +43,7 @@ async fn get_admin_ha_snapshot(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
 ) -> Result<Response<Body>, (StatusCode, String)> {
-    if !is_admin_request(state.as_ref(), &headers) {
+    if !is_ha_admin_or_internal(state.as_ref(), &headers) {
         return Err((StatusCode::FORBIDDEN, "forbidden".to_string()));
     }
     let Some(db_path) = state.ha.database_path() else {
@@ -87,7 +97,7 @@ async fn put_admin_ha_snapshot(
     Query(query): Query<HaSnapshotUploadQuery>,
     body: Bytes,
 ) -> Result<Json<tavily_hikari::HaSnapshotManifest>, (StatusCode, String)> {
-    if !is_admin_request(state.as_ref(), &headers) {
+    if !is_ha_admin_or_internal(state.as_ref(), &headers) {
         return Err((StatusCode::FORBIDDEN, "forbidden".to_string()));
     }
     let role = state.ha.role().await;
@@ -223,7 +233,7 @@ async fn post_admin_ha_recovery_import(
     headers: HeaderMap,
     Json(payload): Json<HaRecoveryImportRequest>,
 ) -> Result<Json<tavily_hikari::HaRecoveryImportResult>, (StatusCode, String)> {
-    if !is_admin_request(state.as_ref(), &headers) {
+    if !is_ha_admin_or_internal(state.as_ref(), &headers) {
         return Err((StatusCode::FORBIDDEN, "forbidden".to_string()));
     }
     let batch = payload.batch_id.unwrap_or_else(|| "manual".to_string());

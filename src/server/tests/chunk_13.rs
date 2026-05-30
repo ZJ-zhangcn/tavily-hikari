@@ -547,14 +547,16 @@ async fn ha_snapshot_import_restores_standby_business_tables() {
         mode: tavily_hikari::HaMode::ActiveStandby,
         node_id: "node-standby".to_string(),
         database_path: Some(standby_db_str.clone()),
+        internal_token: Some("test-ha-internal-token".to_string()),
         ..tavily_hikari::HaConfig::default()
     });
-    let standby_addr = spawn_ha_admin_server(standby_proxy, standby_ha, true).await;
+    let standby_addr = spawn_ha_admin_server(standby_proxy, standby_ha, false).await;
 
     let import_response = Client::new()
         .put(format!(
             "http://{standby_addr}/api/admin/ha/snapshot?sourceNodeId=node-active"
         ))
+        .header("x-ha-internal-token", "test-ha-internal-token")
         .body(snapshot)
         .send()
         .await
