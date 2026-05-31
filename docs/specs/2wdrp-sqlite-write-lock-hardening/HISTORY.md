@@ -16,6 +16,7 @@
 
 ## 2026-05-31
 
-- Removed a repeated startup backfill from the LinuxDo system tag path after production startup
-  timing showed SQLite initialization dominated by no-op per-user binding sync on an already
-  consistent database.
+- Moved repeated LinuxDo system tag refresh out of the startup readiness path after production
+  timing showed SQLite initialization dominated by per-user binding sync on an already consistent
+  database. Startup still performs a cheap mismatch repair check; periodic refresh now runs in the
+  background scheduler.

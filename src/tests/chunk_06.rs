@@ -804,11 +804,6 @@ async fn linuxdo_system_tags_seed_backfill_and_trust_level_sync() {
         .execute(&proxy.key_store.pool)
         .await
         .expect("delete bindings to simulate historical gap");
-    sqlx::query("DELETE FROM meta WHERE key = ?")
-        .bind(META_KEY_LINUXDO_USER_TAG_BINDINGS_BACKFILL_V1)
-        .execute(&proxy.key_store.pool)
-        .await
-        .expect("clear linuxdo binding backfill marker");
     drop(proxy);
 
     let proxy_after = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
