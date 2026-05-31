@@ -45,15 +45,36 @@ export interface AdminRechargeTranslations {
   orderFilterLabel: string
   groupSummary: string
   groupCredits: string
-  summary: Record<'orders' | 'actionable' | 'totpRequired', string>
+  summary: Record<'orders' | 'actionable' | 'totpRequired' | 'totpSetupRequired' | 'totpUnavailable', string>
   status: Record<'pending' | 'paid' | 'failed' | 'refunding' | 'refunded' | 'refundOnly', string>
   statusAction: Record<'pending' | 'failed' | 'refunding' | 'refunded' | 'refundOnly', string>
   amountLdc: string
   orderCredits: string
   table: Record<'user' | 'order' | 'status' | 'amount' | 'createdAt' | 'paidAt' | 'refundedAt' | 'actions', string>
-  actions: Record<'refund' | 'refundOnly' | 'previousPage' | 'nextPage' | 'cancel' | 'confirm', string>
+  actions: Record<'refund' | 'refundOnly' | 'previousPage' | 'nextPage' | 'cancel' | 'confirm' | 'processing' | 'openTotpSettings', string>
   paginationSummary: string
-  confirm: Record<'refundTitle' | 'refundOnlyTitle' | 'description' | 'totpLabel' | 'totpPlaceholder', string>
+  totpStatusLoadFailed: string
+  confirm: Record<
+    | 'refundTitle'
+    | 'refundOnlyTitle'
+    | 'description'
+    | 'totpLabel'
+    | 'totpPlaceholder'
+    | 'processing'
+    | 'totpSetupTitle'
+    | 'totpSetupDescription'
+    | 'totpSetupCallout'
+    | 'totpUnavailableTitle'
+    | 'totpUnavailableDescription'
+    | 'totpUnavailableCallout'
+    | 'totpStatusTitle'
+    | 'totpStatusDescription'
+    | 'totpStatusLoadingCallout'
+    | 'totpStatusUnknownCallout'
+    | 'totpStatusErrorCallout',
+    string
+  >
+  errors: Record<'totpNotBound' | 'invalidTotp' | 'totpLocked' | 'devOpenAdmin' | 'refundFailed', string>
   userDetail: Record<
     | 'title'
     | 'loading'
