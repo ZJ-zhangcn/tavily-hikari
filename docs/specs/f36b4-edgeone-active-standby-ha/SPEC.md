@@ -67,16 +67,12 @@ Tavily Hikari 的高可用方案采用单活主备热备，而不是一主多从
 ## UI Contract
 
 - 用户控制台在 failover、provisional、recovery、同步滞后时显示降级警告。
-- 管理员控制台显示节点状态、EdgeOne 当前源站、同步水位、recovery 进度、promote 和 finalize 操作。
+- 管理员控制台显示 HA 服务节点管理面板，包含节点清单、角色、源站、健康状态、同步水位、promote/finalize 操作和 EdgeOne 当前源站摘要。
 - `provisional_master` 阶段必须明确提示注册、充值和配置写入仍被禁用。
 
 ## Visual Evidence
 
-![HA provisional admin banner](ha-status-banner-provisional-admin.png)
-
-![HA full master admin banner](./assets/ha-status-banner-full-master-admin.png)
-
-![HA recovery admin banner](./assets/ha-status-banner-recovery-admin.png)
+![HA service nodes admin panel](./assets/ha-service-nodes-panel.png)
 
 ## Acceptance
 

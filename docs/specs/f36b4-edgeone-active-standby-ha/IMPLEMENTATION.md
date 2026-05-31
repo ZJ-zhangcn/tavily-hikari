@@ -20,7 +20,7 @@
 
 - Added API bindings for HA status, promote, and finalize.
 - Added shared `HaStatusBanner` with admin and user presentation modes.
-- Added admin banner with persistent active-standby status details, including node origin, EdgeOne domain/current/expected origin, EdgeOne API configuration, sync timestamps, basic traffic/full write gates, recovery status, and message.
+- Added admin HA service node panel with persistent active-standby status details, including node inventory, role, origin, health, EdgeOne domain/current/expected origin, EdgeOne API configuration, sync timestamps, basic traffic/full write gates, recovery status, message, and row-level promote/finalize actions.
 - Added promote/finalize actions for degraded admin states.
 - Added user console banner for degraded HA states.
 - Added Storybook scenarios for provisional, standby, full master, recovery, and user degraded states.
