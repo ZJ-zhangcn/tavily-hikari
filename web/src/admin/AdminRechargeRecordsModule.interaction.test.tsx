@@ -68,10 +68,12 @@ afterEach(() => {
 describe('AdminRechargeRecordsModule refund TOTP feedback', () => {
   function renderRefundDialog(options: {
     kind?: RefundKind
-    totpStatus: AdminTotpStatus
+    totpStatus: AdminTotpStatus | null
     totpCode?: string
     refundBusy?: boolean
     refundError?: string | null
+    totpStatusLoading?: boolean
+    totpStatusError?: string | null
     onOpenSystemSettings?: () => void
   }) {
     const container = document.createElement('div')
@@ -86,6 +88,8 @@ describe('AdminRechargeRecordsModule refund TOTP feedback', () => {
             totpCode={options.totpCode ?? ''}
             refundBusy={options.refundBusy ?? false}
             refundError={options.refundError ?? null}
+            totpStatusLoading={options.totpStatusLoading ?? false}
+            totpStatusError={options.totpStatusError ?? null}
             onTotpCodeChange={() => {}}
             onClose={() => {}}
             onExecuteRefund={() => {}}
@@ -112,6 +116,23 @@ describe('AdminRechargeRecordsModule refund TOTP feedback', () => {
       findButtonWithin(container, ['去系统设置', 'Open settings']).click()
     })
     expect(onOpenSystemSettings).toHaveBeenCalledTimes(1)
+
+    await act(async () => root.unmount())
+  })
+
+  it('blocks refund submission while admin TOTP status is unknown', async () => {
+    const { container, root } = renderRefundDialog({
+      totpStatus: null,
+      totpStatusLoading: true,
+    })
+
+    expect(container.textContent).toContain('正在确认管理端 TOTP')
+    expect(container.textContent).toContain('正在读取管理端 TOTP 状态')
+    expect(container.querySelector('#admin-recharge-refund-totp')).toBeNull()
+    const confirmButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((button) =>
+      ['确认', 'Confirm'].some((label) => button.textContent?.includes(label)),
+    )
+    expect(confirmButton).toBeUndefined()
 
     await act(async () => root.unmount())
   })

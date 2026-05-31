@@ -63,7 +63,12 @@ export interface AdminRechargeTranslations {
     | 'processing'
     | 'totpSetupTitle'
     | 'totpSetupDescription'
-    | 'totpSetupCallout',
+    | 'totpSetupCallout'
+    | 'totpStatusTitle'
+    | 'totpStatusDescription'
+    | 'totpStatusLoadingCallout'
+    | 'totpStatusUnknownCallout'
+    | 'totpStatusErrorCallout',
     string
   >
   errors: Record<'totpNotBound' | 'invalidTotp' | 'totpLocked' | 'devOpenAdmin' | 'refundFailed', string>

@@ -66,6 +66,7 @@ export default function AdminRechargeRecordsModule({
   const [error, setError] = useState<string | null>(null)
   const [totpStatus, setTotpStatus] = useState<AdminTotpStatus | null>(initialTotpStatus ?? null)
   const [totpStatusError, setTotpStatusError] = useState<string | null>(null)
+  const [totpStatusLoading, setTotpStatusLoading] = useState(!disableAutoLoad && initialTotpStatus === undefined)
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState<AdminRechargeStatus | 'all'>('all')
   const [startDate, setStartDate] = useState('')
@@ -151,13 +152,19 @@ export default function AdminRechargeRecordsModule({
   useEffect(() => {
     if (disableAutoLoad) return
     const controller = new AbortController()
+    setTotpStatusLoading(true)
     setTotpStatusError(null)
     fetchAdminTotpStatus(controller.signal)
-      .then(setTotpStatus)
+      .then((nextStatus) => {
+        setTotpStatus(nextStatus)
+      })
       .catch((err: unknown) => {
         if (!controller.signal.aborted) {
           setTotpStatusError(err instanceof Error ? err.message : String(err))
         }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setTotpStatusLoading(false)
       })
     return () => controller.abort()
   }, [disableAutoLoad])
@@ -350,6 +357,8 @@ export default function AdminRechargeRecordsModule({
         totpCode={totpCode}
         refundBusy={refundBusy}
         refundError={refundError}
+        totpStatusLoading={totpStatusLoading}
+        totpStatusError={totpStatusError}
         onTotpCodeChange={(value) => {
           setTotpCode(value)
           setRefundError(null)
@@ -368,6 +377,8 @@ interface AdminRechargeRefundDialogProps {
   totpCode: string
   refundBusy: boolean
   refundError: string | null
+  totpStatusLoading?: boolean
+  totpStatusError?: string | null
   onTotpCodeChange: (value: string) => void
   onClose: () => void
   onExecuteRefund: () => void
@@ -381,6 +392,8 @@ export function AdminRechargeRefundDialog({
   totpCode,
   refundBusy,
   refundError,
+  totpStatusLoading,
+  totpStatusError,
   onTotpCodeChange,
   onClose,
   onExecuteRefund,
@@ -395,6 +408,8 @@ export function AdminRechargeRefundDialog({
           totpCode={totpCode}
           refundBusy={refundBusy}
           refundError={refundError}
+          totpStatusLoading={totpStatusLoading}
+          totpStatusError={totpStatusError}
           onTotpCodeChange={onTotpCodeChange}
           onClose={onClose}
           onExecuteRefund={onExecuteRefund}
@@ -411,6 +426,8 @@ export function AdminRechargeRefundDialogBody({
   totpCode,
   refundBusy,
   refundError,
+  totpStatusLoading = false,
+  totpStatusError = null,
   onTotpCodeChange,
   onClose,
   onExecuteRefund,
@@ -418,12 +435,26 @@ export function AdminRechargeRefundDialogBody({
   chrome = 'dialog',
 }: AdminRechargeRefundDialogProps): JSX.Element {
   const strings = useTranslate().admin.recharges
-  const refundDialogBlocked = totpStatus?.enabled === false
+  const refundDialogNeedsStatus = totpStatus == null
+  const refundDialogBlocked = refundDialogNeedsStatus || totpStatus.enabled === false
   const refundDialogStatus = refundError ?? (refundBusy ? strings.confirm.processing : null)
   const title = refundDialogBlocked
-    ? strings.confirm.totpSetupTitle
+    ? refundDialogNeedsStatus
+      ? strings.confirm.totpStatusTitle
+      : strings.confirm.totpSetupTitle
     : refundTarget?.kind === 'refund' ? strings.confirm.refundTitle : strings.confirm.refundOnlyTitle
-  const description = refundDialogBlocked ? strings.confirm.totpSetupDescription : strings.confirm.description
+  const description = refundDialogBlocked
+    ? refundDialogNeedsStatus
+      ? strings.confirm.totpStatusDescription
+      : strings.confirm.totpSetupDescription
+    : strings.confirm.description
+  const blockedCallout = refundDialogNeedsStatus
+    ? totpStatusError
+      ? formatTemplate(strings.confirm.totpStatusErrorCallout, { message: totpStatusError })
+      : totpStatusLoading
+        ? strings.confirm.totpStatusLoadingCallout
+        : strings.confirm.totpStatusUnknownCallout
+    : strings.confirm.totpSetupCallout
   const header = chrome === 'dialog' ? (
     <DialogHeader>
       <DialogTitle>{title}</DialogTitle>
@@ -438,9 +469,9 @@ export function AdminRechargeRefundDialogBody({
   const footerContent = (
     <>
       <Button type="button" variant="outline" disabled={refundBusy} onClick={onClose}>{strings.actions.cancel}</Button>
-      {refundDialogBlocked ? (
+      {refundDialogBlocked && !refundDialogNeedsStatus ? (
         <Button type="button" onClick={onOpenSystemSettings}>{strings.actions.openTotpSettings}</Button>
-      ) : (
+      ) : refundDialogBlocked ? null : (
         <Button type="button" disabled={refundBusy || totpCode.length !== 6} onClick={onExecuteRefund}>
           {refundBusy ? strings.actions.processing : strings.actions.confirm}
         </Button>
@@ -452,7 +483,7 @@ export function AdminRechargeRefundDialogBody({
       {header}
       {refundDialogBlocked ? (
         <div className="admin-recharge-setup-callout" role="status" aria-live="polite">
-          {strings.confirm.totpSetupCallout}
+          {blockedCallout}
         </div>
       ) : (
         <label className="admin-recharge-totp-field" htmlFor="admin-recharge-refund-totp">

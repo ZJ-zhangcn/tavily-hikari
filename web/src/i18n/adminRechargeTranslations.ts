@@ -134,6 +134,11 @@ export const adminRechargeTranslations: Record<Language, AdminRechargeTranslatio
       totpSetupTitle: 'Bind admin TOTP first',
       totpSetupDescription: 'Refund actions are blocked until admin TOTP is bound in system settings.',
       totpSetupCallout: 'No admin TOTP is bound yet. Open system settings, bind TOTP, then return to recharge records.',
+      totpStatusTitle: 'Checking admin TOTP',
+      totpStatusDescription: 'Refund actions are blocked until the admin TOTP status is confirmed.',
+      totpStatusLoadingCallout: 'Checking admin TOTP status. Wait a moment before submitting a refund.',
+      totpStatusUnknownCallout: 'Admin TOTP status is not loaded yet. Wait a moment before submitting a refund.',
+      totpStatusErrorCallout: 'Failed to confirm admin TOTP status: {message}',
     },
     errors: {
       totpNotBound: 'Admin TOTP is not bound yet. Bind TOTP in system settings before refunding.',
@@ -234,6 +239,11 @@ export const adminRechargeTranslations: Record<Language, AdminRechargeTranslatio
       totpSetupTitle: '请先绑定管理端 TOTP',
       totpSetupDescription: '退单和仅退款会触发真实退款链路，必须先在系统设置中绑定管理端 TOTP。',
       totpSetupCallout: '当前还没有绑定管理端 TOTP。请先进入系统设置完成绑定，再回到充值记录执行退款。',
+      totpStatusTitle: '正在确认管理端 TOTP',
+      totpStatusDescription: '确认管理端 TOTP 状态前，不能提交退单或仅退款请求。',
+      totpStatusLoadingCallout: '正在读取管理端 TOTP 状态，请稍候再提交退款。',
+      totpStatusUnknownCallout: '管理端 TOTP 状态尚未加载，请稍候再提交退款。',
+      totpStatusErrorCallout: '无法确认管理端 TOTP 状态：{message}',
     },
     errors: {
       totpNotBound: '管理端 TOTP 尚未绑定。请先在系统设置中绑定 TOTP，再执行退款。',
