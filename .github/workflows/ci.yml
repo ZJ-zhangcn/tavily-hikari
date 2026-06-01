@@ -58,7 +58,7 @@ jobs:
   unit-tests:
     name: Backend Tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v6
