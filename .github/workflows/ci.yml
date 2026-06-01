@@ -95,7 +95,7 @@ jobs:
           done
 
       - name: Run binary tests
-        run: cargo test --locked --all-features --bins -- --test-threads=1 --skip server::
+        run: "cargo test --locked --all-features --bins -- --test-threads=1 --skip server::"
 
   frontend-checks:
     name: Frontend Checks
