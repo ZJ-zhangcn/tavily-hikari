@@ -72,6 +72,8 @@ Tavily Hikari 的高可用方案采用单活主备热备，而不是一主多从
 
 ## Visual Evidence
 
+PR: include
+
 ![HA service nodes admin panel](./assets/ha-service-nodes-panel.png)
 
 ## Acceptance
