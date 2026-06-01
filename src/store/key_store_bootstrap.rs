@@ -1637,6 +1637,9 @@ impl KeyStore {
         )
         .execute(&self.pool)
         .await?;
+        sqlx::query("DELETE FROM ha_outbox_suppression WHERE id = 'local'")
+            .execute(&self.pool)
+            .await?;
         sqlx::query(
             r#"CREATE INDEX IF NOT EXISTS idx_ha_outbox_resource
                ON ha_outbox(resource, resource_id, seq)"#,

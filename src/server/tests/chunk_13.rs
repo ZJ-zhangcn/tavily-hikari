@@ -488,11 +488,64 @@ async fn ha_snapshot_endpoint_is_gone() {
 
     let response = Client::new()
         .put(format!("http://{addr}/api/admin/ha/snapshot"))
-        .body(vec![b'x'; 1024 * 1024])
+        .body(vec![b'x'; 3 * 1024 * 1024])
         .send()
         .await
         .expect("snapshot put request");
     assert_eq!(response.status(), reqwest::StatusCode::GONE);
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
+async fn ha_startup_clears_stale_outbox_suppression_marker() {
+    let db_path = temp_db_path("ha-stale-outbox-suppression");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-suppression-marker".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("proxy created");
+    drop(proxy);
+
+    let pool = connect_sqlite_test_pool(&db_str).await;
+    sqlx::query("INSERT OR IGNORE INTO ha_outbox_suppression (id) VALUES ('local')")
+        .execute(&pool)
+        .await
+        .expect("insert stale suppression marker");
+    pool.close().await;
+
+    let restarted = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-suppression-marker".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("restarted proxy created");
+    drop(restarted);
+
+    let pool = connect_sqlite_test_pool(&db_str).await;
+    let suppression_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM ha_outbox_suppression WHERE id = 'local'")
+            .fetch_one(&pool)
+            .await
+            .expect("count suppression markers");
+    assert_eq!(suppression_count, 0);
+
+    sqlx::query(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES ('request_rate_limit_v1', '99')",
+    )
+    .execute(&pool)
+    .await
+    .expect("write whitelisted meta");
+    let event_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM ha_outbox WHERE resource = 'meta'")
+            .fetch_one(&pool)
+            .await
+            .expect("count emitted events");
+    assert_eq!(event_count, 1);
+    pool.close().await;
     let _ = std::fs::remove_file(db_path);
 }
 
