@@ -444,11 +444,6 @@ impl KeyStore {
         let min_seq: Option<i64> = sqlx::query_scalar("SELECT MIN(seq) FROM ha_outbox")
             .fetch_one(&self.pool)
             .await?;
-        if min_seq.is_none() && after_seq > 0 {
-            return Err(ProxyError::Other(
-                "HA outbox cursor is older than retention window".to_string(),
-            ));
-        }
         if let Some(min_seq) = min_seq
             && after_seq > 0
             && after_seq < min_seq.saturating_sub(1)

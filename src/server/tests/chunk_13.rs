@@ -717,7 +717,7 @@ fn ha_events_encoder_chunks_oversized_batches() {
 }
 
 #[tokio::test]
-async fn ha_events_storage_forces_rebaseline_when_retained_outbox_is_empty() {
+async fn ha_events_storage_allows_nonzero_cursor_when_outbox_is_empty() {
     let db_path = temp_db_path("ha-events-empty-retention");
     let db_str = db_path.to_string_lossy().to_string();
     let proxy = TavilyProxy::with_endpoint(
@@ -733,11 +733,11 @@ async fn ha_events_storage_forces_rebaseline_when_retained_outbox_is_empty() {
         .await
         .expect("clear retained outbox");
     pool.close().await;
-    let err = proxy
+    let events = proxy
         .list_ha_outbox_events_after(5, 10)
         .await
-        .expect_err("stale cursor should require baseline");
-    assert!(err.to_string().contains("retention window"));
+        .expect("empty retained outbox should not force baseline");
+    assert!(events.is_empty());
     let _ = std::fs::remove_file(db_path);
 }
 
