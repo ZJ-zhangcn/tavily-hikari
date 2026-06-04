@@ -66,6 +66,7 @@ import { AdminUserDetailQuotaWorkspace } from './AdminUserDetailQuotaWorkspace'
 import AdminShell, { AdminShellSidebarUtility, type AdminNavItem, type AdminNavTarget } from './AdminShell'
 import AdminOverlayHost from './AdminOverlayHost'
 import DashboardOverview, { type DashboardQuotaChargeCardData } from './DashboardOverview'
+import AdminJobTriggerMenu from './AdminJobTriggerMenu'
 import { AnchoredApiKeyBulkSyncProgressBubble } from './ApiKeyBulkSyncProgressBubble'
 import {
   createDashboardMonthMetrics,
@@ -74,6 +75,7 @@ import {
 import {
   buildAdminJobFilterOptions,
   emptyAdminJobGroupCounts,
+  jobSourceLabel,
   summarizeAdminJobFilter,
 } from './jobFilters'
 import {
@@ -225,6 +227,7 @@ import {
   fetchApiKeyDetail,
   syncApiKeyUsage,
   fetchJobs,
+  triggerJob,
   fetchTokenGroups,
   type AdminUsersSortField,
   fetchAdminUsers,
@@ -1780,6 +1783,7 @@ function AdminDashboard(): JSX.Element {
   const [jobsGroupCounts, setJobsGroupCounts] = useState<JobGroupCounts>(() => emptyAdminJobGroupCounts())
   const [jobsLoadState, setJobsLoadState] = useState<QueryLoadState>('initial_loading')
   const [jobsError, setJobsError] = useState<string | null>(null)
+  const [jobTriggering, setJobTriggering] = useState<string | null>(null)
   const [users, setUsers] = useState<AdminUserSummary[]>([])
   const [usersTotal, setUsersTotal] = useState(0)
   const [usersPage, setUsersPage] = useState(() => getAdminUsersPageFromLocation())
@@ -5202,6 +5206,26 @@ function AdminDashboard(): JSX.Element {
     setJobFilter(value)
     setJobsPage(1)
   }, [])
+
+  const handleManualJobTrigger = useCallback(
+    (jobType: string) => {
+      setJobTriggering(jobType)
+      setJobsError(null)
+      triggerJob(jobType)
+        .then(() => fetchJobs(jobsPage, jobsPerPage, jobFilter))
+        .then((result) => {
+          setJobs(result.items)
+          setJobsTotal(result.total)
+          setJobsGroupCounts(result.groupCounts)
+          setJobsLoadState('ready')
+        })
+        .catch((err) => {
+          setJobsError(err instanceof Error ? err.message : loadingStateStrings.error)
+        })
+        .finally(() => setJobTriggering(null))
+    },
+    [jobFilter, jobsPage, loadingStateStrings.error],
+  )
 
   const keysBatchFirstLine = useMemo(() => {
     return newKeysText.split(/\r?\n/)[0] ?? ''
@@ -9725,6 +9749,13 @@ function AdminDashboard(): JSX.Element {
   const renderJobFilterToolbar = (className?: string) => (
     <div className={['admin-module-toolbar admin-module-toolbar--end', className].filter(Boolean).join(' ')}>
       <div className="panel-actions">
+        <AdminJobTriggerMenu
+          disabled={jobsBlocking}
+          triggeringJobType={jobTriggering}
+          strings={jobsStrings}
+          labelForJobType={(jobType) => jobTypeLabel(jobType, jobsStrings)}
+          onTrigger={handleManualJobTrigger}
+        />
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -11347,7 +11378,7 @@ function AdminDashboard(): JSX.Element {
           {jobs.length === 0 ? (
             <tbody>
               <tr>
-                <td colSpan={7}>
+                <td colSpan={8}>
                   <div className="empty-state alert">{jobsStrings.empty.none}</div>
                 </td>
               </tr>
@@ -11360,6 +11391,7 @@ function AdminDashboard(): JSX.Element {
                   <th>{jobsStrings.table.type}</th>
                   <th>{jobsStrings.table.key}</th>
                   <th>{jobsStrings.table.status}</th>
+                  <th>{jobsStrings.table.source}</th>
                   <th>{jobsStrings.table.attempt}</th>
                   <th>{jobsStrings.table.started}</th>
                   <th>{jobsStrings.table.message}</th>
@@ -11369,6 +11401,7 @@ function AdminDashboard(): JSX.Element {
                 {jobs.map((j) => {
                   const jt = j.job_type
                   const jobTypeLabelText = jobTypeLabel(jt, jobsStrings)
+                  const jobSourceText = jobSourceLabel(j.trigger_source, jobsStrings)
                   const jobStatusText = jobStatusLabel(String(j.status ?? ''))
                   const keyId = j.key_id
                   const keyGroup = j.key_group
@@ -11417,6 +11450,7 @@ function AdminDashboard(): JSX.Element {
                           {jobStatusText}
                         </StatusBadge>
                       </td>
+                      <td>{jobSourceText}</td>
                       <td>{j.attempt}</td>
                       <td>{started ? startedTimeLabel : '—'}</td>
                       <td className="jobs-message-cell">
@@ -11449,7 +11483,7 @@ function AdminDashboard(): JSX.Element {
                   if (isExpanded) {
                     rows.push(
                       <tr key={`${j.id}-details`} className="log-details-row">
-                        <td colSpan={7} id={`job-details-${j.id}`}>
+                        <td colSpan={8} id={`job-details-${j.id}`}>
                           <div className="log-details-panel">
                             <div className="log-details-summary">
                               <div>
@@ -11496,6 +11530,10 @@ function AdminDashboard(): JSX.Element {
                               <div>
                                 <div className="log-details-label">{jobsStrings.table.status}</div>
                                 <div className="log-details-value">{jobStatusText}</div>
+                              </div>
+                              <div>
+                                <div className="log-details-label">{jobsStrings.table.source}</div>
+                                <div className="log-details-value">{jobSourceText}</div>
                               </div>
                               <div>
                                 <div className="log-details-label">{jobsStrings.table.attempt}</div>
@@ -11583,6 +11621,10 @@ function AdminDashboard(): JSX.Element {
                     <StatusBadge tone={statusTone(j.status)} title={String(j.status ?? '')}>
                       {jobStatusLabel(String(j.status ?? ''))}
                     </StatusBadge>
+                  </div>
+                  <div className="admin-mobile-kv">
+                    <span>{jobsStrings.table.source}</span>
+                    <strong>{jobSourceLabel(j.trigger_source, jobsStrings)}</strong>
                   </div>
                   <div className="admin-mobile-kv">
                     <span>{jobsStrings.table.attempt}</span>
