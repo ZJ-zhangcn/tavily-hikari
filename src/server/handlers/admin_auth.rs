@@ -196,12 +196,10 @@ async fn post_trigger_job(
         Err(err) => return Ok(manual_trigger_key_id_error_response(&job_type, err)),
     };
 
-    let _maintenance = acquire_db_maintenance_read_gate().await;
     let claim = state
         .proxy
         .scheduled_job_claim(&job_type, TRIGGER_SOURCE_MANUAL, key_id.as_deref(), 1)
         .await;
-    drop(_maintenance);
 
     match claim {
         Ok(Some(job_id)) => {
@@ -322,7 +320,6 @@ async fn run_manual_key_quota_sync(
     state: Arc<AppState>,
     key_id: &str,
 ) -> Result<(), ManualQuotaSyncError> {
-    let _maintenance = acquire_db_maintenance_read_gate().await;
     let claim = state
         .proxy
         .scheduled_job_claim("quota_sync", TRIGGER_SOURCE_MANUAL, Some(key_id), 1)
@@ -334,7 +331,6 @@ async fn run_manual_key_quota_sync(
                 err.to_string(),
             )
         })?;
-    drop(_maintenance);
 
     let job_id = match claim {
         Some(job_id) => job_id,
