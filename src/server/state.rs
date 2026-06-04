@@ -23,12 +23,38 @@ async fn db_maintenance_http_gate(
     req: Request<Body>,
     next: axum::middleware::Next,
 ) -> Response<Body> {
-    if req.uri().path() == "/health" {
+    let path = req.uri().path();
+    if path == "/health" || !db_maintenance_gated_path(path) {
         return next.run(req).await;
     }
 
     let _guard = db_maintenance_gate().read().await;
     next.run(req).await
+}
+
+fn db_maintenance_gated_path(path: &str) -> bool {
+    path == "/mcp"
+        || path.starts_with("/mcp/")
+        || path.starts_with("/api/")
+        || path == "/auth/linuxdo"
+        || path.starts_with("/auth/linuxdo/")
+}
+
+#[cfg(test)]
+mod db_maintenance_gate_tests {
+    use super::db_maintenance_gated_path;
+
+    #[test]
+    fn maintenance_gate_only_covers_db_backed_routes() {
+        assert!(db_maintenance_gated_path("/api/jobs"));
+        assert!(db_maintenance_gated_path("/mcp"));
+        assert!(db_maintenance_gated_path("/auth/linuxdo/callback"));
+
+        assert!(!db_maintenance_gated_path("/health"));
+        assert!(!db_maintenance_gated_path("/admin"));
+        assert!(!db_maintenance_gated_path("/assets/admin.js"));
+        assert!(!db_maintenance_gated_path("/favicon.svg"));
+    }
 }
 
 async fn ensure_ha_allows_basic_business(

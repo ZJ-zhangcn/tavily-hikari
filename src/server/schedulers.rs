@@ -425,45 +425,67 @@ fn spawn_request_logs_gc_scheduler(state: Arc<AppState>) {
                     continue;
                 };
 
-                match state
-                    .proxy
-                    .gc_request_logs_with_options(scheduled_request_logs_gc_options())
-                    .await
-                {
-                    Ok(report) => {
-                        let msg = format!(
-                            "cleaned_bodies={} deleted_rows={} rollup_deleted={} completed={} retention_days={} batches={} elapsed_ms={}",
-                            report.cleaned_request_log_bodies,
-                            report.deleted_request_logs,
-                            report.deleted_rollups,
-                            report.completed,
-                            report.retention_days,
-                            report.batches,
-                            report.elapsed_ms
-                        );
-                        let _ = state
-                            .proxy
-                            .scheduled_job_finish(job_id, "success", Some(&msg))
-                            .await;
-                        if report.completed {
-                            break;
-                        }
-                        tokio::time::sleep(Duration::from_secs(
-                            request_logs_gc_catchup_recheck_secs(),
-                        ))
-                        .await;
-                    }
-                    Err(err) => {
-                        let _ = state
-                            .proxy
-                            .scheduled_job_finish(job_id, "error", Some(&err.to_string()))
-                            .await;
-                        break;
-                    }
-                }
+                let _ = run_request_logs_gc_catchup_claimed_job(state.clone(), job_id).await;
+                break;
             }
         }
     });
+}
+
+async fn run_request_logs_gc_catchup_claimed_job(state: Arc<AppState>, job_id: i64) -> bool {
+    let mut cleaned_request_log_bodies = 0i64;
+    let mut deleted_request_logs = 0i64;
+    let mut deleted_rollups = 0i64;
+    let mut total_batches = 0i64;
+    let mut total_elapsed_ms = 0u128;
+    let mut passes = 0usize;
+
+    loop {
+        match state
+            .proxy
+            .gc_request_logs_with_options(scheduled_request_logs_gc_options())
+            .await
+        {
+            Ok(report) => {
+                passes += 1;
+                cleaned_request_log_bodies += report.cleaned_request_log_bodies;
+                deleted_request_logs += report.deleted_request_logs;
+                deleted_rollups += report.deleted_rollups;
+                total_batches += report.batches;
+                total_elapsed_ms += report.elapsed_ms;
+
+                if report.completed {
+                    let msg = format!(
+                        "cleaned_bodies={} deleted_rows={} rollup_deleted={} completed=true retention_days={} batches={} passes={} elapsed_ms={}",
+                        cleaned_request_log_bodies,
+                        deleted_request_logs,
+                        deleted_rollups,
+                        report.retention_days,
+                        total_batches,
+                        passes,
+                        total_elapsed_ms
+                    );
+                    let _ = state
+                        .proxy
+                        .scheduled_job_finish(job_id, "success", Some(&msg))
+                        .await;
+                    return true;
+                }
+
+                tokio::time::sleep(Duration::from_secs(
+                    request_logs_gc_catchup_recheck_secs(),
+                ))
+                .await;
+            }
+            Err(err) => {
+                let _ = state
+                    .proxy
+                    .scheduled_job_finish(job_id, "error", Some(&err.to_string()))
+                    .await;
+                return false;
+            }
+        }
+    }
 }
 
 async fn record_linuxdo_user_sync_failure(
@@ -899,26 +921,7 @@ async fn run_manual_claimed_job(
                 Err(err) => finish(state, "error", err.to_string()).await,
             }
         },
-        "request_logs_gc" => match state
-            .proxy
-            .gc_request_logs_with_options(scheduled_request_logs_gc_options())
-            .await
-        {
-            Ok(report) => {
-                let msg = format!(
-                    "cleaned_bodies={} deleted_rows={} rollup_deleted={} completed={} retention_days={} batches={} elapsed_ms={}",
-                    report.cleaned_request_log_bodies,
-                    report.deleted_request_logs,
-                    report.deleted_rollups,
-                    report.completed,
-                    report.retention_days,
-                    report.batches,
-                    report.elapsed_ms
-                );
-                finish(state, "success", msg).await
-            }
-            Err(err) => finish(state, "error", err.to_string()).await,
-        },
+        "request_logs_gc" => run_request_logs_gc_catchup_claimed_job(state, job_id).await,
         "linuxdo_user_status_sync" => {
             run_linuxdo_user_status_sync_claimed_job(state, job_id).await
         },
