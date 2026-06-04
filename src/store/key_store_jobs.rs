@@ -168,20 +168,40 @@ impl KeyStore {
 
     pub(crate) async fn abandon_running_scheduled_jobs(&self) -> Result<u64, ProxyError> {
         let now = Utc::now().timestamp();
-        sqlx::query(
-            r#"
-            UPDATE scheduled_jobs
-            SET status = 'abandoned',
-                message = COALESCE(message, 'abandoned after process restart'),
-                finished_at = ?
-            WHERE status = 'running' AND finished_at IS NULL
-            "#,
-        )
-        .bind(now)
-        .execute(&self.pool)
-        .await
-        .map(|result| result.rows_affected())
-        .map_err(ProxyError::from)
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut retry_attempt = 0usize;
+        loop {
+            match sqlx::query(
+                r#"
+                UPDATE scheduled_jobs
+                SET status = 'abandoned',
+                    message = COALESCE(message, 'abandoned after process restart'),
+                    finished_at = ?
+                WHERE status = 'running' AND finished_at IS NULL
+                "#,
+            )
+            .bind(now)
+            .execute(&self.pool)
+            .await
+            {
+                Ok(result) => return Ok(result.rows_affected()),
+                Err(err) => {
+                    let err = ProxyError::Database(err);
+                    if sleep_before_sqlite_transient_write_retry(
+                        "scheduled job abandon",
+                        retry_attempt,
+                        deadline,
+                        &err,
+                    )
+                    .await
+                    {
+                        retry_attempt += 1;
+                        continue;
+                    }
+                    return Err(err);
+                }
+            }
+        }
     }
 
     pub(crate) async fn scheduled_job_finish(

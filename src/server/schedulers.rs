@@ -512,7 +512,7 @@ async fn run_linuxdo_user_status_sync_job_with_source(
     run_linuxdo_user_status_sync_claimed_job(state, job_id).await;
 }
 
-async fn run_linuxdo_user_status_sync_claimed_job(state: Arc<AppState>, job_id: i64) {
+async fn run_linuxdo_user_status_sync_claimed_job(state: Arc<AppState>, job_id: i64) -> bool {
     let cfg = &state.linuxdo_oauth;
     if !cfg.is_enabled_and_configured() {
         let _ = state
@@ -523,7 +523,7 @@ async fn run_linuxdo_user_status_sync_claimed_job(state: Arc<AppState>, job_id: 
                 Some("attempted=0 success=0 skipped=0 failure=0 reason=linuxdo_oauth_not_configured"),
             )
             .await;
-        return;
+        return true;
     }
     if !cfg.has_refresh_token_crypt_key() {
         let _ = state
@@ -534,7 +534,7 @@ async fn run_linuxdo_user_status_sync_claimed_job(state: Arc<AppState>, job_id: 
                 Some("attempted=0 success=0 skipped=0 failure=0 reason=missing_refresh_token_crypt_key"),
             )
             .await;
-        return;
+        return true;
     }
 
     let records = match state.proxy.list_oauth_accounts_with_refresh_token("linuxdo").await {
@@ -544,7 +544,7 @@ async fn run_linuxdo_user_status_sync_claimed_job(state: Arc<AppState>, job_id: 
                 .proxy
                 .scheduled_job_finish(job_id, "error", Some(&err.to_string()))
                 .await;
-            return;
+            return false;
         }
     };
 
@@ -557,7 +557,7 @@ async fn run_linuxdo_user_status_sync_claimed_job(state: Arc<AppState>, job_id: 
                 Some("attempted=0 success=0 skipped=0 failure=0 reason=no_eligible_accounts"),
             )
             .await;
-        return;
+        return true;
     }
 
     let client = reqwest::Client::new();
@@ -721,6 +721,7 @@ async fn run_linuxdo_user_status_sync_claimed_job(state: Arc<AppState>, job_id: 
         .proxy
         .scheduled_job_finish(job_id, final_status, Some(&message))
         .await;
+    final_status == "success"
 }
 
 fn spawn_linuxdo_user_status_sync_scheduler(state: Arc<AppState>) {
@@ -842,19 +843,20 @@ async fn run_manual_claimed_job(
     job_type: String,
     key_id: Option<String>,
     job_id: i64,
-) {
+) -> bool {
     let finish = |state: Arc<AppState>, status: &'static str, message: String| async move {
+        let succeeded = status == "success";
         let _ = state
             .proxy
             .scheduled_job_finish(job_id, status, Some(&message))
             .await;
+        succeeded
     };
 
     match job_type.as_str() {
         "quota_sync" => {
             let Some(key_id) = key_id else {
-                finish(state, "error", "missing key_id".to_string()).await;
-                return;
+                return finish(state, "error", "missing key_id".to_string()).await;
             };
             match state
                 .proxy
@@ -879,7 +881,7 @@ async fn run_manual_claimed_job(
                     Some(ts) => format!("rows={rows} last_rollup_ts={ts}"),
                     None => format!("rows={rows} last_rollup_ts=none"),
                 };
-                finish(state, "success", msg).await;
+                finish(state, "success", msg).await
             }
             Err(err) => finish(state, "error", err.to_string()).await,
         },
@@ -913,12 +915,12 @@ async fn run_manual_claimed_job(
                     report.batches,
                     report.elapsed_ms
                 );
-                finish(state, "success", msg).await;
+                finish(state, "success", msg).await
             }
             Err(err) => finish(state, "error", err.to_string()).await,
         },
         "linuxdo_user_status_sync" => {
-            run_linuxdo_user_status_sync_claimed_job(state, job_id).await;
+            run_linuxdo_user_status_sync_claimed_job(state, job_id).await
         },
         "linuxdo_user_tag_binding_refresh" => {
             match state.proxy.refresh_linuxdo_user_tag_bindings().await {
@@ -958,7 +960,7 @@ async fn run_manual_claimed_job(
                                 after.freelist_count
                             ),
                         )
-                        .await;
+                        .await
                     }
                     Err(err) => finish(state, "error", err.to_string()).await,
                 }
@@ -1000,11 +1002,13 @@ fn spawn_db_compaction_scheduler(state: Arc<AppState>) {
             else {
                 continue;
             };
-            let run_state = state.clone();
-            tokio::spawn(async move {
-                run_manual_claimed_job(run_state, "db_compaction".to_string(), None, job_id).await;
-            });
-            next_allowed_at = Instant::now() + Duration::from_secs(db_compaction_cooldown_secs());
+            let succeeded =
+                run_manual_claimed_job(state.clone(), "db_compaction".to_string(), None, job_id)
+                    .await;
+            if succeeded {
+                next_allowed_at =
+                    Instant::now() + Duration::from_secs(db_compaction_cooldown_secs());
+            }
         }
     });
 }

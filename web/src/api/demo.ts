@@ -1121,6 +1121,11 @@ async function handleDemoRoute(url: URL, method: string, init?: RequestInit): Pr
   if (path === '/api/logs/catalog') return jsonResponse(requestLogsCatalog())
   if (path === '/api/logs') return jsonResponse(requestLogsPage(url))
   if (/^\/api\/logs\/\d+\/details$/.test(path)) return jsonResponse(demoLogDetailForPath(path))
+  if (path === '/api/jobs/trigger' && method === 'POST') {
+    const body = await readJsonBody()
+    const jobType = typeof body?.jobType === 'string' ? body.jobType : 'request_logs_gc'
+    return jsonResponse({ jobId: nowSeconds(), jobType, triggerSource: 'manual' }, 202)
+  }
   if (path === '/api/jobs') return jsonResponse({ ...buildListPage(demoState.jobs, url, 10), groupCounts: { all: demoState.jobs.length, quota: 4, usage: 4, logs: 2, db: 0, geo: 2, linuxdo: 0 } })
 
   if (path === '/api/announcements') return handleAnnouncementsRoute({ announcements: demoState.announcements, path, method, init, nowSeconds, readJsonBody, jsonResponse })

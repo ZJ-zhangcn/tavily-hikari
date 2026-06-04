@@ -66,6 +66,38 @@ async fn scheduled_job_start_retries_transient_sqlite_write_lock() {
 }
 
 #[tokio::test]
+async fn abandon_running_scheduled_jobs_retries_transient_sqlite_write_lock() {
+    let db_path = temp_db_path("scheduled-job-abandon-retries-sqlite-lock");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
+        .await
+        .expect("proxy created");
+    let job_id = proxy
+        .scheduled_job_start("sqlite_lock_retry_test", None, 1)
+        .await
+        .expect("scheduled job starts");
+    let release = hold_sqlite_write_lock_for_test(&proxy.key_store.pool).await;
+
+    let abandoned = proxy
+        .abandon_running_scheduled_jobs()
+        .await
+        .expect("abandon retries after transient sqlite write lock");
+    assert_eq!(abandoned, 1);
+    release.await.expect("release task");
+
+    let status: String = sqlx::query_scalar("SELECT status FROM scheduled_jobs WHERE id = ?")
+        .bind(job_id)
+        .fetch_one(&proxy.key_store.pool)
+        .await
+        .expect("read job status");
+    assert_eq!(status, "abandoned");
+
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+}
+
+#[tokio::test]
 async fn scheduled_job_claim_records_trigger_source_and_rejects_duplicate_running_job() {
     let db_path = temp_db_path("scheduled-job-claim-trigger-source");
     let db_str = db_path.to_string_lossy().to_string();
