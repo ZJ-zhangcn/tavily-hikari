@@ -63,6 +63,54 @@ fn manual_trigger_supported(job_type: &str) -> bool {
     )
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum ManualTriggerKeyIdError {
+    Required,
+    NotSupported,
+}
+
+fn manual_trigger_key_id_for_claim(
+    job_type: &str,
+    key_id: Option<String>,
+) -> Result<Option<String>, ManualTriggerKeyIdError> {
+    if manual_trigger_requires_key(job_type) {
+        if key_id.is_some() {
+            return Ok(key_id);
+        }
+        return Err(ManualTriggerKeyIdError::Required);
+    }
+
+    if key_id.is_some() {
+        return Err(ManualTriggerKeyIdError::NotSupported);
+    }
+
+    Ok(None)
+}
+
+fn manual_trigger_key_id_error_response(
+    job_type: &str,
+    err: ManualTriggerKeyIdError,
+) -> Response<Body> {
+    match err {
+        ManualTriggerKeyIdError::Required => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "key_id_required",
+                "detail": "keyId is required for quota_sync"
+            })),
+        )
+            .into_response(),
+        ManualTriggerKeyIdError::NotSupported => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "key_id_not_supported",
+                "detail": format!("keyId is not supported for {job_type}")
+            })),
+        )
+            .into_response(),
+    }
+}
+
 async fn list_jobs(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -143,22 +191,19 @@ async fn post_trigger_job(
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string);
-    if manual_trigger_requires_key(&job_type) && key_id.is_none() {
-        return Ok((
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": "key_id_required",
-                "detail": "keyId is required for quota_sync"
-            })),
-        )
-            .into_response());
-    }
+    let key_id = match manual_trigger_key_id_for_claim(&job_type, key_id) {
+        Ok(key_id) => key_id,
+        Err(err) => return Ok(manual_trigger_key_id_error_response(&job_type, err)),
+    };
 
-    match state
+    let _maintenance = acquire_db_maintenance_read_gate().await;
+    let claim = state
         .proxy
         .scheduled_job_claim(&job_type, TRIGGER_SOURCE_MANUAL, key_id.as_deref(), 1)
-        .await
-    {
+        .await;
+    drop(_maintenance);
+
+    match claim {
         Ok(Some(job_id)) => {
             let run_state = state.clone();
             let run_job_type = job_type.clone();
@@ -188,6 +233,28 @@ async fn post_trigger_job(
             eprintln!("manual job trigger error: {err}");
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
+    }
+}
+
+#[cfg(test)]
+mod manual_trigger_tests {
+    use super::{ManualTriggerKeyIdError, manual_trigger_key_id_for_claim};
+
+    #[test]
+    fn manual_global_jobs_reject_key_id() {
+        let err =
+            manual_trigger_key_id_for_claim("db_compaction", Some("key-1".to_string())).unwrap_err();
+        assert_eq!(err, ManualTriggerKeyIdError::NotSupported);
+    }
+
+    #[test]
+    fn manual_quota_sync_requires_key_id() {
+        let err = manual_trigger_key_id_for_claim("quota_sync", None).unwrap_err();
+        assert_eq!(err, ManualTriggerKeyIdError::Required);
+
+        let key_id = manual_trigger_key_id_for_claim("quota_sync", Some("key-1".to_string()))
+            .expect("quota key accepted");
+        assert_eq!(key_id.as_deref(), Some("key-1"));
     }
 }
 
@@ -255,7 +322,8 @@ async fn run_manual_key_quota_sync(
     state: Arc<AppState>,
     key_id: &str,
 ) -> Result<(), ManualQuotaSyncError> {
-    let job_id = match state
+    let _maintenance = acquire_db_maintenance_read_gate().await;
+    let claim = state
         .proxy
         .scheduled_job_claim("quota_sync", TRIGGER_SOURCE_MANUAL, Some(key_id), 1)
         .await
@@ -265,8 +333,10 @@ async fn run_manual_key_quota_sync(
                 "sync_failed",
                 err.to_string(),
             )
-        })?
-    {
+        })?;
+    drop(_maintenance);
+
+    let job_id = match claim {
         Some(job_id) => job_id,
         None => {
             Err(ManualQuotaSyncError::new(

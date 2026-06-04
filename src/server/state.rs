@@ -19,6 +19,14 @@ fn db_maintenance_gate() -> &'static RwLock<()> {
     DB_MAINTENANCE_GATE.get_or_init(|| RwLock::new(()))
 }
 
+async fn acquire_db_maintenance_read_gate() -> tokio::sync::RwLockReadGuard<'static, ()> {
+    db_maintenance_gate().read().await
+}
+
+async fn acquire_db_maintenance_write_gate() -> tokio::sync::RwLockWriteGuard<'static, ()> {
+    db_maintenance_gate().write().await
+}
+
 async fn db_maintenance_http_gate(
     req: Request<Body>,
     next: axum::middleware::Next,
@@ -28,7 +36,7 @@ async fn db_maintenance_http_gate(
         return next.run(req).await;
     }
 
-    let _guard = db_maintenance_gate().read().await;
+    let _guard = acquire_db_maintenance_read_gate().await;
     next.run(req).await
 }
 

@@ -58,6 +58,7 @@ async fn claim_scheduled_job(
     trigger_source: &str,
     log_prefix: &str,
 ) -> Option<i64> {
+    let _maintenance = acquire_db_maintenance_read_gate().await;
     match state
         .proxy
         .scheduled_job_claim(job_type, trigger_source, key_id, 1)
@@ -114,15 +115,18 @@ fn spawn_quota_sync_scheduler(state: Arc<AppState>) {
     let cold_state = state.clone();
     tokio::spawn(async move {
         loop {
-            let keys = match cold_state
-                .proxy
-                .list_keys_pending_quota_sync(twenty_four_hours_secs())
-                .await
-            {
-                Ok(list) => list,
-                Err(err) => {
-                    eprintln!("quota-sync: list pending error: {err}");
-                    vec![]
+            let keys = {
+                let _maintenance = acquire_db_maintenance_read_gate().await;
+                match cold_state
+                    .proxy
+                    .list_keys_pending_quota_sync(twenty_four_hours_secs())
+                    .await
+                {
+                    Ok(list) => list,
+                    Err(err) => {
+                        eprintln!("quota-sync: list pending error: {err}");
+                        vec![]
+                    }
                 }
             };
 
@@ -140,6 +144,7 @@ fn spawn_quota_sync_scheduler(state: Arc<AppState>) {
                 else {
                     continue;
                 };
+                let _maintenance = acquire_db_maintenance_read_gate().await;
                 match cold_state
                     .proxy
                     .sync_key_quota(&key_id, &cold_state.usage_base, "quota_sync")
@@ -182,15 +187,18 @@ fn spawn_quota_sync_scheduler(state: Arc<AppState>) {
     let hot_state = state;
     tokio::spawn(async move {
         loop {
-            let keys = match hot_state
-                .proxy
-                .list_keys_pending_hot_quota_sync(two_hours_secs(), fifteen_minutes_secs())
-                .await
-            {
-                Ok(list) => list,
-                Err(err) => {
-                    eprintln!("quota-sync-hot: list pending error: {err}");
-                    vec![]
+            let keys = {
+                let _maintenance = acquire_db_maintenance_read_gate().await;
+                match hot_state
+                    .proxy
+                    .list_keys_pending_hot_quota_sync(two_hours_secs(), fifteen_minutes_secs())
+                    .await
+                {
+                    Ok(list) => list,
+                    Err(err) => {
+                        eprintln!("quota-sync-hot: list pending error: {err}");
+                        vec![]
+                    }
                 }
             };
 
@@ -208,6 +216,7 @@ fn spawn_quota_sync_scheduler(state: Arc<AppState>) {
                 else {
                     continue;
                 };
+                let _maintenance = acquire_db_maintenance_read_gate().await;
                 match hot_state
                     .proxy
                     .sync_key_quota(&key_id, &hot_state.usage_base, "quota_sync/hot")
@@ -264,6 +273,7 @@ fn spawn_token_usage_rollup_scheduler(state: Arc<AppState>) {
                 continue;
             };
 
+            let _maintenance = acquire_db_maintenance_read_gate().await;
             match state.proxy.rollup_token_usage_stats().await {
                 Ok((rows, last_ts)) => {
                     let msg = match last_ts {
@@ -282,6 +292,7 @@ fn spawn_token_usage_rollup_scheduler(state: Arc<AppState>) {
                         .await;
                 }
             }
+            drop(_maintenance);
 
             // Run rollup every 5 minutes to keep charts reasonably fresh
             tokio::time::sleep(Duration::from_secs(300)).await;
@@ -305,6 +316,7 @@ fn spawn_auth_token_logs_gc_scheduler(state: Arc<AppState>) {
                 continue;
             };
 
+            let _maintenance = acquire_db_maintenance_read_gate().await;
             match state.proxy.gc_auth_token_logs().await {
                 Ok(deleted) => {
                     let msg = format!("deleted_rows={deleted}");
@@ -320,6 +332,7 @@ fn spawn_auth_token_logs_gc_scheduler(state: Arc<AppState>) {
                         .await;
                 }
             }
+            drop(_maintenance);
 
             // Run GC once per hour; retention window is enforced inside the proxy.
             tokio::time::sleep(Duration::from_secs(3600)).await;
@@ -343,6 +356,7 @@ fn spawn_mcp_sessions_gc_scheduler(state: Arc<AppState>) {
                 continue;
             };
 
+            let _maintenance = acquire_db_maintenance_read_gate().await;
             match state.proxy.gc_mcp_sessions().await {
                 Ok(deleted) => {
                     let msg = format!("deleted_rows={deleted}");
@@ -358,6 +372,7 @@ fn spawn_mcp_sessions_gc_scheduler(state: Arc<AppState>) {
                         .await;
                 }
             }
+            drop(_maintenance);
 
             tokio::time::sleep(Duration::from_secs(3600)).await;
         }
@@ -380,6 +395,7 @@ fn spawn_mcp_session_init_backoffs_gc_scheduler(state: Arc<AppState>) {
                 continue;
             };
 
+            let _maintenance = acquire_db_maintenance_read_gate().await;
             match state.proxy.gc_mcp_session_init_backoffs().await {
                 Ok(deleted) => {
                     let msg = format!("deleted_rows={deleted}");
@@ -395,6 +411,7 @@ fn spawn_mcp_session_init_backoffs_gc_scheduler(state: Arc<AppState>) {
                         .await;
                 }
             }
+            drop(_maintenance);
 
             tokio::time::sleep(Duration::from_secs(3600)).await;
         }
@@ -441,6 +458,7 @@ async fn run_request_logs_gc_catchup_claimed_job(state: Arc<AppState>, job_id: i
     let mut passes = 0usize;
 
     loop {
+        let _maintenance = acquire_db_maintenance_read_gate().await;
         match state
             .proxy
             .gc_request_logs_with_options(scheduled_request_logs_gc_options())
@@ -472,6 +490,7 @@ async fn run_request_logs_gc_catchup_claimed_job(state: Arc<AppState>, job_id: i
                     return true;
                 }
 
+                drop(_maintenance);
                 tokio::time::sleep(Duration::from_secs(
                     request_logs_gc_catchup_recheck_secs(),
                 ))
@@ -535,6 +554,7 @@ async fn run_linuxdo_user_status_sync_job_with_source(
 }
 
 async fn run_linuxdo_user_status_sync_claimed_job(state: Arc<AppState>, job_id: i64) -> bool {
+    let _maintenance = acquire_db_maintenance_read_gate().await;
     let cfg = &state.linuxdo_oauth;
     if !cfg.is_enabled_and_configured() {
         let _ = state
@@ -777,6 +797,7 @@ async fn run_linuxdo_user_tag_binding_refresh_job_with_source(
         return;
     };
 
+    let _maintenance = acquire_db_maintenance_read_gate().await;
     match state.proxy.refresh_linuxdo_user_tag_bindings().await {
         Ok(refreshed) => {
             let msg = format!("refreshed={refreshed}");
@@ -797,16 +818,22 @@ async fn run_linuxdo_user_tag_binding_refresh_job_with_source(
 fn spawn_linuxdo_user_tag_binding_refresh_scheduler(state: Arc<AppState>) {
     tokio::spawn(async move {
         loop {
-            let wait_secs = state
-                .proxy
-                .linuxdo_user_tag_binding_refresh_wait_secs(twenty_four_hours_secs())
-                .await;
-            if wait_secs <= 0 {
-                if state
+            let wait_secs = {
+                let _maintenance = acquire_db_maintenance_read_gate().await;
+                state
                     .proxy
-                    .linuxdo_user_tag_binding_refresh_due(twenty_four_hours_secs())
+                    .linuxdo_user_tag_binding_refresh_wait_secs(twenty_four_hours_secs())
                     .await
-                {
+            };
+            if wait_secs <= 0 {
+                let due = {
+                    let _maintenance = acquire_db_maintenance_read_gate().await;
+                    state
+                        .proxy
+                        .linuxdo_user_tag_binding_refresh_due(twenty_four_hours_secs())
+                        .await
+                };
+                if due {
                     run_linuxdo_user_tag_binding_refresh_job(state.clone()).await;
                 }
                 tokio::time::sleep(Duration::from_secs(fifteen_minutes_secs() as u64)).await;
@@ -839,6 +866,7 @@ async fn run_forward_proxy_geo_refresh_job_with_source(
         return;
     };
 
+    let _maintenance = acquire_db_maintenance_read_gate().await;
     match state
         .proxy
         .refresh_forward_proxy_geo_metadata(&state.api_key_ip_geo_origin, true)
@@ -880,6 +908,7 @@ async fn run_manual_claimed_job(
             let Some(key_id) = key_id else {
                 return finish(state, "error", "missing key_id".to_string()).await;
             };
+            let _maintenance = acquire_db_maintenance_read_gate().await;
             match state
                 .proxy
                 .sync_key_quota(&key_id, &state.usage_base, "quota_sync/manual")
@@ -897,25 +926,35 @@ async fn run_manual_claimed_job(
                 Err(err) => finish(state, "error", err.to_string()).await,
             }
         }
-        "token_usage_rollup" => match state.proxy.rollup_token_usage_stats().await {
-            Ok((rows, last_ts)) => {
-                let msg = match last_ts {
-                    Some(ts) => format!("rows={rows} last_rollup_ts={ts}"),
-                    None => format!("rows={rows} last_rollup_ts=none"),
-                };
-                finish(state, "success", msg).await
+        "token_usage_rollup" => {
+            let _maintenance = acquire_db_maintenance_read_gate().await;
+            match state.proxy.rollup_token_usage_stats().await {
+                Ok((rows, last_ts)) => {
+                    let msg = match last_ts {
+                        Some(ts) => format!("rows={rows} last_rollup_ts={ts}"),
+                        None => format!("rows={rows} last_rollup_ts=none"),
+                    };
+                    finish(state, "success", msg).await
+                }
+                Err(err) => finish(state, "error", err.to_string()).await,
             }
-            Err(err) => finish(state, "error", err.to_string()).await,
-        },
-        "auth_token_logs_gc" => match state.proxy.gc_auth_token_logs().await {
-            Ok(deleted) => finish(state, "success", format!("deleted_rows={deleted}")).await,
-            Err(err) => finish(state, "error", err.to_string()).await,
-        },
-        "mcp_sessions_gc" => match state.proxy.gc_mcp_sessions().await {
-            Ok(deleted) => finish(state, "success", format!("deleted_rows={deleted}")).await,
-            Err(err) => finish(state, "error", err.to_string()).await,
-        },
+        }
+        "auth_token_logs_gc" => {
+            let _maintenance = acquire_db_maintenance_read_gate().await;
+            match state.proxy.gc_auth_token_logs().await {
+                Ok(deleted) => finish(state, "success", format!("deleted_rows={deleted}")).await,
+                Err(err) => finish(state, "error", err.to_string()).await,
+            }
+        }
+        "mcp_sessions_gc" => {
+            let _maintenance = acquire_db_maintenance_read_gate().await;
+            match state.proxy.gc_mcp_sessions().await {
+                Ok(deleted) => finish(state, "success", format!("deleted_rows={deleted}")).await,
+                Err(err) => finish(state, "error", err.to_string()).await,
+            }
+        }
         "mcp_session_init_backoffs_gc" => {
+            let _maintenance = acquire_db_maintenance_read_gate().await;
             match state.proxy.gc_mcp_session_init_backoffs().await {
                 Ok(deleted) => finish(state, "success", format!("deleted_rows={deleted}")).await,
                 Err(err) => finish(state, "error", err.to_string()).await,
@@ -926,12 +965,14 @@ async fn run_manual_claimed_job(
             run_linuxdo_user_status_sync_claimed_job(state, job_id).await
         },
         "linuxdo_user_tag_binding_refresh" => {
+            let _maintenance = acquire_db_maintenance_read_gate().await;
             match state.proxy.refresh_linuxdo_user_tag_bindings().await {
                 Ok(refreshed) => finish(state, "success", format!("refreshed={refreshed}")).await,
                 Err(err) => finish(state, "error", err.to_string()).await,
             }
         },
         "forward_proxy_geo_refresh" => {
+            let _maintenance = acquire_db_maintenance_read_gate().await;
             match state
                 .proxy
                 .refresh_forward_proxy_geo_metadata(&state.api_key_ip_geo_origin, true)
@@ -943,35 +984,50 @@ async fn run_manual_claimed_job(
                 Err(err) => finish(state, "error", err.to_string()).await,
             }
         },
-        "db_compaction" => {
-            let _maintenance = db_maintenance_gate().write().await;
-            match state.proxy.sqlite_db_stats().await {
-                Ok(before) => match state.proxy.compact_sqlite_database().await {
-                    Ok(after) => {
-                        finish(
-                            state,
-                            "success",
-                            format!(
-                                "database_bytes_before={} database_bytes_after={} wal_bytes_before={} wal_bytes_after={} reclaimable_bytes_before={} reclaimable_bytes_after={} freelist_before={} freelist_after={}",
-                                before.database_bytes,
-                                after.database_bytes,
-                                before.wal_bytes,
-                                after.wal_bytes,
-                                before.reclaimable_bytes,
-                                after.reclaimable_bytes,
-                                before.freelist_count,
-                                after.freelist_count
-                            ),
-                        )
-                        .await
-                    }
-                    Err(err) => finish(state, "error", err.to_string()).await,
-                }
-                Err(err) => finish(state, "error", err.to_string()).await,
-            }
-        },
+        "db_compaction" => run_db_compaction_claimed_job(state, job_id).await,
         _ => finish(state, "error", format!("unsupported manual job type: {job_type}")).await,
     }
+}
+
+async fn finish_db_compaction_claimed_job(state: Arc<AppState>, job_id: i64) -> bool {
+    let finish = |state: Arc<AppState>, status: &'static str, message: String| async move {
+        let succeeded = status == "success";
+        let _ = state
+            .proxy
+            .scheduled_job_finish(job_id, status, Some(&message))
+            .await;
+        succeeded
+    };
+
+    match state.proxy.sqlite_db_stats().await {
+        Ok(before) => match state.proxy.compact_sqlite_database().await {
+            Ok(after) => {
+                finish(
+                    state,
+                    "success",
+                    format!(
+                        "database_bytes_before={} database_bytes_after={} wal_bytes_before={} wal_bytes_after={} reclaimable_bytes_before={} reclaimable_bytes_after={} freelist_before={} freelist_after={}",
+                        before.database_bytes,
+                        after.database_bytes,
+                        before.wal_bytes,
+                        after.wal_bytes,
+                        before.reclaimable_bytes,
+                        after.reclaimable_bytes,
+                        before.freelist_count,
+                        after.freelist_count
+                    ),
+                )
+                .await
+            }
+            Err(err) => finish(state, "error", err.to_string()).await,
+        },
+        Err(err) => finish(state, "error", err.to_string()).await,
+    }
+}
+
+async fn run_db_compaction_claimed_job(state: Arc<AppState>, job_id: i64) -> bool {
+    let _maintenance = acquire_db_maintenance_write_gate().await;
+    finish_db_compaction_claimed_job(state, job_id).await
 }
 
 fn spawn_db_compaction_scheduler(state: Arc<AppState>) {
@@ -982,6 +1038,7 @@ fn spawn_db_compaction_scheduler(state: Arc<AppState>) {
             if Instant::now() < next_allowed_at {
                 continue;
             }
+            let _maintenance = acquire_db_maintenance_write_gate().await;
             let stats = match state.proxy.sqlite_db_stats().await {
                 Ok(stats) => stats,
                 Err(err) => {
@@ -994,20 +1051,22 @@ fn spawn_db_compaction_scheduler(state: Arc<AppState>) {
             {
                 continue;
             }
-            let Some(job_id) = claim_scheduled_job(
-                state.as_ref(),
-                "db_compaction",
-                None,
-                TRIGGER_SOURCE_AUTO,
-                "db-compaction",
-            )
-            .await
-            else {
-                continue;
+            let job_id = match state
+                .proxy
+                .scheduled_job_claim("db_compaction", TRIGGER_SOURCE_AUTO, None, 1)
+                .await
+            {
+                Ok(Some(id)) => id,
+                Ok(None) => {
+                    eprintln!("db-compaction: job already running; skip trigger");
+                    continue;
+                }
+                Err(err) => {
+                    eprintln!("db-compaction: start job error: {err}");
+                    continue;
+                }
             };
-            let succeeded =
-                run_manual_claimed_job(state.clone(), "db_compaction".to_string(), None, job_id)
-                    .await;
+            let succeeded = finish_db_compaction_claimed_job(state.clone(), job_id).await;
             if succeeded {
                 next_allowed_at =
                     Instant::now() + Duration::from_secs(db_compaction_cooldown_secs());
@@ -1019,16 +1078,22 @@ fn spawn_db_compaction_scheduler(state: Arc<AppState>) {
 fn spawn_forward_proxy_geo_refresh_scheduler(state: Arc<AppState>) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         loop {
-            let wait_secs = state
-                .proxy
-                .forward_proxy_geo_refresh_wait_secs(twenty_four_hours_secs())
-                .await;
-            if wait_secs <= 0 {
-                if state
+            let wait_secs = {
+                let _maintenance = acquire_db_maintenance_read_gate().await;
+                state
                     .proxy
-                    .forward_proxy_geo_refresh_due(twenty_four_hours_secs())
+                    .forward_proxy_geo_refresh_wait_secs(twenty_four_hours_secs())
                     .await
-                {
+            };
+            if wait_secs <= 0 {
+                let due = {
+                    let _maintenance = acquire_db_maintenance_read_gate().await;
+                    state
+                        .proxy
+                        .forward_proxy_geo_refresh_due(twenty_four_hours_secs())
+                        .await
+                };
+                if due {
                     run_forward_proxy_geo_refresh_job(state.clone()).await;
                 }
                 tokio::time::sleep(Duration::from_secs(
@@ -1047,8 +1112,11 @@ fn spawn_forward_proxy_geo_refresh_scheduler(state: Arc<AppState>) -> tokio::tas
 fn spawn_forward_proxy_maintenance_scheduler(state: Arc<AppState>) {
     tokio::spawn(async move {
         loop {
-            if let Err(err) = state.proxy.maybe_run_forward_proxy_maintenance().await {
-                eprintln!("forward-proxy-maintenance: {err}");
+            {
+                let _maintenance = acquire_db_maintenance_read_gate().await;
+                if let Err(err) = state.proxy.maybe_run_forward_proxy_maintenance().await {
+                    eprintln!("forward-proxy-maintenance: {err}");
+                }
             }
             tokio::time::sleep(Duration::from_secs(30)).await;
         }
