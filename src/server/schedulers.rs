@@ -1106,6 +1106,7 @@ fn spawn_db_compaction_scheduler(state: Arc<AppState>) {
             if Instant::now() < next_allowed_at {
                 continue;
             }
+            let _job_execution_gate = acquire_db_job_execution_gate().await;
             let _maintenance = acquire_db_maintenance_write_gate().await;
             let stats = match state.proxy.sqlite_db_stats().await {
                 Ok(stats) => stats,

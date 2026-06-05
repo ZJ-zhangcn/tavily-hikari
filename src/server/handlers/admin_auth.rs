@@ -324,11 +324,14 @@ async fn run_manual_key_quota_sync(
     state: Arc<AppState>,
     key_id: &str,
 ) -> Result<(), ManualQuotaSyncError> {
-    let claim = state
-        .proxy
-        .scheduled_job_claim("quota_sync", TRIGGER_SOURCE_MANUAL, Some(key_id), 1)
-        .await
-        .map_err(|err| {
+    let claim = claim_scheduled_job_with_gate(
+        state.as_ref(),
+        "quota_sync",
+        Some(key_id),
+        TRIGGER_SOURCE_MANUAL,
+    )
+    .await
+    .map_err(|err| {
             ManualQuotaSyncError::new(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "sync_failed",
@@ -336,8 +339,8 @@ async fn run_manual_key_quota_sync(
             )
         })?;
 
-    let job_id = match claim {
-        Some(job_id) => job_id,
+    let claimed_job = match claim {
+        Some(claimed_job) => claimed_job,
         None => {
             Err(ManualQuotaSyncError::new(
                 StatusCode::CONFLICT,
@@ -346,6 +349,8 @@ async fn run_manual_key_quota_sync(
             ))?
         }
     };
+    let job_id = claimed_job.job_id;
+    let _job_execution_gate = claimed_job._job_execution_gate;
 
     match state
         .proxy
