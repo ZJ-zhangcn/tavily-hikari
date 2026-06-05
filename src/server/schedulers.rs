@@ -62,7 +62,7 @@ async fn claim_scheduled_job_with_gate(
     key_id: Option<&str>,
     trigger_source: &str,
 ) -> Result<Option<ClaimedScheduledJob>, ProxyError> {
-    let job_execution_gate = acquire_db_job_execution_gate().await;
+    let job_execution_gate = acquire_db_job_execution_gate_for_state(state).await;
     let _maintenance = acquire_db_maintenance_read_gate().await;
     match state
         .proxy
@@ -527,7 +527,7 @@ async fn run_request_logs_gc_catchup_claimed_job(
     let mut passes = 0usize;
 
     loop {
-        let _job_execution_gate = acquire_db_job_execution_gate().await;
+        let _job_execution_gate = acquire_db_job_execution_gate_for_state(state.as_ref()).await;
         let _maintenance = acquire_db_maintenance_read_gate().await;
         let result = state
             .proxy
@@ -980,7 +980,8 @@ async fn run_manual_claimed_job(
     }
 
     if claimed_job._job_execution_gate.is_none() {
-        claimed_job._job_execution_gate = Some(acquire_db_job_execution_gate().await);
+        claimed_job._job_execution_gate =
+            Some(acquire_db_job_execution_gate_for_state(state.as_ref()).await);
     }
 
     let ClaimedScheduledJob {
@@ -1131,7 +1132,7 @@ fn spawn_db_compaction_scheduler(state: Arc<AppState>) {
             if Instant::now() < next_allowed_at {
                 continue;
             }
-            let _job_execution_gate = acquire_db_job_execution_gate().await;
+            let _job_execution_gate = acquire_db_job_execution_gate_for_state(state.as_ref()).await;
             let _maintenance = acquire_db_maintenance_write_gate().await;
             let stats = match state.proxy.sqlite_db_stats().await {
                 Ok(stats) => stats,
