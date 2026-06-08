@@ -116,7 +116,10 @@ import {
   type QuotaSliderField,
   type QuotaSliderSeed,
 } from './quotaSlider'
-import { resolveAdminUserActivityScope } from './userActivityScope'
+import {
+  resolveAdminUserActivityScope,
+  resolveAdminUserActivityScopeFromSettings,
+} from './userActivityScope'
 import { formatRequestRateScope, formatRequestRateSummary, resolveRequestRate } from '../requestRate'
 import {
   type AdminUsersCollectionView,
@@ -2802,7 +2805,7 @@ function AdminDashboard(): JSX.Element {
     }: {
       signal?: AbortSignal
       reason?: 'initial' | 'switch' | 'refresh'
-    } = {}) => {
+    } = {}): Promise<SystemSettings | null | undefined> => {
       const request = beginManagedRequest(systemSettingsAbortRef, signal)
       setSystemSettingsLoadState(
         reason === 'refresh'
@@ -2819,6 +2822,7 @@ function AdminDashboard(): JSX.Element {
         setSystemSettingsLoadState('ready')
         setLastUpdated(new Date())
         systemSettingsLoadedRef.current = true
+        return envelope.systemSettings ?? null
       } catch (err) {
         if (request.signal.aborted) return
         console.error(err)
@@ -4591,6 +4595,7 @@ function AdminDashboard(): JSX.Element {
   const handleManualRefresh = () => {
     const controller = new AbortController()
     setLoading(true)
+    let usersSystemSettingsPromise: Promise<SystemSettings | null | undefined> | null = null
     if (route.name === 'module' && route.module === 'keys') {
       clearKeySelection()
       setKeysBulkFeedback(null)
@@ -4613,6 +4618,10 @@ function AdminDashboard(): JSX.Element {
     }
     if (route.name === 'module' && route.module === 'system-settings') {
       tasks.push(loadSystemSettingsData({ signal: controller.signal, reason: 'refresh' }))
+    }
+    if ((isUsersCollectionRoute || route.name === 'user') && waitingForUsersSystemSettings) {
+      usersSystemSettingsPromise = loadSystemSettingsData({ signal: controller.signal, reason: 'refresh' })
+      tasks.push(usersSystemSettingsPromise)
     }
     if (route.name === 'module' && route.module === 'requests') {
       const request = beginManagedRequest(requestsAbortRef, controller.signal)
@@ -4701,17 +4710,26 @@ function AdminDashboard(): JSX.Element {
       setUsersLoadState(getRefreshingLoadState(usersLoadedRef.current))
       setUsersError(null)
       tasks.push(
-        fetchAdminUsers(
-          usersPage,
-          USERS_PER_PAGE,
-          usersQuery,
-          usersTagFilterId,
-          effectiveUserActivityScope,
-          usersSort,
-          usersSortOrder,
-          request.signal,
-        ).then((result) => {
-          if (request.signal.aborted) return
+        Promise.resolve(usersSystemSettingsPromise)
+          .then((loadedSystemSettings) => {
+            if (request.signal.aborted) return null
+            return fetchAdminUsers(
+              usersPage,
+              USERS_PER_PAGE,
+              usersQuery,
+              usersTagFilterId,
+              resolveAdminUserActivityScopeFromSettings(
+                usersQuery,
+                loadedSystemSettings,
+                systemSettings,
+              ),
+              usersSort,
+              usersSortOrder,
+              request.signal,
+            )
+          })
+          .then((result) => {
+          if (result == null || request.signal.aborted) return
           setUsers(result.items)
           setUsersTotal(result.total)
           setUsersLoadState('ready')
