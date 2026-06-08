@@ -32,6 +32,7 @@ import {
 import {
   buildDeltaSeriesSlotValues,
   buildHourlyRangeSlots,
+  getVisibleHourlyWindow,
   DASHBOARD_RESULT_SERIES_ORDER,
   DASHBOARD_TYPE_SERIES_ORDER,
   DEFAULT_VISIBLE_RESULT_SERIES,
@@ -115,11 +116,15 @@ export interface DashboardOverviewStrings {
   chartModeTypes: string
   chartModeResultsDelta: string
   chartModeTypesDelta: string
+  chartModeResultsArea: string
+  chartModeTypesArea: string
   chartVisibleSeries: string
   chartDeltaSeries: string
   chartSelectionAll: string
   chartEmpty: string
   chartUtcWindow: string
+  chartRollingWindow: string
+  chartDeltaWindow: string
   chartResultSecondarySuccess: string
   chartResultPrimarySuccess: string
   chartResultSecondaryFailure: string
@@ -250,6 +255,20 @@ function formatChartWindow(copy: string, count: number, comparisonCount: number)
   return copy
     .replace('{count}', String(count))
     .replace('{comparisonCount}', String(comparisonCount))
+}
+
+function formatChartWindowWithLabels(
+  chartMode: DashboardHourlyChartMode,
+  strings: Pick<DashboardOverviewStrings, 'chartUtcWindow' | 'chartRollingWindow' | 'chartDeltaWindow'>,
+  count: number,
+  comparisonCount: number,
+): string {
+  const template = chartMode === 'resultsDelta' || chartMode === 'typesDelta'
+    ? strings.chartDeltaWindow
+    : chartMode === 'resultsArea' || chartMode === 'typesArea'
+      ? strings.chartRollingWindow
+      : strings.chartRollingWindow
+  return formatChartWindow(template, count, comparisonCount)
 }
 
 function MetricValue({
@@ -535,6 +554,14 @@ function DashboardChartSeriesButton({
   )
 }
 
+function isAreaChartMode(mode: DashboardHourlyChartMode): mode is 'resultsArea' | 'typesArea' {
+  return mode === 'resultsArea' || mode === 'typesArea'
+}
+
+function isDeltaChartMode(mode: DashboardHourlyChartMode): mode is 'resultsDelta' | 'typesDelta' {
+  return mode === 'resultsDelta' || mode === 'typesDelta'
+}
+
 function DashboardTrendPanel({
   strings,
   overviewReady,
@@ -560,6 +587,14 @@ function DashboardTrendPanel({
   chartPersistenceKey?: string | null
   chartLabelTimeZone?: string | null
 }): JSX.Element {
+  const legacyChartPersistenceKeys = useMemo(
+    () => (
+      chartPersistenceKey === 'admin.dashboard.hourly-request-charts.v2'
+        ? ['admin.dashboard.hourly-request-charts.v1']
+        : []
+    ),
+    [chartPersistenceKey],
+  )
   const initialPreferences = useMemo<DashboardHourlyChartPreferences>(() => {
     const fallback = createDashboardHourlyChartPreferences({
       chartMode: initialChartMode,
@@ -569,7 +604,11 @@ function DashboardTrendPanel({
       typeDeltaSeries: initialTypeDeltaSeries,
     })
     if (typeof window === 'undefined') return fallback
-    return readDashboardHourlyChartPreferences(window.localStorage, chartPersistenceKey) ?? fallback
+    return readDashboardHourlyChartPreferences(
+      window.localStorage,
+      chartPersistenceKey,
+      legacyChartPersistenceKeys,
+    ) ?? fallback
   }, [
     chartPersistenceKey,
     initialChartMode,
@@ -577,6 +616,7 @@ function DashboardTrendPanel({
     initialTypeDeltaSeries,
     initialVisibleResultSeries,
     initialVisibleTypeSeries,
+    legacyChartPersistenceKeys,
   ])
 
   const [chartMode, setChartMode] = useState<DashboardHourlyChartMode>(initialPreferences.chartMode)
@@ -604,19 +644,24 @@ function DashboardTrendPanel({
   ])
 
   const palette = readDashboardChartPalette()
-  const currentRangeStart = summaryWindows.today_start
-  const currentRangeEnd = summaryWindows.today_end
+  const visibleWindow = useMemo(
+    () => getVisibleHourlyWindow(hourlyRequestWindow),
+    [hourlyRequestWindow],
+  )
   const comparisonRangeStart = summaryWindows.yesterday_start
   const comparisonRangeEnd = summaryWindows.yesterday_end
-  const rangeSlots = useMemo(
-    () => buildHourlyRangeSlots(hourlyRequestWindow, currentRangeStart, currentRangeEnd),
-    [currentRangeEnd, currentRangeStart, hourlyRequestWindow],
+  const isDeltaMode = isDeltaChartMode(chartMode)
+  const isAreaMode = isAreaChartMode(chartMode)
+  const rollingRangeSlots = visibleWindow.slots
+  const naturalDayRangeSlots = useMemo(
+    () => buildHourlyRangeSlots(hourlyRequestWindow, summaryWindows.today_start, summaryWindows.today_end),
+    [hourlyRequestWindow, summaryWindows.today_end, summaryWindows.today_start],
   )
+  const rangeSlots = isDeltaMode ? naturalDayRangeSlots : rollingRangeSlots
   const comparisonRangeSlots = useMemo(
     () => buildHourlyRangeSlots(hourlyRequestWindow, comparisonRangeStart, comparisonRangeEnd),
     [comparisonRangeEnd, comparisonRangeStart, hourlyRequestWindow],
   )
-  const isDeltaMode = chartMode === 'resultsDelta' || chartMode === 'typesDelta'
   const labels = useMemo(
     () => {
       const slotCount = isDeltaMode ? Math.max(rangeSlots.length, comparisonRangeSlots.length) : rangeSlots.length
@@ -657,8 +702,10 @@ function DashboardTrendPanel({
   const activeSeries = useMemo(() => {
     switch (chartMode) {
       case 'results':
+      case 'resultsArea':
         return visibleResultSeries
       case 'types':
+      case 'typesArea':
         return visibleTypeSeries
       case 'resultsDelta':
         return resultDeltaSeries === 'all' ? [...DASHBOARD_RESULT_SERIES_ORDER] : [resultDeltaSeries]
@@ -667,7 +714,7 @@ function DashboardTrendPanel({
     }
   }, [chartMode, resultDeltaSeries, typeDeltaSeries, visibleResultSeries, visibleTypeSeries])
 
-  const chartData = useMemo<ChartData<'bar'>>(() => {
+  const chartData = useMemo<ChartData<'bar' | 'line'>>(() => {
     if (rangeSlots.length === 0 || activeSeries.length === 0) {
       return { labels, datasets: [] }
     }
@@ -706,6 +753,52 @@ function DashboardTrendPanel({
       }
     }
 
+    if (chartMode === 'resultsArea') {
+      return {
+        labels,
+        datasets: activeSeries.map((seriesId) => ({
+          type: 'line' as const,
+          label: resultSeriesLabels[seriesId as DashboardResultSeriesId],
+          data: labels.map((_, index) => {
+            const bucket = rangeSlots[index]?.bucket ?? null
+            return bucket ? getResultSeriesValue(bucket, seriesId as DashboardResultSeriesId) : null
+          }),
+          borderColor: seriesColors[seriesId as DashboardResultSeriesId],
+          backgroundColor: withOpacity(seriesColors[seriesId as DashboardResultSeriesId], 0.22),
+          fill: true,
+          borderWidth: 2,
+          pointRadius: 0,
+          pointHoverRadius: 3,
+          tension: 0.34,
+          spanGaps: false,
+          stack: 'area',
+        })),
+      }
+    }
+
+    if (chartMode === 'typesArea') {
+      return {
+        labels,
+        datasets: activeSeries.map((seriesId) => ({
+          type: 'line' as const,
+          label: typeSeriesLabels[seriesId as DashboardTypeSeriesId],
+          data: labels.map((_, index) => {
+            const bucket = rangeSlots[index]?.bucket ?? null
+            return bucket ? getTypeSeriesValue(bucket, seriesId as DashboardTypeSeriesId) : null
+          }),
+          borderColor: seriesColors[seriesId as DashboardTypeSeriesId],
+          backgroundColor: withOpacity(seriesColors[seriesId as DashboardTypeSeriesId], 0.22),
+          fill: true,
+          borderWidth: 2,
+          pointRadius: 0,
+          pointHoverRadius: 3,
+          tension: 0.34,
+          spanGaps: false,
+          stack: 'area',
+        })),
+      }
+    }
+
     return {
       labels,
       datasets: activeSeries.map((seriesId) => ({
@@ -725,22 +818,22 @@ function DashboardTrendPanel({
     }
   }, [activeSeries, chartMode, comparisonRangeSlots, labels, rangeSlots, resultSeriesLabels, seriesColors, typeSeriesLabels])
 
-  const chartOptions = useMemo<ChartOptions<'bar'>>(() => {
-    const isDelta = chartMode === 'resultsDelta' || chartMode === 'typesDelta'
+  const chartOptions = useMemo<ChartOptions<'bar' | 'line'>>(() => {
+    const isDelta = isDeltaMode
     return {
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: {
-      duration: 560,
-      easing: 'easeOutCubic',
-    },
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: {
+        duration: 560,
+        easing: 'easeOutCubic',
+      },
       plugins: {
         legend: { display: false },
         tooltip: {
           mode: 'index',
           intersect: false,
           callbacks: {
-            label(context: TooltipItem<'bar'>) {
+            label(context: TooltipItem<'bar' | 'line'>) {
               const prefix = `${context.dataset.label}: `
               if (context.raw == null) return `${prefix}—`
               const value = typeof context.raw === 'number' ? context.raw : Number(context.raw)
@@ -776,16 +869,30 @@ function DashboardTrendPanel({
         },
       },
     }
-  }, [chartMode, palette.grid, palette.tick, palette.zeroLine])
+  }, [isDeltaMode, palette.grid, palette.tick, palette.zeroLine])
+
+  const barChartData = chartData as ChartData<'bar'>
+  const lineChartData = chartData as ChartData<'line'>
+  const barChartOptions = chartOptions as ChartOptions<'bar'>
+  const lineChartOptions = chartOptions as ChartOptions<'line'>
 
   const modeOptions = [
     { value: 'results' as const, label: strings.chartModeResults },
     { value: 'types' as const, label: strings.chartModeTypes },
     { value: 'resultsDelta' as const, label: strings.chartModeResultsDelta },
     { value: 'typesDelta' as const, label: strings.chartModeTypesDelta },
+    { value: 'resultsArea' as const, label: strings.chartModeResultsArea },
+    { value: 'typesArea' as const, label: strings.chartModeTypesArea },
   ]
 
   const showEmpty = overviewReady && (rangeSlots.length === 0 || activeSeries.length === 0)
+  const chartSeriesLabel = isDeltaMode ? strings.chartDeltaSeries : strings.chartVisibleSeries
+  const chartMeta = formatChartWindowWithLabels(
+    chartMode,
+    strings,
+    rangeSlots.length,
+    comparisonRangeSlots.length,
+  )
 
   return (
     <section className="surface panel dashboard-trend-panel">
@@ -794,7 +901,7 @@ function DashboardTrendPanel({
           <h2>{strings.trendsTitle}</h2>
           <p className="panel-description">{strings.trendsDescription}</p>
         </div>
-        <div className="dashboard-trend-meta">{formatChartWindow(strings.chartUtcWindow, rangeSlots.length, comparisonRangeSlots.length)}</div>
+        <div className="dashboard-trend-meta">{chartMeta}</div>
       </div>
 
       <SegmentedTabs<DashboardHourlyChartMode>
@@ -806,11 +913,9 @@ function DashboardTrendPanel({
       />
 
       <div className="dashboard-chart-toolbar">
-        <span className="dashboard-chart-toolbar-label">
-          {chartMode === 'results' || chartMode === 'types' ? strings.chartVisibleSeries : strings.chartDeltaSeries}
-        </span>
-        <div className="dashboard-chart-series-list" role="group" aria-label={strings.chartVisibleSeries}>
-          {(chartMode === 'results'
+        <span className="dashboard-chart-toolbar-label">{chartSeriesLabel}</span>
+        <div className="dashboard-chart-series-list" role="group" aria-label={chartSeriesLabel}>
+          {(chartMode === 'results' || chartMode === 'resultsArea'
             ? DASHBOARD_RESULT_SERIES_ORDER.map((seriesId) => (
                 <DashboardChartSeriesButton
                   key={seriesId}
@@ -820,7 +925,7 @@ function DashboardTrendPanel({
                   onClick={() => setVisibleResultSeries((current) => toggleSeriesSelection(current, seriesId))}
                 />
               ))
-            : chartMode === 'types'
+            : chartMode === 'types' || chartMode === 'typesArea'
               ? DASHBOARD_TYPE_SERIES_ORDER.map((seriesId) => (
                   <DashboardChartSeriesButton
                     key={seriesId}
@@ -877,7 +982,11 @@ function DashboardTrendPanel({
           <div className="empty-state alert">{strings.chartEmpty}</div>
         ) : (
           <div className="dashboard-chart-canvas">
-            <Bar options={chartOptions} data={chartData} />
+            {isAreaMode ? (
+              <Line options={lineChartOptions} data={lineChartData} />
+            ) : (
+              <Bar options={barChartOptions} data={barChartData} />
+            )}
           </div>
         )}
       </div>
