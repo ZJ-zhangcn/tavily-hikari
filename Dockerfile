@@ -45,6 +45,7 @@ COPY --from=builder /app/target/release/mcp_search_billing_repair /usr/local/bin
 COPY --from=builder /app/target/release/mcp_request_log_retry_repair /usr/local/bin/mcp_request_log_retry_repair
 COPY --from=builder /app/target/release/request_logs_gc_once /usr/local/bin/request_logs_gc_once
 COPY --from=xray-downloader /usr/local/bin/xray /usr/local/bin/xray
+COPY --from=xray-downloader /usr/local/share/xray /usr/local/share/xray
 # Copy prebuilt web assets (produced by CI before Docker build)
 COPY web/dist /srv/app/web
 

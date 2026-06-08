@@ -44,8 +44,6 @@ export default meta
 type Story = StoryObj<typeof meta>
 
 const strings = {
-  title: 'Operations Dashboard',
-  description: 'Global health, risk signals, and actionable activity in one place.',
   loading: 'Loading dashboard data…',
   summaryUnavailable: 'Unable to load the summary windows right now.',
   statusUnavailable: 'Unable to load the current site status right now.',
@@ -75,11 +73,15 @@ const strings = {
   chartModeTypes: 'Types',
   chartModeResultsDelta: 'Δ Results',
   chartModeTypesDelta: 'Δ Types',
+  chartModeResultsArea: 'Area · Results',
+  chartModeTypesArea: 'Area · Types',
   chartVisibleSeries: 'Visible series',
   chartDeltaSeries: 'Compared series',
   chartSelectionAll: 'All',
   chartEmpty: 'No visible chart series for the current selection.',
   chartUtcWindow: 'Local time axis · Fixed range ({count} current buckets, {comparisonCount} comparison buckets)',
+  chartRollingWindow: 'Local time axis · Rolling 25 buckets ({count} current buckets)',
+  chartDeltaWindow: 'Local time axis · Natural-day comparison ({count} current buckets, {comparisonCount} comparison buckets)',
   chartResultSecondarySuccess: 'Secondary success',
   chartResultPrimarySuccess: 'Primary success',
   chartResultSecondaryFailure: 'Secondary failure',
@@ -436,8 +438,6 @@ const statusMetrics = [
 ]
 
 const zhStrings = {
-  title: '管理总览',
-  description: '把全站运行、风险信号和可执行动作收在同一个面板里。',
   loading: '正在加载仪表盘数据…',
   summaryUnavailable: '暂时无法加载期间摘要。',
   statusUnavailable: '暂时无法加载站点当前状态。',
@@ -467,11 +467,15 @@ const zhStrings = {
   chartModeTypes: '调用类型',
   chartModeResultsDelta: '较昨日 · 调用结果',
   chartModeTypesDelta: '较昨日 · 调用类型',
+  chartModeResultsArea: '面积图 · 调用结果',
+  chartModeTypesArea: '面积图 · 调用类型',
   chartVisibleSeries: '显示系列',
   chartDeltaSeries: '对比系列',
   chartSelectionAll: '全部',
   chartEmpty: '当前选择下没有可显示的图表系列。',
   chartUtcWindow: '本地时间横轴 · 固定范围（当前 {count} 组，对比 {comparisonCount} 组）',
+  chartRollingWindow: '本地时间横轴 · 最近 25 组滚动窗口（当前 {count} 组）',
+  chartDeltaWindow: '本地时间横轴 · 自然日对比窗口（当前 {count} 组，对比 {comparisonCount} 组）',
   chartResultSecondarySuccess: '次要成功',
   chartResultPrimarySuccess: '主要成功',
   chartResultSecondaryFailure: '次要失败',
@@ -928,6 +932,20 @@ export const TypesDeltaMode: Story = {
   },
 }
 
+export const ResultsAreaMode: Story = {
+  args: {
+    ...Default.args,
+    initialChartMode: 'resultsArea',
+  },
+}
+
+export const TypesAreaMode: Story = {
+  args: {
+    ...Default.args,
+    initialChartMode: 'typesArea',
+  },
+}
+
 export const HiddenSeriesEmpty: Story = {
   args: {
     ...Default.args,
@@ -956,8 +974,8 @@ export const FixedRangeWithGaps: Story = {
       throw new Error('Expected fixed-range gap story to render the dashboard chart canvas')
     }
     const meta = canvasElement.querySelector('.dashboard-trend-meta')?.textContent ?? ''
-    if (!meta.includes('Fixed range')) {
-      throw new Error(`Expected fixed-range chart metadata, received: ${meta}`)
+    if (!meta.includes('Natural-day comparison')) {
+      throw new Error(`Expected natural-day comparison metadata, received: ${meta}`)
     }
   },
 }
@@ -987,6 +1005,10 @@ export const ZhDarkEvidence: Story = {
   },
   play: async ({ canvasElement }) => {
     await new Promise((resolve) => window.setTimeout(resolve, 50))
+
+    if (canvasElement.querySelector('.dashboard-hero-panel') != null) {
+      throw new Error('Expected dashboard hero panel to be removed')
+    }
 
     const summaryPanel = canvasElement.querySelector<HTMLElement>('.dashboard-summary-panel')
     if (summaryPanel == null) {
@@ -1028,6 +1050,11 @@ export const ZhDarkEvidence: Story = {
     }
 
     const text = canvasElement.ownerDocument.body.textContent ?? ''
+    for (const forbidden of ['管理总览', '把全站运行、风险信号和可执行动作收在同一个面板里。']) {
+      if (text.includes(forbidden)) {
+        throw new Error(`Expected dashboard overview evidence story to exclude removed hero copy: ${forbidden}`)
+      }
+    }
     for (const expected of ['今日', '本月', '站点当前状态', '较昨日同刻', '未知调用', '主要', '次要']) {
       if (!text.includes(expected)) {
         throw new Error(`Expected dashboard overview evidence story to contain: ${expected}`)

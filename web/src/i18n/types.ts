@@ -213,8 +213,6 @@ export interface AdminTranslationsShape {
     alerts: string; systemSettings: string; proxySettings: string
   }
   dashboard: {
-    title: string
-    description: string
     loading: string
     summaryUnavailable: string
     statusUnavailable: string
@@ -254,11 +252,15 @@ export interface AdminTranslationsShape {
     chartModeTypes: string
     chartModeResultsDelta: string
     chartModeTypesDelta: string
+    chartModeResultsArea: string
+    chartModeTypesArea: string
     chartVisibleSeries: string
     chartDeltaSeries: string
     chartSelectionAll: string
     chartEmpty: string
     chartUtcWindow: string
+    chartRollingWindow: string
+    chartDeltaWindow: string
     chartResultSecondarySuccess: string
     chartResultPrimarySuccess: string
     chartResultSecondaryFailure: string
