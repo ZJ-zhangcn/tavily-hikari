@@ -118,7 +118,7 @@ import {
 } from './quotaSlider'
 import {
   resolveAdminUserActivityScope,
-  resolveAdminUserActivityScopeFromSettings,
+  resolveAdminUserActivityScopeFromSettingsOrThrow,
 } from './userActivityScope'
 import { formatRequestRateScope, formatRequestRateSummary, resolveRequestRate } from '../requestRate'
 import {
@@ -2835,6 +2835,20 @@ function AdminDashboard(): JSX.Element {
     [beginManagedRequest, loadingStateStrings.error],
   )
 
+  const ensureUsersSystemSettings = useCallback(
+    async (
+      signal?: AbortSignal,
+      fallbackSettings?: SystemSettings | null,
+    ): Promise<SystemSettings | null> => {
+      if (usersQuery.trim().length > 0) return fallbackSettings ?? systemSettings ?? null
+      const knownSettings = fallbackSettings ?? systemSettings
+      if (knownSettings != null) return knownSettings
+      const loadedSettings = await loadSystemSettingsData({ signal, reason: 'refresh' })
+      return loadedSettings ?? null
+    },
+    [loadSystemSettingsData, systemSettings, usersQuery],
+  )
+
   const loadForwardProxyStatsData = useCallback(
     async ({
       signal,
@@ -3751,18 +3765,23 @@ function AdminDashboard(): JSX.Element {
       setUsers([])
       setUsersTotal(0)
     }
-    fetchAdminUsers(
-      usersPage,
-      USERS_PER_PAGE,
-      usersQuery,
-      usersTagFilterId,
-      resolveAdminUserActivityScope(usersQuery, systemSettings?.adminDefaultActiveUsersOnly),
-      usersSort,
-      usersSortOrder,
-      request.signal,
-    )
+    Promise.resolve().then(() =>
+      fetchAdminUsers(
+        usersPage,
+        USERS_PER_PAGE,
+        usersQuery,
+        usersTagFilterId,
+        resolveAdminUserActivityScopeFromSettingsOrThrow(
+          usersQuery,
+          systemSettings,
+          systemSettings,
+        ),
+        usersSort,
+        usersSortOrder,
+        request.signal,
+      ))
       .then((result) => {
-        if (request.signal.aborted) return
+        if (result == null || request.signal.aborted) return
         setUsers(result.items)
         setUsersTotal(result.total)
         setUsersLoadState('ready')
@@ -4619,8 +4638,8 @@ function AdminDashboard(): JSX.Element {
     if (route.name === 'module' && route.module === 'system-settings') {
       tasks.push(loadSystemSettingsData({ signal: controller.signal, reason: 'refresh' }))
     }
-    if ((isUsersCollectionRoute || route.name === 'user') && waitingForUsersSystemSettings) {
-      usersSystemSettingsPromise = loadSystemSettingsData({ signal: controller.signal, reason: 'refresh' })
+    if (isUsersCollectionRoute || route.name === 'user') {
+      usersSystemSettingsPromise = ensureUsersSystemSettings(controller.signal, systemSettings)
       tasks.push(usersSystemSettingsPromise)
     }
     if (route.name === 'module' && route.module === 'requests') {
@@ -4718,7 +4737,7 @@ function AdminDashboard(): JSX.Element {
               USERS_PER_PAGE,
               usersQuery,
               usersTagFilterId,
-              resolveAdminUserActivityScopeFromSettings(
+              resolveAdminUserActivityScopeFromSettingsOrThrow(
                 usersQuery,
                 loadedSystemSettings,
                 systemSettings,
@@ -6206,12 +6225,17 @@ function AdminDashboard(): JSX.Element {
     }
   }, [systemSettingsStrings.form.saveFailed])
   const refreshUsersList = async () => {
+    const settingsForUsers = await ensureUsersSystemSettings(undefined, systemSettings)
     const pagedUsers = await fetchAdminUsers(
       usersPage,
       USERS_PER_PAGE,
       usersQuery,
       usersTagFilterId,
-      effectiveUserActivityScope,
+      resolveAdminUserActivityScopeFromSettingsOrThrow(
+        usersQuery,
+        settingsForUsers,
+        systemSettings,
+      ),
       usersSort,
       usersSortOrder,
     )
