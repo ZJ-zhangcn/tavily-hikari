@@ -32,8 +32,8 @@
   - `yesterday`: `{ total_requests, success_count, error_count, quota_exhausted_count, upstream_exhausted_key_count }`，表示“昨日截至当前同一时刻”的对比窗口
   - `month`: `{ total_requests, success_count, error_count, quota_exhausted_count, upstream_exhausted_key_count }`
 - `today_start` 使用服务端本地自然日 0 点；`today_end` 使用服务端当前时刻加一秒作为半开区间上界。
-- `yesterday_start` 使用服务端本地昨日 0 点；`yesterday_end` 必须等于昨日同一时刻加一秒，并满足 `yesterday_end - yesterday_start = today_end - today_start`。
-- `yesterday` 窗口是半开区间 `[yesterday_start, yesterday_end)`；昨日同刻之后的数据不得进入今日对比。
+- `yesterday_start` 使用服务端本地昨日 0 点；`yesterday_end` 使用 `yesterday_start + (today_end - today_start)` 推导，必须满足 `yesterday_end - yesterday_start = today_end - today_start`。
+- `yesterday` 窗口是半开区间 `[yesterday_start, yesterday_end)`；昨日同一日内进度之后的数据不得进入今日对比。非 DST 切换日下，该边界等价于昨日同一时刻加一秒。
 - `quota_exhausted_count` 继续保持请求级语义，供请求日志、详情页和旧消费者使用；dashboard 的耗尽卡改读 `upstream_exhausted_key_count`。
 - 时间窗口边界统一使用服务端本地时区的日/月 bucket 口径，而不是浏览器时区。
 
