@@ -130,7 +130,9 @@ import {
   alertsPath,
   buildAdminKeysPath,
   buildAdminTokensPath,
+  buildAdminUsersOverviewPath,
   getAlertsViewFromSearch,
+  isAdminUsersOverviewSortField,
   isSameAdminRoute,
   keyDetailPath,
   modulePath,
@@ -387,13 +389,6 @@ const ADMIN_USERS_SORT_FIELDS: readonly AdminUsersSortField[] = [
   'lastActivity',
   'lastLoginAt',
 ]
-const ADMIN_USERS_OVERVIEW_SORT_FIELDS = new Set<AdminUsersSortField>([
-  'quotaDailyUsed',
-  'quotaMonthlyUsed',
-  'recentIpCount7d',
-  'lastActivity',
-  'lastLoginAt',
-])
 
 function createEmptyDashboardTrend(): DashboardTrendBuckets {
   return {
@@ -951,10 +946,6 @@ function getAdminTokensCollectionFromLocation(): 'tokens' | 'unbound-usage' {
   return new URLSearchParams(window.location.search).get('view') === 'unbound-usage'
     ? 'unbound-usage'
     : 'tokens'
-}
-
-function isAdminUsersOverviewSortField(value: AdminUsersSortField | null): boolean {
-  return value != null && ADMIN_USERS_OVERVIEW_SORT_FIELDS.has(value)
 }
 
 function getAdminKeysPageFromLocation(): number {
@@ -4211,6 +4202,16 @@ function AdminDashboard(): JSX.Element {
     setLocationSearch(nextUrl.search)
     setRoute((previous) => (isSameAdminRoute(previous, nextRoute) ? previous : nextRoute))
   }, [])
+  const buildUsersOverviewPath = useCallback(() => {
+    const useUsersState = route.name === 'module' && route.module === 'users' || route.name === 'user-usage'
+    return buildAdminUsersOverviewPath(
+      useUsersState ? usersQuery : getAdminUsersQueryFromLocation(),
+      useUsersState ? usersTagFilterId : getAdminUsersTagFilterFromLocation(),
+      useUsersState ? usersPage : getAdminUsersPageFromLocation(),
+      useUsersState ? usersSort : getAdminUsersSortFromLocation(),
+      useUsersState ? usersSortOrder : getAdminUsersSortDirectionFromLocation(),
+    )
+  }, [route, usersPage, usersQuery, usersSort, usersSortOrder, usersTagFilterId])
 
   const navigateModule = useCallback(
     (target: AdminNavTarget) => {
@@ -4242,6 +4243,19 @@ function AdminDashboard(): JSX.Element {
         )
         return
       }
+      if (
+        target === 'users'
+        && (
+          route.name === 'user-usage'
+          || route.name === 'user'
+          || route.name === 'user-tags'
+          || route.name === 'user-tag-editor'
+          || (route.name === 'module' && route.module === 'users')
+        )
+      ) {
+        navigateToPath(buildUsersOverviewPath())
+        return
+      }
       if (target === 'alerts') {
         navigateToPath(alertsPath())
         return
@@ -4252,7 +4266,7 @@ function AdminDashboard(): JSX.Element {
       }
       navigateToPath(modulePath(target))
     },
-    [navigateToPath],
+    [buildUsersOverviewPath, navigateToPath, route],
   )
 
   const navigateKey = useCallback(
@@ -8848,8 +8862,6 @@ function AdminDashboard(): JSX.Element {
   )
 
   if (route.name === 'user-usage') {
-    const backSort = isAdminUsersOverviewSortField(usersSort) ? usersSort : null
-    const backOrder = backSort ? usersSortOrder : null
     const usageDailyRateLabel = language === 'zh' ? usersStrings.usage.table.dailySuccessRate : 'Daily'
     const usageMonthlyRateLabel = language === 'zh' ? usersStrings.usage.table.monthlySuccessRate : 'Monthly'
     const userUsageUpdatedTime = lastUpdated ? timeOnlyFormatter.format(lastUpdated) : null
