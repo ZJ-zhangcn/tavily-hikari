@@ -1410,11 +1410,13 @@ pub struct JobLog {
     pub finished_at: Option<i64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScheduledJobEnqueueResult {
     pub job_id: i64,
     pub created: bool,
     pub promoted: bool,
+    pub status: String,
+    pub trigger_source: String,
 }
 
 #[derive(Debug, Clone)]

@@ -4568,7 +4568,9 @@ function JobsPageCanvas(): JSX.Element {
   const [jobFilter, setJobFilter] = useState<JobGroup>('all')
   const [expandedJobs, setExpandedJobs] = useState<Set<number>>(() => new Set([608]))
   const [jobTriggering, setJobTriggering] = useState<string | null>(null)
-  const [jobTriggerNotice, setJobTriggerNotice] = useState('DB compaction is already running; manual trigger was not queued.')
+  const [jobTriggerNotice, setJobTriggerNotice] = useState(
+    jobsStrings.notices.existingRunning.replace('{job}', adminJobTypeLabel('db_compaction', jobsStrings)),
+  )
   const jobGroupCounts = useMemo(() => countAdminJobGroups(MOCK_JOBS), [])
   const jobFilterOptions = useMemo(
     () => buildAdminJobFilterOptions(jobsStrings, jobGroupCounts),
@@ -4583,8 +4585,8 @@ function JobsPageCanvas(): JSX.Element {
     setJobTriggering(jobType)
     setJobTriggerNotice(
       jobType === 'db_compaction'
-        ? 'DB compaction is already running; manual trigger was not queued.'
-        : `${adminJobTypeLabel(jobType, jobsStrings)} queued as a manual job.`,
+        ? jobsStrings.notices.existingRunning.replace('{job}', adminJobTypeLabel(jobType, jobsStrings))
+        : jobsStrings.notices.queued.replace('{job}', adminJobTypeLabel(jobType, jobsStrings)),
     )
     window.setTimeout(() => setJobTriggering(null), 900)
   }

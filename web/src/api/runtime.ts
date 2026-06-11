@@ -1373,14 +1373,31 @@ export function fetchApiKeySecret(id: string, signal?: AbortSignal): Promise<Api
   return requestJson(`/api/keys/${encoded}/secret`, { signal })
 }
 
-export interface TriggerJobResponse { job_id: number; job_type: string; trigger_source: string }
-interface ServerTriggerJobResponse { jobId: number; jobType: string; triggerSource: string }
+export interface TriggerJobResponse {
+  job_id: number
+  job_type: string
+  trigger_source: string
+  status: string
+  coalesced: boolean
+  promoted: boolean
+}
+interface ServerTriggerJobResponse {
+  jobId: number
+  jobType: string
+  triggerSource: string
+  status?: string
+  coalesced?: boolean
+  promoted?: boolean
+}
 
 function normalizeTriggerJobResponse(data: ServerTriggerJobResponse): TriggerJobResponse {
   return {
     job_id: data.jobId,
     job_type: data.jobType,
     trigger_source: data.triggerSource,
+    status: data.status ?? 'queued',
+    coalesced: data.coalesced ?? false,
+    promoted: data.promoted ?? false,
   }
 }
 

@@ -4,7 +4,7 @@
 
 - Lifecycle: active
 - Created: 2026-05-07
-- Last: 2026-06-10
+- Last: 2026-06-11
 
 ## Background
 
@@ -75,6 +75,9 @@ source when a usable persisted runtime already exists.
 - Manual scheduled-job triggers must use the same execution path as scheduler runs, coalesce onto an
   existing `queued`/`running` representative row of the same logical job, and return that
   representative `job_id` instead of rejecting on a shared execution gate timeout.
+- Manual trigger responses may add queue-state hints such as representative `status`,
+  `coalesced=true`, and `promoted=true` as long as the existing `jobId` / `jobType` /
+  `triggerSource` contract remains backward compatible.
 - `request_logs_gc` must not hold the SQLite write slot for an unbounded full-retention cleanup
   pass. It must delete old `request_logs` and `request_log_catalog_rollups` in bounded batches,
   yield between batches, report partial progress, and continue catch-up after a throttled delay when
@@ -88,7 +91,8 @@ source when a usable persisted runtime already exists.
 - DB-backed scheduled and manual maintenance jobs that can write SQLite must flow through one
   persisted maintenance queue and one single-process worker. The worker may orchestrate remote I/O
   phases outside the DB execution window, but only one maintenance job may hold the SQLite-writing
-  execution gate at a time.
+  execution gate at a time, and the worker must not fan out multiple remote-I/O maintenance jobs at
+  once just because those phases are outside SQLite.
 - Request-log GC catch-up must finish one bounded slice, persist its progress message, and requeue a
   fresh `queued` row when more backlog remains instead of keeping one long-lived `running` row while
   waiting for the next catch-up opportunity.
@@ -126,6 +130,9 @@ source when a usable persisted runtime already exists.
 - Overlapping DB-backed maintenance jobs in one process run through one persisted queue and one
   maintenance worker, so a second job is accepted/coalesced as `queued` instead of competing for the
   SQLite writer slot.
+- With two queued remote-I/O maintenance jobs such as `quota_sync`, only one enters the active
+  remote phase at a time; the next job remains `queued` until that remote slot clears, while
+  non-remote maintenance work may still advance.
 - Manual trigger API calls return a representative job id, job rows expose `trigger_source` plus
   `queued_at`, and duplicate active manual triggers coalesce onto the existing queued/running row
   instead of returning `db_job_execution_busy` or duplicate-running conflicts.

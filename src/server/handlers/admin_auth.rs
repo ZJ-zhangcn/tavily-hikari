@@ -41,6 +41,9 @@ struct TriggerJobResponse {
     job_id: i64,
     job_type: String,
     trigger_source: String,
+    status: String,
+    coalesced: bool,
+    promoted: bool,
 }
 
 fn manual_trigger_requires_key(job_type: &str) -> bool {
@@ -226,7 +229,7 @@ async fn post_trigger_job(
         Err(err) => return Ok(manual_trigger_key_id_error_response(&job_type, err)),
     };
 
-    match enqueue_scheduled_job(
+    match enqueue_scheduled_job_result(
         state.as_ref(),
         &job_type,
         key_id.as_deref(),
@@ -234,12 +237,15 @@ async fn post_trigger_job(
     )
     .await
     {
-        Ok(job_id) => Ok((
+        Ok(job) => Ok((
             StatusCode::ACCEPTED,
             Json(TriggerJobResponse {
-                job_id,
+                job_id: job.job_id,
                 job_type,
-                trigger_source: TRIGGER_SOURCE_MANUAL.to_string(),
+                trigger_source: job.trigger_source,
+                status: job.status,
+                coalesced: !job.created,
+                promoted: job.promoted,
             }),
         )
             .into_response()),

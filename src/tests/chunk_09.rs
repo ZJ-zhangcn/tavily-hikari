@@ -446,6 +446,8 @@ async fn scheduled_job_enqueue_coalesces_duplicate_queue_and_promotes_manual_sou
     assert_eq!(second.job_id, first.job_id);
     assert!(!second.created);
     assert!(second.promoted);
+    assert_eq!(second.status, "queued");
+    assert_eq!(second.trigger_source, "manual");
 
     let queued_jobs = proxy
         .fetch_queued_scheduled_jobs(10)
@@ -465,6 +467,45 @@ async fn scheduled_job_enqueue_coalesces_duplicate_queue_and_promotes_manual_sou
     assert_eq!(row.0, "manual");
     assert!(row.1.is_none());
     assert!(row.2 > 0);
+
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+}
+
+#[tokio::test]
+async fn scheduled_job_enqueue_coalesces_running_job_and_promotes_manual_source() {
+    let db_path = temp_db_path("scheduled-job-enqueue-running-coalesce");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
+        .await
+        .expect("proxy created");
+
+    let running_job_id = proxy
+        .scheduled_job_claim("db_compaction", "scheduler", None, 1)
+        .await
+        .expect("claim scheduler compaction job")
+        .expect("scheduler compaction job created");
+
+    let manual = proxy
+        .scheduled_job_enqueue("db_compaction", "manual", None, 1)
+        .await
+        .expect("enqueue manual duplicate for running job");
+    assert_eq!(manual.job_id, running_job_id);
+    assert!(!manual.created);
+    assert!(manual.promoted);
+    assert_eq!(manual.status, "running");
+    assert_eq!(manual.trigger_source, "manual");
+
+    let row: (String, String) = sqlx::query_as(
+        "SELECT status, trigger_source FROM scheduled_jobs WHERE id = ?",
+    )
+    .bind(running_job_id)
+    .fetch_one(&proxy.key_store.pool)
+    .await
+    .expect("fetch running row after manual coalesce");
+    assert_eq!(row.0, "running");
+    assert_eq!(row.1, "manual");
 
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_file(db_path.with_extension("db-shm"));

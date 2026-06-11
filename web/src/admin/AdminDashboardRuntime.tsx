@@ -231,6 +231,7 @@ import {
   type JobGroup,
   type JobGroupCounts,
   type JobLogView,
+  type TriggerJobResponse,
   fetchApiKeyDetail,
   syncApiKeyUsage,
   fetchJobs,
@@ -1759,6 +1760,7 @@ function AdminDashboard(): JSX.Element {
   const [jobsLoadState, setJobsLoadState] = useState<QueryLoadState>('initial_loading')
   const [jobsError, setJobsError] = useState<string | null>(null)
   const [jobTriggering, setJobTriggering] = useState<string | null>(null)
+  const [jobTriggerNotice, setJobTriggerNotice] = useState<{ kind: 'info' | 'success'; message: string } | null>(null)
   const [users, setUsers] = useState<AdminUserSummary[]>([])
   const [usersTotal, setUsersTotal] = useState(0)
   const [usersPage, setUsersPage] = useState(() => getAdminUsersPageFromLocation())
@@ -5252,6 +5254,27 @@ function AdminDashboard(): JSX.Element {
     [jobFilter, jobsStrings],
   )
 
+  const formatJobTriggerNotice = useCallback((response: TriggerJobResponse) => {
+    const jobLabel = adminJobTypeLabel(response.job_type, jobsStrings)
+    const format = (template: string) => template.replace('{job}', jobLabel)
+    if (response.coalesced && response.status === 'running') {
+      return {
+        kind: 'info' as const,
+        message: format(jobsStrings.notices.existingRunning),
+      }
+    }
+    if (response.coalesced) {
+      return {
+        kind: 'info' as const,
+        message: format(jobsStrings.notices.existingQueued),
+      }
+    }
+    return {
+      kind: 'success' as const,
+      message: format(jobsStrings.notices.queued),
+    }
+  }, [jobsStrings])
+
   const handleJobFilterChange = useCallback((value: JobGroup) => {
     setJobFilter(value)
     setJobsPage(1)
@@ -5261,8 +5284,12 @@ function AdminDashboard(): JSX.Element {
     (jobType: string) => {
       setJobTriggering(jobType)
       setJobsError(null)
+      setJobTriggerNotice(null)
       triggerJob(jobType)
-        .then(() => fetchJobs(jobsPage, jobsPerPage, jobFilter))
+        .then((response) => {
+          setJobTriggerNotice(formatJobTriggerNotice(response))
+          return fetchJobs(jobsPage, jobsPerPage, jobFilter)
+        })
         .then((result) => {
           setJobs(result.items)
           setJobsTotal(result.total)
@@ -5274,7 +5301,7 @@ function AdminDashboard(): JSX.Element {
         })
         .finally(() => setJobTriggering(null))
     },
-    [jobFilter, jobsPage, loadingStateStrings.error],
+    [formatJobTriggerNotice, jobFilter, jobsPage, loadingStateStrings.error],
   )
 
   const keysBatchFirstLine = useMemo(() => {
@@ -11427,6 +11454,15 @@ function AdminDashboard(): JSX.Element {
         <div className="admin-stacked-only">
           {renderJobFilterToolbar()}
         </div>
+        {jobTriggerNotice && (
+          <div
+            className={jobTriggerNotice.kind === 'info' ? 'alert alert-warning' : 'alert'}
+            role="status"
+            style={{ marginBottom: 12 }}
+          >
+            {jobTriggerNotice.message}
+          </div>
+        )}
         <AdminTableShell
           className="jobs-table-wrapper admin-responsive-up"
           tableClassName="jobs-table jobs-module-table"
@@ -11610,13 +11646,13 @@ function AdminDashboard(): JSX.Element {
                               </div>
                               {started == null && (
                                 <div>
-                                  <div className="log-details-label">Queued</div>
+                                  <div className="log-details-label">{jobsStrings.detailLabels.queued}</div>
                                   <div className="log-details-value">{queuedSummary}</div>
                                 </div>
                               )}
                               {finishedSummary && (
                                 <div>
-                                  <div className="log-details-label">Finished</div>
+                                  <div className="log-details-label">{jobsStrings.detailLabels.finished}</div>
                                   <div className="log-details-value">
                                     {finishedSummary}
                                   </div>
@@ -11624,7 +11660,7 @@ function AdminDashboard(): JSX.Element {
                               )}
                               {duration && (
                                 <div>
-                                  <div className="log-details-label">DURATION</div>
+                                  <div className="log-details-label">{jobsStrings.detailLabels.duration}</div>
                                   <div className="log-details-value">{duration}</div>
                                 </div>
                               )}

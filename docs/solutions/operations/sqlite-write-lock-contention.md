@@ -68,6 +68,9 @@ brief contention visible as HTTP 500s or failed background bookkeeping.
   owner-facing manual operations fight for the same execution gate. Persist maintenance jobs as
   `queued`, coalesce duplicate logical work onto one representative row, and let one maintenance
   worker consume that queue.
+- If a later manual trigger attaches to an already active representative row, surface that fact
+  explicitly. Promoting the representative `trigger_source` and returning `status/coalesced` hints
+  keeps the admin UI from falsely implying that a new job was rejected or silently ignored.
 - Keep `queued_at` separate from `started_at`. A queued job has been accepted but has not entered a
   DB execution window yet; collapsing those timestamps makes queue delay invisible and breaks admin
   diagnosis.
@@ -78,6 +81,11 @@ brief contention visible as HTTP 500s or failed background bookkeeping.
   in-process worker. Same-job duplicate claiming alone is not enough when different logical jobs,
   such as retention GC, quota sync, rollups, and compaction, can all compete for the single writer
   slot.
+- For maintenance jobs that mix remote I/O with SQLite writes, split those phases. Remote fetches
+  such as forward-proxy GEO refresh or quota `/usage` probes should not hold the SQLite-writing
+  execution gate, and they should not pin the queue worker when the remaining DB phase can be
+  resumed separately. At the same time, do not “solve” that by fan-out spawning every remote job:
+  keep a bounded remote-I/O slot so the queue cannot turn a backlog into an upstream stampede.
 - Keep `quota_sync` bounded. `/usage` fetches should have a hard timeout, the whole sync run should
   finish on a short wall-clock budget, and stale `quota_sync` / `quota_sync/hot` `running` rows
   should be abandoned during the next claim instead of waiting for a restart.

@@ -189,7 +189,7 @@ impl KeyStore {
             Self::create_scheduled_jobs_indexes_on_conn(&mut conn).await?;
 
             let foreign_key_check: Vec<(String, i64, String, i64)> =
-                sqlx::query_as("PRAGMA foreign_key_check")
+                sqlx::query_as("PRAGMA foreign_key_check(scheduled_jobs)")
                     .fetch_all(&mut *conn)
                     .await?;
             if !foreign_key_check.is_empty() {
@@ -406,12 +406,11 @@ impl KeyStore {
                 if let Some((job_id, status, current_trigger_source)) =
                     Self::scheduled_job_lookup_active_locked(&mut conn, job_type, key_id).await?
                 {
-                    let promoted = status == "queued"
-                        && Self::should_promote_scheduled_job_trigger_source(
-                            job_type,
-                            &current_trigger_source,
-                            trigger_source,
-                        );
+                    let promoted = Self::should_promote_scheduled_job_trigger_source(
+                        job_type,
+                        &current_trigger_source,
+                        trigger_source,
+                    );
                     if promoted {
                         sqlx::query(
                             r#"UPDATE scheduled_jobs
@@ -424,10 +423,17 @@ impl KeyStore {
                         .await?;
                     }
                     sqlx::query("COMMIT").execute(&mut *conn).await?;
+                    let effective_trigger_source = if promoted {
+                        trigger_source.to_string()
+                    } else {
+                        current_trigger_source
+                    };
                     return Ok::<ScheduledJobEnqueueResult, ProxyError>(ScheduledJobEnqueueResult {
                         job_id,
                         created: false,
                         promoted,
+                        status,
+                        trigger_source: effective_trigger_source,
                     });
                 }
 
@@ -458,6 +464,8 @@ impl KeyStore {
                     job_id: res.last_insert_rowid(),
                     created: true,
                     promoted: false,
+                    status: "queued".to_string(),
+                    trigger_source: trigger_source.to_string(),
                 })
             }
             .await;

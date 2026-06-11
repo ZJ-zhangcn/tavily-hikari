@@ -55,3 +55,14 @@
 - Scheduler loops now enqueue maintenance work instead of claiming-and-running inline; manual
   trigger APIs now return the representative queued/running job instead of surfacing
   `db_job_execution_busy`.
+
+## 2026-06-11
+
+- Tightened the representative-row contract so a later manual trigger can promote an already
+  running scheduler row to `trigger_source=manual`, keeping `/api/jobs/trigger` and `/api/jobs`
+  aligned on the same representative instance.
+- Added queue-state hints (`status`, `coalesced`, `promoted`) to manual trigger responses so the
+  admin UI can say whether work was newly queued or attached to an existing active job.
+- Split `forward_proxy_geo_refresh` into a remote discovery phase plus a short DB persistence phase,
+  and let the maintenance worker keep one bounded remote-I/O slot instead of blocking the queue on
+  GEO I/O or fan-out starting multiple remote maintenance jobs at once.

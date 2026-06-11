@@ -40,18 +40,29 @@ struct ClaimedScheduledJob {
     _job_execution_gate: Option<OwnedMutexGuard<()>>,
 }
 
+async fn enqueue_scheduled_job_result(
+    state: &AppState,
+    job_type: &str,
+    key_id: Option<&str>,
+    trigger_source: &str,
+) -> Result<tavily_hikari::ScheduledJobEnqueueResult, ProxyError> {
+    let result = state
+        .proxy
+        .scheduled_job_enqueue(job_type, trigger_source, key_id, 1)
+        .await?;
+    maintenance_worker_wake_for_state(state).notify_one();
+    Ok(result)
+}
+
 async fn enqueue_scheduled_job(
     state: &AppState,
     job_type: &str,
     key_id: Option<&str>,
     trigger_source: &str,
 ) -> Result<i64, ProxyError> {
-    let result = state
-        .proxy
-        .scheduled_job_enqueue(job_type, trigger_source, key_id, 1)
-        .await?;
-    maintenance_worker_wake_for_state(state).notify_one();
-    Ok(result.job_id)
+    Ok(enqueue_scheduled_job_result(state, job_type, key_id, trigger_source)
+        .await?
+        .job_id)
 }
 
 async fn enqueue_scheduled_job_logged(
@@ -114,19 +125,6 @@ async fn claim_scheduled_job(
             None
         }
     }
-}
-
-async fn dequeue_next_scheduled_job(state: &AppState) -> Result<Option<JobLog>, ProxyError> {
-    let Some(candidate) = state
-        .proxy
-        .fetch_queued_scheduled_jobs(1)
-        .await?
-        .into_iter()
-        .next()
-    else {
-        return Ok(None);
-    };
-    state.proxy.scheduled_job_mark_running(candidate.id).await
 }
 
 async fn sync_key_quota_with_db_job_gate(
@@ -211,14 +209,49 @@ fn duration_until_next_local_daily_run(now: DateTime<Local>, hour: u32, minute: 
         .unwrap_or_else(|_| Duration::from_secs(0))
 }
 
-fn scheduled_job_prefers_detached_execution(job_type: &str) -> bool {
+fn scheduled_job_uses_remote_io(job_type: &str) -> bool {
     matches!(
         job_type,
         "quota_sync"
             | "quota_sync/manual"
             | "quota_sync/hot"
             | LINUXDO_USER_STATUS_SYNC_JOB_TYPE
+            | "forward_proxy_geo_refresh"
     )
+}
+
+async fn dequeue_next_scheduled_job(
+    state: &AppState,
+) -> Result<Option<(JobLog, Option<tokio::sync::OwnedSemaphorePermit>)>, ProxyError> {
+    let candidates = state.proxy.fetch_queued_scheduled_jobs(16).await?;
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+
+    let mut selected = None;
+    let mut remote_io_permit = None;
+    for candidate in candidates {
+        if scheduled_job_uses_remote_io(&candidate.job_type) {
+            if let Some(permit) = try_acquire_maintenance_remote_io_slot_for_state(state) {
+                remote_io_permit = Some(permit);
+                selected = Some(candidate);
+                break;
+            }
+            continue;
+        }
+
+        selected = Some(candidate);
+        break;
+    }
+
+    let Some(candidate) = selected else {
+        return Ok(None);
+    };
+
+    match state.proxy.scheduled_job_mark_running(candidate.id).await? {
+        Some(job) => Ok(Some((job, remote_io_permit))),
+        None => Ok(None),
+    }
 }
 
 async fn run_queued_scheduled_job(state: Arc<AppState>, job: JobLog) {
@@ -249,11 +282,14 @@ fn spawn_maintenance_worker(state: Arc<AppState>) {
         let wake = maintenance_worker_wake_for_state(state.as_ref());
         loop {
             match dequeue_next_scheduled_job(state.as_ref()).await {
-                Ok(Some(job)) => {
-                    if scheduled_job_prefers_detached_execution(&job.job_type) {
+                Ok(Some((job, remote_io_permit))) => {
+                    if let Some(remote_io_permit) = remote_io_permit {
                         let run_state = state.clone();
+                        let run_wake = wake.clone();
                         tokio::spawn(async move {
+                            let _remote_io_permit = remote_io_permit;
                             run_queued_scheduled_job(run_state, job).await;
+                            run_wake.notify_one();
                         });
                     } else {
                         run_queued_scheduled_job(state.clone(), job).await;
@@ -928,10 +964,7 @@ async fn run_forward_proxy_geo_refresh_job_with_source(
     state: Arc<AppState>,
     trigger_source: &'static str,
 ) {
-    let Some(ClaimedScheduledJob {
-        job_id,
-        _job_execution_gate,
-    }) = claim_scheduled_job(
+    let Some(claimed_job) = claim_scheduled_job(
         state.as_ref(),
         "forward_proxy_geo_refresh",
         None,
@@ -943,26 +976,53 @@ async fn run_forward_proxy_geo_refresh_job_with_source(
         return;
     };
 
-    let _maintenance = acquire_db_maintenance_read_gate().await;
-    match state
+    run_forward_proxy_geo_refresh_claimed_job(state, claimed_job).await;
+}
+
+async fn run_forward_proxy_geo_refresh_claimed_job(
+    state: Arc<AppState>,
+    claimed_job: ClaimedScheduledJob,
+) -> bool {
+    let ClaimedScheduledJob {
+        job_id,
+        _job_execution_gate,
+    } = claimed_job;
+    drop(_job_execution_gate);
+
+    let candidates = match state
         .proxy
-        .refresh_forward_proxy_geo_metadata(&state.api_key_ip_geo_origin, true)
+        .resolve_forward_proxy_geo_refresh_candidates(&state.api_key_ip_geo_origin, true)
         .await
     {
-        Ok(refreshed) => {
-            let msg = format!("refreshed_candidates={refreshed}");
-            let _ = state
-                .proxy
-                .scheduled_job_finish(job_id, "success", Some(&msg))
-                .await;
-        }
+        Ok(candidates) => candidates,
         Err(err) => {
             let _ = state
                 .proxy
                 .scheduled_job_finish(job_id, "error", Some(&err.to_string()))
                 .await;
+            return false;
         }
+    };
+
+    let refreshed = candidates.len();
+    let _job_execution_gate = acquire_db_job_execution_gate_for_state(state.as_ref()).await;
+    let _maintenance = acquire_db_maintenance_read_gate().await;
+    if !candidates.is_empty()
+        && let Err(err) = state.proxy.persist_forward_proxy_geo_candidates(&candidates).await
+    {
+        let _ = state
+            .proxy
+            .scheduled_job_finish(job_id, "error", Some(&err.to_string()))
+            .await;
+        return false;
     }
+
+    let msg = format!("refreshed_candidates={refreshed}");
+    let _ = state
+        .proxy
+        .scheduled_job_finish(job_id, "success", Some(&msg))
+        .await;
+    true
 }
 
 async fn run_manual_claimed_job(
@@ -1064,17 +1124,15 @@ async fn run_manual_claimed_job(
             }
         },
         "forward_proxy_geo_refresh" => {
-            let _maintenance = acquire_db_maintenance_read_gate().await;
-            match state
-                .proxy
-                .refresh_forward_proxy_geo_metadata(&state.api_key_ip_geo_origin, true)
-                .await
-            {
-                Ok(refreshed) => {
-                    finish(state, "success", format!("refreshed_candidates={refreshed}")).await
-                }
-                Err(err) => finish(state, "error", err.to_string()).await,
-            }
+            drop(_job_execution_gate);
+            run_forward_proxy_geo_refresh_claimed_job(
+                state,
+                ClaimedScheduledJob {
+                    job_id,
+                    _job_execution_gate: None,
+                },
+            )
+            .await
         },
         "db_compaction" => run_db_compaction_claimed_job(state, job_id).await,
         _ => finish(state, "error", format!("unsupported manual job type: {job_type}")).await,
