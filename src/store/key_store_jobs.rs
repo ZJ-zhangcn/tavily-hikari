@@ -388,6 +388,30 @@ impl KeyStore {
         .map_err(ProxyError::from)
     }
 
+    async fn scheduled_job_lookup_active(
+        &self,
+        job_type: &str,
+        key_id: Option<&str>,
+    ) -> Result<Option<(i64, String, String)>, ProxyError> {
+        sqlx::query_as::<_, (i64, String, String)>(
+            r#"
+            SELECT id, status, trigger_source
+            FROM scheduled_jobs
+            WHERE job_type = ?
+              AND (status = 'queued' OR status = 'running')
+              AND ((key_id IS NULL AND ? IS NULL) OR key_id = ?)
+            ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, COALESCE(started_at, queued_at) DESC, id DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(job_type)
+        .bind(key_id)
+        .bind(key_id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(ProxyError::from)
+    }
+
     pub(crate) async fn scheduled_job_enqueue(
         &self,
         job_type: &str,
@@ -395,6 +419,28 @@ impl KeyStore {
         key_id: Option<&str>,
         attempt: i64,
     ) -> Result<ScheduledJobEnqueueResult, ProxyError> {
+        // Fast-path repeated coalesce reads so owner-facing manual triggers do not
+        // fail behind an unrelated long-lived write window.
+        if Self::scheduled_job_stale_group(job_type).is_none()
+            && let Some((job_id, status, current_trigger_source)) =
+                self.scheduled_job_lookup_active(job_type, key_id).await?
+        {
+            let promoted = Self::should_promote_scheduled_job_trigger_source(
+                job_type,
+                &current_trigger_source,
+                trigger_source,
+            );
+            if !promoted {
+                return Ok(ScheduledJobEnqueueResult {
+                    job_id,
+                    created: false,
+                    promoted: false,
+                    status,
+                    trigger_source: current_trigger_source,
+                });
+            }
+        }
+
         let queued_at = Utc::now().timestamp();
         let deadline = Instant::now() + Duration::from_secs(10);
         let mut retry_attempt = 0usize;

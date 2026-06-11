@@ -71,6 +71,10 @@ brief contention visible as HTTP 500s or failed background bookkeeping.
 - If a later manual trigger attaches to an already active representative row, surface that fact
   explicitly. Promoting the representative `trigger_source` and returning `status/coalesced` hints
   keeps the admin UI from falsely implying that a new job was rejected or silently ignored.
+- When a later trigger can reuse an already active representative row without changing its
+  priority/source, do that coalescing through a read-only fast path. Requiring `BEGIN IMMEDIATE`
+  before checking the active row turns harmless duplicate manual triggers into transient HTTP 500s
+  whenever a bounded GC slice is holding SQLite's writer slot.
 - Keep `queued_at` separate from `started_at`. A queued job has been accepted but has not entered a
   DB execution window yet; collapsing those timestamps makes queue delay invisible and breaks admin
   diagnosis.

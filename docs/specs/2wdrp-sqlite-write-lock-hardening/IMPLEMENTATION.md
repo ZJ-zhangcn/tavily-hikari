@@ -68,6 +68,10 @@
 - Coalesced active jobs now promote `trigger_source` even while the representative row is already
   `running`, so a later manual trigger is visible in both the returned trigger response and the
   persisted job row instead of being silently hidden behind the original scheduler source.
+- Same-priority duplicate manual triggers now take a read-only coalesce fast path before attempting
+  a write transaction. That keeps `POST /api/jobs/trigger` from returning transient SQLite
+  `database is locked` errors when a bounded GC slice is already running and the request only needs
+  to attach to the existing representative row.
 - Request-log GC now requeues itself through the persisted queue when a bounded pass reports
   `completed=false`, so backlog catch-up no longer depends on one scheduler loop keeping a running
   row alive.
@@ -92,6 +96,8 @@
   and abandon-all-active restart cleanup semantics.
 - Added coverage for manual trigger coalescing on an already running representative row, including
   the HTTP response hints returned by `/api/jobs/trigger`.
+- Added regression coverage for duplicate manual trigger coalescing while another connection holds
+  the SQLite writer slot, both at the store layer and through the owner-facing HTTP trigger route.
 - Added worker orchestration coverage that proves only one remote-I/O maintenance job enters
   `running` at a time and that `request_logs_gc` can still complete while a quota-sync remote phase
   is waiting on `/usage`.

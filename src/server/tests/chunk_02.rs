@@ -1861,6 +1861,37 @@ async fn spawn_usage_blocking_mock_server(
     (addr, hits, release_tx)
 }
 
+async fn hold_sqlite_write_lock_for_manual_trigger_test(
+    db_path: &str,
+    hold_for: Duration,
+) -> tokio::task::JoinHandle<()> {
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(db_path)
+                .create_if_missing(true)
+                .journal_mode(SqliteJournalMode::Wal)
+                .busy_timeout(Duration::from_secs(5)),
+        )
+        .await
+        .expect("open db pool");
+    let mut immediate_conn = pool.acquire()
+        .await
+        .expect("acquire immediate connection");
+    sqlx::query("BEGIN IMMEDIATE")
+        .execute(&mut *immediate_conn)
+        .await
+        .expect("begin immediate transaction");
+    tokio::spawn(async move {
+        tokio::time::sleep(hold_for).await;
+        sqlx::query("ROLLBACK")
+            .execute(&mut *immediate_conn)
+            .await
+            .expect("rollback immediate transaction");
+    })
+}
+
 #[tokio::test]
 async fn manual_jobs_trigger_coalesces_running_job_and_returns_representative_row() {
     let db_path = temp_db_path("manual-jobs-trigger-coalesces-running");
@@ -1931,6 +1962,73 @@ async fn manual_jobs_trigger_coalesces_running_job_and_returns_representative_ro
     .expect("fetch promoted running row");
     assert_eq!(row.0, "running");
     assert_eq!(row.1, "manual");
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
+async fn manual_jobs_trigger_coalesces_running_manual_job_without_waiting_for_write_lock() {
+    let db_path = temp_db_path("manual-jobs-trigger-running-manual-fast-path");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
+        .await
+        .expect("proxy created");
+    let running_job_id = proxy
+        .scheduled_job_claim("request_logs_gc", "manual", None, 1)
+        .await
+        .expect("claim manual job")
+        .expect("manual job created");
+    let release = hold_sqlite_write_lock_for_manual_trigger_test(
+        &db_str,
+        Duration::from_secs(12),
+    )
+    .await;
+    let admin_addr = spawn_keys_admin_server(
+        proxy.clone(),
+        ForwardAuthConfig::new(None, None, None, None),
+        true,
+    )
+    .await;
+
+    let started = Instant::now();
+    let response = Client::new()
+        .post(format!("http://{admin_addr}/api/jobs/trigger"))
+        .json(&serde_json::json!({
+            "jobType": "request_logs_gc"
+        }))
+        .send()
+        .await
+        .expect("manual jobs trigger request");
+    assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "expected fast-path coalesce, elapsed={:?}",
+        started.elapsed()
+    );
+
+    let body: Value = response.json().await.expect("parse trigger response");
+    assert_eq!(
+        body.get("jobId").and_then(|value| value.as_i64()),
+        Some(running_job_id)
+    );
+    assert_eq!(
+        body.get("triggerSource").and_then(|value| value.as_str()),
+        Some("manual")
+    );
+    assert_eq!(
+        body.get("status").and_then(|value| value.as_str()),
+        Some("running")
+    );
+    assert_eq!(
+        body.get("coalesced").and_then(|value| value.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        body.get("promoted").and_then(|value| value.as_bool()),
+        Some(false)
+    );
+
+    release.await.expect("release task");
 
     let _ = std::fs::remove_file(db_path);
 }

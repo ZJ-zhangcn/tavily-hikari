@@ -1,11 +1,18 @@
 async fn hold_sqlite_write_lock_for_test(
     pool: &SqlitePool,
 ) -> tokio::task::JoinHandle<()> {
+    hold_sqlite_write_lock_for_test_for(pool, Duration::from_millis(5_200)).await
+}
+
+async fn hold_sqlite_write_lock_for_test_for(
+    pool: &SqlitePool,
+    hold_for: Duration,
+) -> tokio::task::JoinHandle<()> {
     let mut immediate_conn = begin_immediate_sqlite_connection(pool)
         .await
         .expect("begin immediate transaction");
     tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(5_200)).await;
+        tokio::time::sleep(hold_for).await;
         sqlx::query("ROLLBACK")
             .execute(&mut *immediate_conn)
             .await
@@ -506,6 +513,48 @@ async fn scheduled_job_enqueue_coalesces_running_job_and_promotes_manual_source(
     .expect("fetch running row after manual coalesce");
     assert_eq!(row.0, "running");
     assert_eq!(row.1, "manual");
+
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+}
+
+#[tokio::test]
+async fn scheduled_job_enqueue_coalesces_running_manual_job_without_waiting_for_write_lock() {
+    let db_path = temp_db_path("scheduled-job-enqueue-running-manual-fast-path");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
+        .await
+        .expect("proxy created");
+
+    let running_job_id = proxy
+        .scheduled_job_claim("request_logs_gc", "manual", None, 1)
+        .await
+        .expect("claim manual gc job")
+        .expect("manual gc job created");
+    let release = hold_sqlite_write_lock_for_test_for(
+        &proxy.key_store.pool,
+        Duration::from_secs(12),
+    )
+    .await;
+
+    let started = Instant::now();
+    let manual = proxy
+        .scheduled_job_enqueue("request_logs_gc", "manual", None, 1)
+        .await
+        .expect("coalesce running manual job without write lock");
+    assert!(
+        started.elapsed() < Duration::from_secs(2),
+        "expected fast-path coalesce, elapsed={:?}",
+        started.elapsed()
+    );
+    assert_eq!(manual.job_id, running_job_id);
+    assert!(!manual.created);
+    assert!(!manual.promoted);
+    assert_eq!(manual.status, "running");
+    assert_eq!(manual.trigger_source, "manual");
+
+    release.await.expect("release task");
 
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
