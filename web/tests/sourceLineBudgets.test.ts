@@ -39,8 +39,8 @@ const EXCEPTIONS = new Map<string, { max: number; reason: string }>([
   [
     'src/api/demo.ts',
     {
-      max: 1610,
-      reason: 'Demo API fixtures now cover active-user default filtering states for real-shell admin evidence.',
+      max: 1820,
+      reason: 'Demo API fixtures now cover user-console overview snapshots, SSE proof states, and recharge availability evidence on the shared demo shell.',
     },
   ],
   [

@@ -15,6 +15,7 @@ import HaStatusBanner from '../components/HaStatusBanner'
 import DashboardQuotaGrid from './DashboardQuotaGrid'
 import UserDashboardOverview from './UserDashboardOverview'
 import TokenListActions from './TokenListActions'
+import TokenListSummary from './TokenListSummary'
 import RechargePanel from './RechargePanel'
 import { DEFAULT_RECHARGE_UNIT_CREDITS, normalizeRechargeSelection } from './rechargeControls'
 import TokenResetDialogs from './TokenResetDialogs'
@@ -30,7 +31,6 @@ import DebugInfoSharingToggle from './DebugInfoSharingToggle'
 import { useDebugInfoSharing } from './useDebugInfoSharing'
 import { useUserConsoleAnnouncements } from './useAnnouncements'
 import { useLandingOverviewLive } from './useLandingOverviewLive'
-
 import {
   createBrowserTodayWindow,
   fetchProfile,
@@ -2081,11 +2081,14 @@ export default function UserConsole(): JSX.Element {
   const consoleNeedsLogin = consoleAvailability === 'logged_out' && !showLoggedOutState
   const consoleEmptyState = consoleUnavailable || consoleLoggedOut || consoleNeedsLogin
   const logoutVisible = profile?.userLoggedIn === true
-  const showTokenListLoading = loading && tokens.length === 0
-  const showEmptyTokens = !loading && tokens.length === 0
+  const showTokenListLoading = loading && tokens.length === 0, showEmptyTokens = !loading && tokens.length === 0
   const showLandingGuide = shouldRenderLandingGuide(route, tokens.length)
   const rechargeMinMonths = rechargeConfig?.minMonths ?? 1, rechargeMaxMonths = rechargeConfig?.maxMonths ?? 12
   const showRechargePanel = rechargeConfig?.visible ?? false
+  const [enabledTokenCount, tokenDailySuccessTotal] = useMemo(
+    () => [tokens.filter((token) => token.enabled).length, tokens.reduce((count, token) => count + token.dailySuccess, 0)],
+    [tokens],
+  )
 
   const handleRechargeSubmit = useCallback(async () => {
     if (!rechargeConfig?.enabled || rechargeBusy) return
@@ -2619,11 +2622,11 @@ export default function UserConsole(): JSX.Element {
       />
 
       {!consoleEmptyState && route.name === 'landing' && (
-        <div className="user-console-landing-stack">
+        <div className={`user-console-landing-stack${showRechargePanel ? ' has-rail' : ''}`}>
           <section
             ref={dashboardSectionRef}
             id="console-dashboard-section"
-            className="surface panel user-console-section"
+            className="surface panel user-console-section user-console-dashboard-section"
             data-console-section="dashboard"
           >
             <header className="panel-header user-console-section-header">
@@ -2640,38 +2643,53 @@ export default function UserConsole(): JSX.Element {
               requestRateLabel={formatRequestRateSummary(resolveRequestRate(dashboard, 'user'), language)}
               formatNumber={formatNumber}
             />
-            <DebugInfoSharingToggle
-              shared={dashboard?.debugInfoShared ?? false}
-              disabled={loading || debugSharing.saving || dashboard == null}
-              saving={debugSharing.saving}
-              error={debugSharing.error}
-              text={text.dashboard}
-              onChange={(shared) => void debugSharing.toggle(shared)}
-            />
+            <div className="user-console-dashboard-footer">
+              <DebugInfoSharingToggle
+                shared={dashboard?.debugInfoShared ?? false}
+                disabled={loading || debugSharing.saving || dashboard == null}
+                saving={debugSharing.saving}
+                error={debugSharing.error}
+                text={text.dashboard}
+                onChange={(shared) => void debugSharing.toggle(shared)}
+              />
+            </div>
           </section>
 
           {showRechargePanel ? (
-            <RechargePanel
-              text={text.recharge} dashboard={dashboard}
-              config={rechargeConfig} orders={rechargeOrders}
-              credits={rechargeCredits} months={rechargeMonths}
-              busy={rechargeBusy} error={rechargeError}
-              onCreditsChange={setRechargeCredits}
-              onMonthsChange={(value) => setRechargeMonths(Math.min(rechargeMaxMonths, Math.max(rechargeMinMonths, value)))}
-              onCreateOrder={() => void handleRechargeSubmit()}
-            />
+            <div className="user-console-landing-rail">
+              <RechargePanel
+                text={text.recharge} dashboard={dashboard}
+                config={rechargeConfig} orders={rechargeOrders}
+                credits={rechargeCredits} months={rechargeMonths}
+                busy={rechargeBusy} error={rechargeError}
+                onCreditsChange={setRechargeCredits}
+                onMonthsChange={(value) => setRechargeMonths(Math.min(rechargeMaxMonths, Math.max(rechargeMinMonths, value)))}
+                onCreateOrder={() => void handleRechargeSubmit()}
+              />
+            </div>
           ) : null}
 
           <section
             ref={tokensSectionRef}
             id="console-tokens-section"
-            className="surface panel user-console-section"
+            className="surface panel user-console-section user-console-tokens-section"
             data-console-section="tokens"
           >
-            <div className="panel-header user-console-section-header">
-              <div>
-                <h2>{text.tokens.title}</h2>
-                <p className="panel-description">{text.tokens.description}</p>
+            <div className="panel-header user-console-section-header user-console-section-header-dense">
+              <div className="user-console-section-heading user-console-section-heading-with-meta">
+                <div className="user-console-section-heading-copy">
+                  <h2>{text.tokens.title}</h2>
+                  <p className="panel-description">{text.tokens.description}</p>
+                </div>
+                {!showTokenListLoading && !showEmptyTokens ? (
+                  <TokenListSummary
+                    text={text.tokens}
+                    total={tokens.length}
+                    enabled={enabledTokenCount}
+                    dailySuccess={tokenDailySuccessTotal}
+                    formatNumber={formatNumber}
+                  />
+                ) : null}
               </div>
             </div>
             <div className="table-wrapper jobs-table-wrapper user-console-md-up">
@@ -2827,10 +2845,14 @@ export default function UserConsole(): JSX.Element {
               )}
             </div>
           </section>
-          {showLandingGuide && renderGuideSection({
-            sectionTitle: text.detail.guideTitle,
-            sectionDescription: text.detail.guideDescription,
-          })}
+          {showLandingGuide && (
+            <div className="user-console-guide-slot">
+              {renderGuideSection({
+                sectionTitle: text.detail.guideTitle,
+                sectionDescription: text.detail.guideDescription,
+              })}
+            </div>
+          )}
         </div>
       )}
 

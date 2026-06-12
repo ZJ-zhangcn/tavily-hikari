@@ -172,6 +172,9 @@
 - Storybook `Console Home` 宽屏概览
   - 资产：`docs/specs/l9h7v-user-console-overview-progress-cards/assets/console-home-wide.png`
   - 说明：验证 `/console` 全宽 shell、3 张汇总卡、4 张趋势卡、上限虚线与未来空占位。
+- Browser preview `Console Home` 汇总数字字形修复
+  - 资产：`docs/specs/l9h7v-user-console-overview-progress-cards/assets/console-home-summary-typography.png`
+  - 说明：验证 3 张汇总卡改为稳定的静态等宽数字排版，不再出现逐位滚动组件放大后的拆字问题。
 - Storybook `Console Home` 390px 窄屏概览
   - 资产：`docs/specs/l9h7v-user-console-overview-progress-cards/assets/console-home-mobile.png`
   - 说明：验证手机断点下的单列堆叠与趋势卡保真展示。

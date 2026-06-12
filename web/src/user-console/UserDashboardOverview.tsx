@@ -1,4 +1,3 @@
-import RollingNumber from '../components/RollingNumber'
 import type {
   UserDashboardOverview,
   UserDashboardOverviewSeriesPoint,
@@ -227,12 +226,14 @@ function SummaryCard({
   loading,
   marker,
   tone,
+  formatNumber,
 }: {
   label: string
   value: number
   loading: boolean
   marker: string
   tone: 'success' | 'failure' | 'month'
+  formatNumber: (value: number) => string
 }): JSX.Element {
   return (
     <article className={`user-console-summary-card user-console-summary-card-${tone}`}>
@@ -241,7 +242,10 @@ function SummaryCard({
         <span className="user-console-summary-card-marker">{marker}</span>
       </div>
       <div className="user-console-summary-card-value">
-        <RollingNumber value={loading ? null : value} />
+        <span>{loading ? '--' : formatNumber(value)}</span>
+      </div>
+      <div className="user-console-summary-card-foot">
+        <span>{marker}</span>
       </div>
     </article>
   )
@@ -262,6 +266,10 @@ function ProgressCard({
   marker: string
   formatNumber: (value: number) => string
 }): JSX.Element {
+  const fillRatio = !loading && card && card.limit > 0
+    ? Math.max(0, Math.min(1, card.used / card.limit))
+    : null
+
   return (
     <article className={`user-console-progress-card user-console-progress-card-${accent}${loading ? ' is-loading' : ''}`}>
       <div className="user-console-progress-card-copy">
@@ -272,6 +280,10 @@ function ProgressCard({
         <div className="user-console-progress-card-value">
           <strong>{loading || !card ? '--' : formatNumber(card.used)}</strong>
           <span>{loading || !card ? '/ --' : `/ ${formatNumber(card.limit)}`}</span>
+        </div>
+        <div className="user-console-progress-card-foot">
+          <span>{marker}</span>
+          <strong>{fillRatio == null ? '--' : `${Math.round(fillRatio * 100)}%`}</strong>
         </div>
       </div>
       <ProgressChart card={card} accentId={accent} />
@@ -314,6 +326,7 @@ export default function UserDashboardOverview({
           loading={loading}
           marker={markerText.today}
           tone="success"
+          formatNumber={formatNumber}
         />
         <SummaryCard
           label={text.dailyFailure}
@@ -321,6 +334,7 @@ export default function UserDashboardOverview({
           loading={loading}
           marker={markerText.today}
           tone="failure"
+          formatNumber={formatNumber}
         />
         <SummaryCard
           label={text.monthlySuccessUtc}
@@ -328,6 +342,7 @@ export default function UserDashboardOverview({
           loading={loading}
           marker={markerText.monthUtc}
           tone="month"
+          formatNumber={formatNumber}
         />
       </div>
 

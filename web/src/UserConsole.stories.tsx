@@ -28,7 +28,7 @@ type TokenListState = 'Single Token' | 'Multiple Tokens' | 'Empty'
 type TokenDetailPreview = 'Overview' | 'Token Revealed'
 type PushStatusPreview = 'Live' | 'Reconnecting' | 'Unsupported'
 type AnnouncementPreview = 'Active' | 'Ticker Bodyless' | 'Closed' | 'History Open' | 'None'
-type RechargePreview = 'normal' | 'test-price'
+type RechargePreview = 'normal' | 'test-price' | 'disabled' | 'hidden'
 
 type CopyRecoveryMode = 'none' | 'list-manual-bubble' | 'detail-inline'
 type GuideRevealMode = 'none' | 'landing-guide' | 'detail-guide'
@@ -170,6 +170,17 @@ const rechargeTestPriceConfigSample: RechargeConfig = {
   defaultCredits: 1,
   testPriceEnabled: true,
   currentEntitlementCredits: 1,
+}
+
+const rechargeDisabledConfigSample: RechargeConfig = {
+  ...rechargeConfigSample,
+  enabled: false,
+}
+
+const rechargeHiddenConfigSample: RechargeConfig = {
+  ...rechargeConfigSample,
+  visible: false,
+  enabled: false,
 }
 
 const rechargeOrdersSample: RechargeOrder[] = [
@@ -563,9 +574,16 @@ function installUserConsoleFetchMock(state: UserConsoleStoryState): () => void {
     }
 
     if (url.pathname === '/api/user/recharge/config') {
-      return jsonResponse(state.rechargePreview === 'test-price'
-        ? rechargeTestPriceConfigSample
-        : rechargeConfigSample)
+      switch (state.rechargePreview) {
+        case 'test-price':
+          return jsonResponse(rechargeTestPriceConfigSample)
+        case 'disabled':
+          return jsonResponse(rechargeDisabledConfigSample)
+        case 'hidden':
+          return jsonResponse(rechargeHiddenConfigSample)
+        default:
+          return jsonResponse(rechargeConfigSample)
+      }
     }
 
     if (url.pathname === '/api/user/recharge/orders') {
@@ -1141,6 +1159,7 @@ export const ConsoleHome: Story = {
       '.user-console-announcements-trigger',
       '.user-console-account-trigger',
       '.user-console-landing-stack',
+      '.user-console-landing-rail',
       '.user-console-recharge-section',
     ]) {
       if (canvasElement.querySelector(selector) == null) {
@@ -1192,6 +1211,66 @@ export const ConsoleHomeRechargeTestPrice: Story = {
   },
   globals: {
     language: 'zh',
+  },
+}
+
+export const ConsoleHomeRechargeDisabled: Story = {
+  name: 'Console Home Recharge Disabled',
+  args: {
+    consoleView: 'Console Home',
+    isAdmin: false,
+    landingFocus: 'Overview Focus',
+    rechargePreview: 'disabled',
+  },
+  globals: {
+    language: 'zh',
+  },
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 120))
+
+    const section = canvasElement.querySelector('.user-console-recharge-section')
+    if (section == null) {
+      throw new Error('Expected disabled recharge proof to keep the recharge section visible.')
+    }
+
+    const content = section.textContent ?? ''
+    if (!content.includes('不可用')) {
+      throw new Error('Expected disabled recharge proof to render the unavailable badge.')
+    }
+    if (!content.includes('当前服务尚未配置充值功能。')) {
+      throw new Error('Expected disabled recharge proof to render the disabled-state copy.')
+    }
+    if (content.includes('创建订单')) {
+      throw new Error('Expected disabled recharge proof to hide the active recharge form.')
+    }
+  },
+}
+
+export const ConsoleHomeRechargeHidden: Story = {
+  name: 'Console Home Recharge Hidden',
+  args: {
+    consoleView: 'Console Home',
+    isAdmin: false,
+    landingFocus: 'Overview Focus',
+    rechargePreview: 'hidden',
+  },
+  globals: {
+    language: 'zh',
+  },
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 120))
+
+    if (canvasElement.querySelector('.user-console-recharge-section') != null) {
+      throw new Error('Expected hidden recharge proof to remove the recharge section entirely.')
+    }
+
+    const landingStack = canvasElement.querySelector('.user-console-landing-stack')
+    if (!(landingStack instanceof HTMLElement)) {
+      throw new Error('Expected hidden recharge proof to keep the landing stack visible.')
+    }
+    if (landingStack.classList.contains('has-rail')) {
+      throw new Error('Expected hidden recharge proof to remove the landing rail layout class.')
+    }
   },
 }
 
