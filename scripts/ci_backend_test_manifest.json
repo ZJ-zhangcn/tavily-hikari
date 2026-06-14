@@ -91,6 +91,7 @@
         "tests::mcp_",
         "tests::public_",
         "tests::quota_",
+        "tests::large_",
         "tests::standalone_",
         "tests::successful_",
         "tests::redact_",
