@@ -112,12 +112,16 @@
 - Request observability tables now attach through a per-core sibling sidecar SQLite file
   (`<core-stem>-observability.db`) in the new layout. `request_logs`, `api_key_usage_buckets`,
   `dashboard_request_rollup_buckets`, and `request_log_catalog_rollups` are created in that
-  sidecar, and startup migrates legacy single-DB `request_logs` state into the sidecar before
-  dropping the old main-DB table.
+  sidecar for the steady-state layout. Smaller legacy single-DB SQLite files still migrate
+  `request_logs` into the sidecar during startup, but large legacy DBs now stay on a temporary
+  single-DB compatibility path when the inline copy would exceed the startup budget. In that mode,
+  `observability` is attached back to the core file for startup and offline `request_logs_gc_once`,
+  and no sibling sidecar file is created until a later explicit migration path is available.
 - Server/admin test helpers now mirror that sidecar layout instead of opening only the core DB
   file. SQLite schema assertions for `request_logs` and the other observability tables now probe
-  `observability.pragma_table_info(...)`, which keeps migration and admin-route coverage aligned
-  with the production attached-database layout.
+  the attached schema explicitly, which keeps migration and admin-route coverage aligned with the
+  production attached-database layout even when both `main` and `observability` temporarily expose
+  similarly named tables during legacy migration/repair paths.
 - Auth-token list/admin-token/user-token reads and admin rate-5m usage series now also flush the
   request-stats coalescer before reading, so owner-facing token activity and request-rate charts
   stay current without putting those derived writes back on the request hot path.

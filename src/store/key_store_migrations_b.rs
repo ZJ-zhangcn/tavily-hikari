@@ -1450,7 +1450,7 @@ impl KeyStore {
         column: &str,
     ) -> Result<bool, ProxyError> {
         let exists = sqlx::query_scalar::<_, i64>(
-            "SELECT 1 FROM observability.pragma_table_info('request_logs') WHERE name = ? LIMIT 1",
+            "SELECT 1 FROM pragma_table_info('request_logs', 'observability') WHERE name = ? LIMIT 1",
         )
         .bind(column)
         .fetch_optional(&self.pool)

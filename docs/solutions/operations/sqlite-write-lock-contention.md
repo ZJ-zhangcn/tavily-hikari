@@ -102,6 +102,12 @@ brief contention visible as HTTP 500s or failed background bookkeeping.
   sidecar-aware too. Unqualified schema probes or direct core-only SQLite opens can silently stop
   covering `request_logs` even though production still reads that table through the attached
   `observability` database.
+- If a legacy DB is large enough that inline sidecar migration would blow the startup budget, do
+  not force that copy in the readiness path. Keep `observability` attached to the core DB for that
+  startup/maintenance session, and let offline GC or later explicit migration handle the backlog.
+- When both `main.request_logs` and `observability.request_logs` can coexist temporarily, schema
+  probes must target the attached schema explicitly. Generic `pragma_table_info('request_logs')`
+  lookups can resolve against the wrong DB and trigger duplicate-column repairs.
 - Owner-facing log pages that rely on coalesced catalog rollups should flush or rebuild those
   rollups before serving totals/facets. Otherwise the sidecar split removes write pressure from the
   hot path, but leaves `/api/logs` vulnerable to showing empty totals while raw `request_logs` rows

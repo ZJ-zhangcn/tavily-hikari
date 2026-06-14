@@ -2510,9 +2510,13 @@ async fn standalone_request_logs_gc_initializes_meta_for_legacy_table() {
     let db_path = temp_db_path("request-log-retention-standalone-gc-legacy-meta");
     let db_str = db_path.to_string_lossy().to_string();
     let layout = SqliteDatabaseLayout::from_database_path(&db_str);
-    let pool = open_sqlite_pool(&db_str, true, false)
-        .await
-        .expect("open sqlite pool");
+    let pool = sqlx::SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(true),
+    )
+    .await
+    .expect("open legacy sqlite pool");
     sqlx::query(
         r#"
         CREATE TABLE request_logs (
@@ -2570,6 +2574,81 @@ async fn standalone_request_logs_gc_initializes_meta_for_legacy_table() {
         .await
         .expect("count remaining request logs");
     assert_eq!(remaining, 0);
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
+async fn standalone_request_logs_gc_uses_large_legacy_single_db_layout() {
+    let db_path = temp_db_path("request-log-retention-standalone-gc-large-legacy-layout");
+    let db_str = db_path.to_string_lossy().to_string();
+    let layout = SqliteDatabaseLayout::from_database_path(&db_str);
+    let pool = sqlx::SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(true),
+    )
+    .await
+    .expect("open legacy sqlite pool");
+    sqlx::query(
+        r#"
+        CREATE TABLE request_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            method TEXT,
+            path TEXT,
+            created_at INTEGER NOT NULL
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("create legacy request logs table");
+    sqlx::query("INSERT INTO request_logs (method, path, created_at) VALUES ('POST', '/mcp', 0)")
+        .execute(&pool)
+        .await
+        .expect("seed legacy request log");
+    drop(pool);
+
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&db_path)
+        .expect("open sqlite file for resize")
+        .set_len(LEGACY_REQUEST_LOGS_INLINE_SIDECAR_MIGRATION_MAX_BYTES + 4096)
+        .expect("expand sqlite file");
+
+    let report = run_request_logs_gc_once(
+        &db_str,
+        RequestLogsGcOptions {
+            batch_size: 10,
+            max_batches: 1,
+            max_runtime_secs: 30,
+            inter_batch_sleep_ms: 0,
+        },
+    )
+    .await
+    .expect("standalone request logs gc initializes meta against large legacy layout");
+    assert_eq!(report.deleted_request_logs, 1);
+
+    let pool = sqlx::SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(false),
+    )
+    .await
+    .expect("reopen legacy sqlite pool");
+    let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM request_logs")
+        .fetch_one(&pool)
+        .await
+        .expect("count remaining legacy request logs");
+    assert_eq!(remaining, 0);
+    let observability_path = layout
+        .observability_database_path
+        .as_deref()
+        .expect("sidecar path should still be derivable");
+    assert!(
+        !std::path::Path::new(observability_path).exists(),
+        "large legacy GC should not create a sidecar file"
+    );
 
     let _ = std::fs::remove_file(db_path);
 }

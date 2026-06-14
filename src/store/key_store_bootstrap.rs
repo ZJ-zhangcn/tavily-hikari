@@ -525,7 +525,10 @@ impl KeyStore {
     }
 
     async fn migrate_legacy_observability_tables_to_sidecar(&self) -> Result<(), ProxyError> {
-        if self.observability_database_path.is_none() {
+        let Some(observability_database_path) = self.observability_database_path.as_deref() else {
+            return Ok(());
+        };
+        if sqlite_paths_match(&self.database_path, observability_database_path) {
             return Ok(());
         }
 
@@ -581,6 +584,13 @@ impl KeyStore {
         Ok(())
     }
 
+    fn uses_legacy_single_db_observability_compatibility(&self) -> bool {
+        let Some(observability_database_path) = self.observability_database_path.as_deref() else {
+            return false;
+        };
+        sqlite_paths_match(&self.database_path, observability_database_path)
+    }
+
     async fn ensure_billing_ledger_indexes(&self) -> Result<(), ProxyError> {
         sqlx::query(
             r#"CREATE INDEX IF NOT EXISTS idx_billing_ledger_state_subject
@@ -605,16 +615,27 @@ impl KeyStore {
 
     pub(crate) async fn new(database_path: &str) -> Result<Self, ProxyError> {
         let layout = SqliteDatabaseLayout::from_database_path(database_path);
+        let pool = open_sqlite_pool_with_observability(
+            &layout.core_database_path,
+            layout.observability_database_path.as_deref(),
+            true,
+            false,
+        )
+        .await?;
+        let observability_database_path = attached_database_path(&pool, "observability").await?;
+        if let Some(attached_path) = observability_database_path.as_deref()
+            && sqlite_paths_match(&layout.core_database_path, attached_path)
+            && layout.observability_database_path.as_deref() != Some(attached_path)
+        {
+            eprintln!(
+                "observability startup migration deferred: using legacy single-db request_logs for {} because inline sidecar migration exceeded the startup budget",
+                layout.core_database_path
+            );
+        }
         let store = Self {
             database_path: layout.core_database_path.clone(),
-            observability_database_path: layout.observability_database_path.clone(),
-            pool: open_sqlite_pool_with_observability(
-                &layout.core_database_path,
-                layout.observability_database_path.as_deref(),
-                true,
-                false,
-            )
-            .await?,
+            observability_database_path,
+            pool,
             token_binding_cache: RwLock::new(HashMap::new()),
             account_quota_resolution_cache: RwLock::new(HashMap::new()),
             request_logs_catalog_cache: RwLock::new(HashMap::new()),
@@ -634,16 +655,27 @@ impl KeyStore {
         database_path: &str,
     ) -> Result<Self, ProxyError> {
         let layout = SqliteDatabaseLayout::from_database_path(database_path);
+        let pool = open_sqlite_pool_with_observability(
+            &layout.core_database_path,
+            layout.observability_database_path.as_deref(),
+            true,
+            false,
+        )
+        .await?;
+        let observability_database_path = attached_database_path(&pool, "observability").await?;
+        if let Some(attached_path) = observability_database_path.as_deref()
+            && sqlite_paths_match(&layout.core_database_path, attached_path)
+            && layout.observability_database_path.as_deref() != Some(attached_path)
+        {
+            eprintln!(
+                "observability startup migration deferred: running request_logs GC against the legacy single-db layout for {}",
+                layout.core_database_path
+            );
+        }
         let store = Self {
             database_path: layout.core_database_path.clone(),
-            observability_database_path: layout.observability_database_path.clone(),
-            pool: open_sqlite_pool_with_observability(
-                &layout.core_database_path,
-                layout.observability_database_path.as_deref(),
-                true,
-                false,
-            )
-            .await?,
+            observability_database_path,
+            pool,
             token_binding_cache: RwLock::new(HashMap::new()),
             account_quota_resolution_cache: RwLock::new(HashMap::new()),
             request_logs_catalog_cache: RwLock::new(HashMap::new()),
@@ -741,7 +773,6 @@ impl KeyStore {
         )
         .execute(&self.pool)
         .await?;
-
         self.upgrade_api_keys_schema().await?;
         self.ensure_api_key_quarantines_schema().await?;
         self.ensure_api_key_maintenance_records_schema().await?;
@@ -804,8 +835,8 @@ impl KeyStore {
         )
         .execute(&self.pool)
         .await?;
-
         let mut request_kind_schema_changed = false;
+        request_kind_schema_changed |= self.upgrade_request_logs_schema().await?;
 
         sqlx::query(
             r#"CREATE INDEX IF NOT EXISTS observability.idx_request_logs_auth_token_time
@@ -864,7 +895,6 @@ impl KeyStore {
         )
         .execute(&self.pool)
         .await?;
-
         let api_key_usage_buckets_schema_changed = self
             .ensure_api_key_usage_bucket_request_value_columns()
             .await?;
@@ -961,7 +991,6 @@ impl KeyStore {
         .await?;
 
         self.ensure_announcements_schema().await?;
-
         forward_proxy::ensure_forward_proxy_schema(&self.pool).await?;
 
         // User identity model (separated from admin auth):
@@ -1992,7 +2021,8 @@ impl KeyStore {
                 status TEXT NOT NULL,
                 attempt INTEGER NOT NULL DEFAULT 1,
                 message TEXT,
-                started_at INTEGER NOT NULL,
+                queued_at INTEGER NOT NULL,
+                started_at INTEGER,
                 finished_at INTEGER,
                 FOREIGN KEY (key_id) REFERENCES api_keys(id)
             )
@@ -2001,37 +2031,30 @@ impl KeyStore {
         .execute(&self.pool)
         .await?;
 
-        if !self
-            .table_column_exists("scheduled_jobs", "trigger_source")
-            .await?
-        {
-            sqlx::query(
-                "ALTER TABLE scheduled_jobs ADD COLUMN trigger_source TEXT NOT NULL DEFAULT 'scheduler'",
-            )
-            .execute(&self.pool)
-            .await?;
-        }
-
         self.ensure_scheduled_jobs_queue_schema().await?;
-
         self.ensure_meta_schema().await?;
-        request_kind_schema_changed |= self.upgrade_request_logs_schema().await?;
         self.ensure_request_logs_read_indexes().await?;
         self.migrate_log_effect_buckets().await?;
 
-        if request_kind_schema_changed {
+        let uses_legacy_single_db_observability_compatibility =
+            self.uses_legacy_single_db_observability_compatibility();
+
+        if request_kind_schema_changed && !uses_legacy_single_db_observability_compatibility {
             self.reset_request_kind_canonical_migration_v1_markers()
                 .await?;
         }
 
-        self.ensure_request_kind_canonical_migration_v1().await?;
+        if !uses_legacy_single_db_observability_compatibility {
+            self.ensure_request_kind_canonical_migration_v1().await?;
+        }
         self.ensure_request_log_catalog_rollup_schema().await?;
         self.ensure_ha_schema().await?;
 
-        if self
-            .get_meta_i64(META_KEY_API_KEY_CREATED_AT_BACKFILL_V1)
-            .await?
-            .is_none()
+        if !uses_legacy_single_db_observability_compatibility
+            && self
+                .get_meta_i64(META_KEY_API_KEY_CREATED_AT_BACKFILL_V1)
+                .await?
+                .is_none()
         {
             self.backfill_api_key_created_at().await?;
             self.set_meta_i64(
@@ -2043,65 +2066,72 @@ impl KeyStore {
 
         // Backfill API key usage buckets exactly once. This enables safe request_logs retention
         // without changing the meaning of cumulative statistics.
-        let api_key_usage_buckets_v1_done = self
-            .get_meta_i64(META_KEY_API_KEY_USAGE_BUCKETS_V1_DONE)
-            .await?
-            .is_some();
-        if !api_key_usage_buckets_v1_done {
-            self.migrate_api_key_usage_buckets_v1().await?;
-            self.set_meta_i64(META_KEY_API_KEY_USAGE_BUCKETS_V1_DONE, 1)
-                .await?;
-            self.set_meta_i64(META_KEY_API_KEY_USAGE_BUCKETS_REQUEST_VALUE_V2_DONE, 1)
-                .await?;
-        } else if api_key_usage_buckets_schema_changed
-            || self
-                .get_meta_i64(META_KEY_API_KEY_USAGE_BUCKETS_REQUEST_VALUE_V2_DONE)
+        if !uses_legacy_single_db_observability_compatibility {
+            let api_key_usage_buckets_v1_done = self
+                .get_meta_i64(META_KEY_API_KEY_USAGE_BUCKETS_V1_DONE)
                 .await?
-                .is_none()
-        {
-            self.backfill_api_key_usage_bucket_request_value_counts_v2()
-                .await?;
-            self.set_meta_i64(META_KEY_API_KEY_USAGE_BUCKETS_REQUEST_VALUE_V2_DONE, 1)
-                .await?;
+                .is_some();
+            if !api_key_usage_buckets_v1_done {
+                self.migrate_api_key_usage_buckets_v1().await?;
+                self.set_meta_i64(META_KEY_API_KEY_USAGE_BUCKETS_V1_DONE, 1)
+                    .await?;
+                self.set_meta_i64(META_KEY_API_KEY_USAGE_BUCKETS_REQUEST_VALUE_V2_DONE, 1)
+                    .await?;
+            } else if api_key_usage_buckets_schema_changed
+                || self
+                    .get_meta_i64(META_KEY_API_KEY_USAGE_BUCKETS_REQUEST_VALUE_V2_DONE)
+                    .await?
+                    .is_none()
+            {
+                self.backfill_api_key_usage_bucket_request_value_counts_v2()
+                    .await?;
+                self.set_meta_i64(META_KEY_API_KEY_USAGE_BUCKETS_REQUEST_VALUE_V2_DONE, 1)
+                    .await?;
+            }
         }
 
-        if dashboard_request_rollup_buckets_schema_changed {
+        if !uses_legacy_single_db_observability_compatibility
+            && dashboard_request_rollup_buckets_schema_changed
+        {
             self.set_meta_i64(META_KEY_DASHBOARD_REQUEST_ROLLUP_BUCKETS_V1_DONE, 0)
                 .await?;
         }
 
-        if self
-            .get_meta_i64(META_KEY_DASHBOARD_REQUEST_ROLLUP_BUCKETS_V1_DONE)
-            .await?
-            != Some(1)
+        if !uses_legacy_single_db_observability_compatibility
+            && self
+                .get_meta_i64(META_KEY_DASHBOARD_REQUEST_ROLLUP_BUCKETS_V1_DONE)
+                .await?
+                != Some(1)
         {
             self.rebuild_dashboard_request_rollup_buckets().await?;
             self.set_meta_i64(META_KEY_DASHBOARD_REQUEST_ROLLUP_BUCKETS_V1_DONE, 1)
                 .await?;
         }
 
-        let request_log_catalog_rollup_retention_days = self
-            .get_system_settings()
-            .await?
-            .request_log_retention
-            .max_log_retention_days;
-        let request_log_catalog_rollup_needs_rebuild = self
-            .get_meta_i64(META_KEY_REQUEST_LOG_CATALOG_ROLLUP_V1_DONE)
-            .await?
-            != Some(1)
-            || self
-                .get_meta_i64(META_KEY_REQUEST_LOG_CATALOG_ROLLUP_V1_RETENTION_DAYS)
+        if !uses_legacy_single_db_observability_compatibility {
+            let request_log_catalog_rollup_retention_days = self
+                .get_system_settings()
                 .await?
-                != Some(request_log_catalog_rollup_retention_days);
-        if request_log_catalog_rollup_needs_rebuild {
-            self.rebuild_request_log_catalog_rollups().await?;
-            self.set_meta_i64(META_KEY_REQUEST_LOG_CATALOG_ROLLUP_V1_DONE, 1)
+                .request_log_retention
+                .max_log_retention_days;
+            let request_log_catalog_rollup_needs_rebuild = self
+                .get_meta_i64(META_KEY_REQUEST_LOG_CATALOG_ROLLUP_V1_DONE)
+                .await?
+                != Some(1)
+                || self
+                    .get_meta_i64(META_KEY_REQUEST_LOG_CATALOG_ROLLUP_V1_RETENTION_DAYS)
+                    .await?
+                    != Some(request_log_catalog_rollup_retention_days);
+            if request_log_catalog_rollup_needs_rebuild {
+                self.rebuild_request_log_catalog_rollups().await?;
+                self.set_meta_i64(META_KEY_REQUEST_LOG_CATALOG_ROLLUP_V1_DONE, 1)
+                    .await?;
+                self.set_meta_i64(
+                    META_KEY_REQUEST_LOG_CATALOG_ROLLUP_V1_RETENTION_DAYS,
+                    request_log_catalog_rollup_retention_days,
+                )
                 .await?;
-            self.set_meta_i64(
-                META_KEY_REQUEST_LOG_CATALOG_ROLLUP_V1_RETENTION_DAYS,
-                request_log_catalog_rollup_retention_days,
-            )
-            .await?;
+            }
         }
 
         // After ensuring schemas, run the data consistency migration at most once.
@@ -2109,10 +2139,11 @@ impl KeyStore {
         // migration reconciles those counters using auth_token_logs, then marks itself
         // as completed in the meta table so that future startups do not depend on
         // potentially truncated logs.
-        if self
-            .get_meta_i64(META_KEY_DATA_CONSISTENCY_DONE)
-            .await?
-            .is_none()
+        if !uses_legacy_single_db_observability_compatibility
+            && self
+                .get_meta_i64(META_KEY_DATA_CONSISTENCY_DONE)
+                .await?
+                .is_none()
         {
             self.migrate_data_consistency().await?;
             self.set_meta_i64(META_KEY_DATA_CONSISTENCY_DONE, 1).await?;
@@ -2122,10 +2153,11 @@ impl KeyStore {
         // that only exists in auth_token_logs. This ensures that downstream usage
         // rollups into token_usage_stats (which reference auth_tokens via FOREIGN KEY)
         // will not fail with constraint errors for legacy data.
-        if self
-            .get_meta_i64(META_KEY_HEAL_ORPHAN_TOKENS_V1)
-            .await?
-            .is_none()
+        if !uses_legacy_single_db_observability_compatibility
+            && self
+                .get_meta_i64(META_KEY_HEAL_ORPHAN_TOKENS_V1)
+                .await?
+                .is_none()
         {
             self.heal_orphan_auth_tokens_from_logs().await?;
         }
@@ -2134,103 +2166,105 @@ impl KeyStore {
         // Historical request counts cannot be converted safely, but clearing them would silently
         // grant fresh quota to every active subject on upgrade. Preserve existing windows and let
         // them age out naturally; new charges written after the cutover are already credits-based.
-        if self
-            .get_meta_i64(META_KEY_BUSINESS_QUOTA_CREDITS_CUTOVER_V1)
-            .await?
-            .is_none()
-        {
-            self.set_meta_i64(
-                META_KEY_BUSINESS_QUOTA_CREDITS_CUTOVER_V1,
-                Utc::now().timestamp(),
-            )
-            .await?;
-        }
-
-        if self
-            .get_meta_i64(META_KEY_ACCOUNT_QUOTA_BACKFILL_V1)
-            .await?
-            .is_none()
-        {
-            self.backfill_account_quota_v1().await?;
-            self.set_meta_i64(META_KEY_ACCOUNT_QUOTA_BACKFILL_V1, 1)
-                .await?;
-        }
-        if self
-            .get_meta_i64(META_KEY_ACCOUNT_QUOTA_INHERITS_DEFAULTS_BACKFILL_V1)
-            .await?
-            .is_none()
-        {
-            self.backfill_account_quota_inherits_defaults_v1().await?;
-            self.set_meta_i64(
-                META_KEY_ACCOUNT_QUOTA_INHERITS_DEFAULTS_BACKFILL_V1,
-                Utc::now().timestamp(),
-            )
-            .await?;
-        }
-        if self
-            .get_meta_i64(META_KEY_ACCOUNT_QUOTA_ZERO_BASE_CUTOVER_V1)
-            .await?
-            .is_none()
-        {
-            self.set_meta_i64(
-                META_KEY_ACCOUNT_QUOTA_ZERO_BASE_CUTOVER_V1,
-                Utc::now().timestamp(),
-            )
-            .await?;
-        }
-        if self
-            .get_meta_i64(META_KEY_ACCOUNT_USAGE_ROLLUP_V1_DONE)
-            .await?
-            .unwrap_or_default()
-            <= 0
-        {
-            self.rebuild_account_usage_rollup_buckets_v1().await?;
-        }
-        self.backfill_account_limit_snapshot_history_v1().await?;
-        if self
-            .get_meta_i64(META_KEY_FORCE_USER_RELOGIN_V1)
-            .await?
-            .is_none()
-        {
-            self.force_user_relogin_v1().await?;
-            self.set_meta_i64(META_KEY_FORCE_USER_RELOGIN_V1, Utc::now().timestamp())
-                .await?;
-        }
-        self.seed_linuxdo_system_tags().await?;
-        if self
-            .get_meta_i64(META_KEY_LINUXDO_SYSTEM_TAG_DEFAULTS_V1)
-            .await?
-            .is_none()
-        {
-            self.backfill_linuxdo_system_tag_default_deltas_v1().await?;
-            self.set_meta_i64(
-                META_KEY_LINUXDO_SYSTEM_TAG_DEFAULTS_V1,
-                Utc::now().timestamp(),
-            )
-            .await?;
-        }
-        self.sync_linuxdo_system_tag_default_deltas_with_env()
-            .await?;
-        self.backfill_linuxdo_user_tag_bindings().await?;
-        self.sync_account_quota_limits_with_defaults().await?;
-        if self
-            .get_meta_i64(META_KEY_BUSINESS_QUOTA_MONTHLY_REBASE_V1)
-            .await?
-            != Some(start_of_month(Utc::now()).timestamp())
-        {
-            match rebase_current_month_business_quota_with_pool(
-                &self.pool,
-                Utc::now(),
-                META_KEY_BUSINESS_QUOTA_MONTHLY_REBASE_V1,
-                true,
-            )
-            .await
+        if !uses_legacy_single_db_observability_compatibility {
+            if self
+                .get_meta_i64(META_KEY_BUSINESS_QUOTA_CREDITS_CUTOVER_V1)
+                .await?
+                .is_none()
             {
-                Ok(_) => {}
-                Err(err) if is_invalid_current_month_billing_subject_error(&err) => {
-                    eprintln!("startup monthly quota rebase skipped: {err}");
+                self.set_meta_i64(
+                    META_KEY_BUSINESS_QUOTA_CREDITS_CUTOVER_V1,
+                    Utc::now().timestamp(),
+                )
+                .await?;
+            }
+
+            if self
+                .get_meta_i64(META_KEY_ACCOUNT_QUOTA_BACKFILL_V1)
+                .await?
+                .is_none()
+            {
+                self.backfill_account_quota_v1().await?;
+                self.set_meta_i64(META_KEY_ACCOUNT_QUOTA_BACKFILL_V1, 1)
+                    .await?;
+            }
+            if self
+                .get_meta_i64(META_KEY_ACCOUNT_QUOTA_INHERITS_DEFAULTS_BACKFILL_V1)
+                .await?
+                .is_none()
+            {
+                self.backfill_account_quota_inherits_defaults_v1().await?;
+                self.set_meta_i64(
+                    META_KEY_ACCOUNT_QUOTA_INHERITS_DEFAULTS_BACKFILL_V1,
+                    Utc::now().timestamp(),
+                )
+                .await?;
+            }
+            if self
+                .get_meta_i64(META_KEY_ACCOUNT_QUOTA_ZERO_BASE_CUTOVER_V1)
+                .await?
+                .is_none()
+            {
+                self.set_meta_i64(
+                    META_KEY_ACCOUNT_QUOTA_ZERO_BASE_CUTOVER_V1,
+                    Utc::now().timestamp(),
+                )
+                .await?;
+            }
+            if self
+                .get_meta_i64(META_KEY_ACCOUNT_USAGE_ROLLUP_V1_DONE)
+                .await?
+                .unwrap_or_default()
+                <= 0
+            {
+                self.rebuild_account_usage_rollup_buckets_v1().await?;
+            }
+            self.backfill_account_limit_snapshot_history_v1().await?;
+            if self
+                .get_meta_i64(META_KEY_FORCE_USER_RELOGIN_V1)
+                .await?
+                .is_none()
+            {
+                self.force_user_relogin_v1().await?;
+                self.set_meta_i64(META_KEY_FORCE_USER_RELOGIN_V1, Utc::now().timestamp())
+                    .await?;
+            }
+            self.seed_linuxdo_system_tags().await?;
+            if self
+                .get_meta_i64(META_KEY_LINUXDO_SYSTEM_TAG_DEFAULTS_V1)
+                .await?
+                .is_none()
+            {
+                self.backfill_linuxdo_system_tag_default_deltas_v1().await?;
+                self.set_meta_i64(
+                    META_KEY_LINUXDO_SYSTEM_TAG_DEFAULTS_V1,
+                    Utc::now().timestamp(),
+                )
+                .await?;
+            }
+            self.sync_linuxdo_system_tag_default_deltas_with_env()
+                .await?;
+            self.backfill_linuxdo_user_tag_bindings().await?;
+            self.sync_account_quota_limits_with_defaults().await?;
+            if self
+                .get_meta_i64(META_KEY_BUSINESS_QUOTA_MONTHLY_REBASE_V1)
+                .await?
+                != Some(start_of_month(Utc::now()).timestamp())
+            {
+                match rebase_current_month_business_quota_with_pool(
+                    &self.pool,
+                    Utc::now(),
+                    META_KEY_BUSINESS_QUOTA_MONTHLY_REBASE_V1,
+                    true,
+                )
+                .await
+                {
+                    Ok(_) => {}
+                    Err(err) if is_invalid_current_month_billing_subject_error(&err) => {
+                        eprintln!("startup monthly quota rebase skipped: {err}");
+                    }
+                    Err(err) => return Err(err),
                 }
-                Err(err) => return Err(err),
             }
         }
 

@@ -69,15 +69,29 @@ pub async fn connect_sqlite_pool(
         options = options.journal_mode(SqliteJournalMode::Wal);
     }
 
-    let observability_database_path =
-        attachable_observability_path(&layout, create_if_missing, read_only);
+    let core_database_path = layout.core_database_path.clone();
+    let observability_database_path = layout.observability_database_path.clone();
     let mut pool_options = SqlitePoolOptions::new()
         .min_connections(1)
         .max_connections(max_connections);
     if let Some(observability_database_path) = observability_database_path {
         pool_options = pool_options.after_connect(move |conn, _meta| {
+            let core_database_path = core_database_path.clone();
             let observability_database_path = observability_database_path.clone();
-            Box::pin(async move { attach_observability(conn, &observability_database_path).await })
+            Box::pin(async move {
+                if let Some(target_path) = select_observability_attach_path(
+                    conn,
+                    &core_database_path,
+                    &observability_database_path,
+                    create_if_missing,
+                    read_only,
+                )
+                .await?
+                {
+                    attach_observability(conn, &target_path).await?;
+                }
+                Ok(())
+            })
         });
     }
 
@@ -95,10 +109,17 @@ pub async fn connect_immediate_sqlite_connection(
         .journal_mode(SqliteJournalMode::Wal)
         .busy_timeout(Duration::from_secs(5));
     let mut connection = SqliteConnection::connect_with(&options).await?;
-    if let Some(observability_database_path) =
-        attachable_observability_path(&layout, create_if_missing, false)
+    if let Some(observability_database_path) = layout.observability_database_path.as_deref()
+        && let Some(target_path) = select_observability_attach_path(
+            &mut connection,
+            &layout.core_database_path,
+            observability_database_path,
+            create_if_missing,
+            false,
+        )
+        .await?
     {
-        attach_observability(&mut connection, &observability_database_path).await?;
+        attach_observability(&mut connection, &target_path).await?;
     }
     sqlx::query("BEGIN IMMEDIATE")
         .execute(&mut connection)
@@ -106,17 +127,39 @@ pub async fn connect_immediate_sqlite_connection(
     Ok(connection)
 }
 
-fn attachable_observability_path(
-    layout: &SqliteDatabaseLayout,
+const LEGACY_REQUEST_LOGS_INLINE_SIDECAR_MIGRATION_MAX_BYTES: u64 = 32 * 1024 * 1024;
+
+async fn select_observability_attach_path(
+    connection: &mut SqliteConnection,
+    core_database_path: &str,
+    observability_database_path: &str,
     create_if_missing: bool,
     read_only: bool,
-) -> Option<String> {
-    let path = layout.observability_database_path.as_deref()?;
-    if !read_only || create_if_missing || Path::new(path).exists() {
-        Some(path.to_string())
-    } else {
-        None
+) -> Result<Option<String>, sqlx::Error> {
+    let sidecar_exists = Path::new(observability_database_path).exists();
+    let legacy_request_logs_exists = sqlx::query_scalar::<_, i64>(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'request_logs' LIMIT 1",
+    )
+    .fetch_optional(&mut *connection)
+    .await?
+    .is_some();
+    if legacy_request_logs_exists
+        && (read_only || !legacy_request_logs_inline_sidecar_migration_allowed(core_database_path))
+    {
+        return Ok(Some(core_database_path.to_string()));
     }
+
+    if !read_only || create_if_missing || sidecar_exists {
+        return Ok(Some(observability_database_path.to_string()));
+    }
+
+    Ok(None)
+}
+
+fn legacy_request_logs_inline_sidecar_migration_allowed(database_path: &str) -> bool {
+    std::fs::metadata(database_path)
+        .map(|metadata| metadata.len() <= LEGACY_REQUEST_LOGS_INLINE_SIDECAR_MIGRATION_MAX_BYTES)
+        .unwrap_or(false)
 }
 
 async fn attach_observability(

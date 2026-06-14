@@ -76,3 +76,12 @@
 - Admin request-log page reads now self-heal missing catalog rollups before serving totals/facets,
   and auth-token log queries now qualify `auth_token_logs.*` columns explicitly after the
   `billing_ledger` join split removed synchronous billing truth from the legacy history table.
+
+## 2026-06-15
+
+- Added a large-legacy compatibility path for observability sidecar startup: when inline
+  `request_logs` migration would exceed the startup budget, `observability` stays attached to the
+  core DB so startup and offline GC can proceed without a heavy copy.
+- Tightened attached-schema self-heal helpers to probe `observability` explicitly, preventing
+  duplicate-column migrations when both `main.request_logs` and `observability.request_logs` are
+  present during sidecar rollout or repair.

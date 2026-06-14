@@ -2515,7 +2515,7 @@ impl KeyStore {
     ) -> Result<bool, ProxyError> {
         let query = if is_observability_table(table) {
             format!(
-                "SELECT 1 FROM observability.pragma_table_info('{table}') WHERE name = ? LIMIT 1"
+                "SELECT 1 FROM pragma_table_info('{table}', 'observability') WHERE name = ? LIMIT 1"
             )
         } else {
             format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name = ? LIMIT 1")
@@ -2534,7 +2534,7 @@ impl KeyStore {
     ) -> Result<bool, ProxyError> {
         let query = if is_observability_table(table) {
             format!(
-                r#"SELECT "notnull" FROM observability.pragma_table_info('{table}') WHERE name = ? LIMIT 1"#
+                r#"SELECT "notnull" FROM pragma_table_info('{table}', 'observability') WHERE name = ? LIMIT 1"#
             )
         } else {
             format!(r#"SELECT "notnull" FROM pragma_table_info('{table}') WHERE name = ? LIMIT 1"#)

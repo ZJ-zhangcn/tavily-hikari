@@ -132,6 +132,13 @@ source when a usable persisted runtime already exists.
   rebuildable observability tables are allowed to be eventually consistent and are not required to
   participate in HA outbox trigger replication; rebuild/export paths remain the recovery mechanism
   for those derived views.
+- Startup must not force a large legacy single-DB `request_logs` table through an inline sidecar
+  migration when that copy would exceed the startup budget. In that case, observability must remain
+  attached to the core DB for startup and offline `request_logs_gc_once`, while smaller legacy DBs
+  still migrate into the sibling sidecar automatically.
+- Sidecar-aware schema self-heal paths must probe the attached `observability` schema explicitly.
+  When both `main.request_logs` and `observability.request_logs` exist during migration or repair,
+  column-existence checks must not accidentally read the wrong schema and issue duplicate `ALTER TABLE` statements.
 
 ## Acceptance
 
@@ -171,6 +178,11 @@ source when a usable persisted runtime already exists.
 - `request_logs_gc_once --run-until-complete --json` removes old request logs and catalog rollups
   from a production-derived validation sample and reports `completed=true` when no old rows remain,
   while keeping WAL growth and CPU time bounded.
+- A large legacy SQLite DB whose `request_logs` inline sidecar migration would exceed the startup
+  budget still starts successfully, keeps `observability.request_logs` attached to the core file,
+  and does not create a sibling sidecar file during that startup path.
+- `request_logs_gc_once` can run against that same large legacy single-DB layout without forcing a
+  startup-time sidecar split first.
 - Existing billing tests continue to prove locked billing subject stability, pending billing
   replay, and account/token quota attribution.
 - Existing MCP/API routing behavior remains unchanged, including research result GET key pinning.

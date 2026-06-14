@@ -732,7 +732,7 @@ impl KeyStore {
 
     async fn table_columns(&self, table: &str) -> Result<Vec<String>, ProxyError> {
         let sql = if is_observability_table(table) {
-            format!("SELECT name FROM observability.pragma_table_info('{}')", table)
+            format!("SELECT name FROM pragma_table_info('{}', 'observability')", table)
         } else {
             format!("SELECT name FROM pragma_table_info('{}')", table)
         };

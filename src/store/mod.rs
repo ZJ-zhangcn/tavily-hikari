@@ -1,7 +1,9 @@
 use crate::analysis::*;
 use crate::models::*;
 use crate::*;
+use sqlx::Connection;
 use sqlx::Row;
+use sqlx::SqliteConnection;
 
 pub(crate) fn is_transient_sqlite_write_error(err: &ProxyError) -> bool {
     let ProxyError::Database(db_err) = err else {
@@ -230,19 +232,22 @@ pub(crate) async fn open_sqlite_pool_with_observability(
         options = options.journal_mode(SqliteJournalMode::Wal);
     }
 
-    let observability_database_path = observability_database_path.map(str::to_string);
+    let attach_plan = resolve_observability_attach_plan(
+        database_path,
+        observability_database_path,
+        create_if_missing,
+        read_only,
+        SQLITE_POOL_MAX_CONNECTIONS_DEFAULT,
+    )
+    .await?;
     let mut pool_options = SqlitePoolOptions::new()
         .min_connections(1)
-        .max_connections(SQLITE_POOL_MAX_CONNECTIONS_DEFAULT);
-    if let Some(observability_database_path) = observability_database_path {
+        .max_connections(attach_plan.max_connections);
+    if let Some(observability_database_path) = attach_plan.target_path {
         pool_options = pool_options.after_connect(move |conn, _meta| {
             let observability_database_path = observability_database_path.clone();
             Box::pin(async move {
-                let attach_sql = format!(
-                    "ATTACH DATABASE '{}' AS observability",
-                    observability_database_path.replace('\'', "''")
-                );
-                conn.execute(attach_sql.as_str()).await?;
+                attach_observability_database(conn, &observability_database_path).await?;
                 Ok(())
             })
         });
@@ -252,6 +257,159 @@ pub(crate) async fn open_sqlite_pool_with_observability(
         .connect_with(options)
         .await
         .map_err(ProxyError::Database)
+}
+
+pub(crate) const LEGACY_REQUEST_LOGS_INLINE_SIDECAR_MIGRATION_MAX_BYTES: u64 = 32 * 1024 * 1024;
+
+struct ObservabilityAttachPlan {
+    target_path: Option<String>,
+    max_connections: u32,
+}
+
+async fn resolve_observability_attach_plan(
+    core_database_path: &str,
+    observability_database_path: Option<&str>,
+    create_if_missing: bool,
+    read_only: bool,
+    default_max_connections: u32,
+) -> Result<ObservabilityAttachPlan, ProxyError> {
+    let Some(observability_database_path) = observability_database_path else {
+        return Ok(ObservabilityAttachPlan {
+            target_path: None,
+            max_connections: default_max_connections,
+        });
+    };
+
+    let mut options = SqliteConnectOptions::new()
+        .filename(core_database_path)
+        .create_if_missing(create_if_missing)
+        .read_only(read_only)
+        .busy_timeout(Duration::from_secs(5));
+    if !read_only {
+        options = options.journal_mode(SqliteJournalMode::Wal);
+    }
+
+    let mut probe = SqliteConnection::connect_with(&options)
+        .await
+        .map_err(ProxyError::Database)?;
+    let target_path = select_observability_attach_path(
+        &mut probe,
+        core_database_path,
+        observability_database_path,
+        create_if_missing,
+        read_only,
+    )
+    .await
+    .map_err(ProxyError::Database)?;
+    let max_connections = if uses_legacy_single_db_observability_compatibility(
+        core_database_path,
+        observability_database_path,
+        target_path.as_deref(),
+    ) {
+        1
+    } else {
+        default_max_connections
+    };
+
+    Ok(ObservabilityAttachPlan {
+        target_path,
+        max_connections,
+    })
+}
+
+async fn select_observability_attach_path(
+    conn: &mut sqlx::SqliteConnection,
+    core_database_path: &str,
+    observability_database_path: &str,
+    create_if_missing: bool,
+    read_only: bool,
+) -> Result<Option<String>, sqlx::Error> {
+    let sidecar_exists = std::path::Path::new(observability_database_path).exists();
+    let legacy_request_logs_exists = connection_main_table_exists(conn, "request_logs").await?;
+    if legacy_request_logs_exists
+        && (read_only || !legacy_request_logs_inline_sidecar_migration_allowed(core_database_path))
+    {
+        return Ok(Some(core_database_path.to_string()));
+    }
+
+    if !read_only || create_if_missing || sidecar_exists {
+        return Ok(Some(observability_database_path.to_string()));
+    }
+
+    Ok(None)
+}
+
+async fn connection_main_table_exists(
+    conn: &mut sqlx::SqliteConnection,
+    table: &str,
+) -> Result<bool, sqlx::Error> {
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1",
+    )
+    .bind(table)
+    .fetch_optional(&mut *conn)
+    .await?;
+    Ok(exists.is_some())
+}
+
+fn legacy_request_logs_inline_sidecar_migration_allowed(database_path: &str) -> bool {
+    match std::fs::metadata(database_path) {
+        Ok(metadata) => metadata.len() <= LEGACY_REQUEST_LOGS_INLINE_SIDECAR_MIGRATION_MAX_BYTES,
+        Err(err) => {
+            eprintln!(
+                "observability startup migration: failed to read core database size for {database_path}: {err}"
+            );
+            false
+        }
+    }
+}
+
+async fn attach_observability_database(
+    conn: &mut sqlx::SqliteConnection,
+    database_path: &str,
+) -> Result<(), sqlx::Error> {
+    let attach_sql = format!(
+        "ATTACH DATABASE '{}' AS observability",
+        database_path.replace('\'', "''")
+    );
+    conn.execute(attach_sql.as_str()).await?;
+    Ok(())
+}
+
+pub(crate) async fn attached_database_path(
+    pool: &SqlitePool,
+    name: &str,
+) -> Result<Option<String>, ProxyError> {
+    let path = sqlx::query_scalar::<_, String>(
+        "SELECT file FROM pragma_database_list WHERE name = ? LIMIT 1",
+    )
+    .bind(name)
+    .fetch_optional(pool)
+    .await?;
+    Ok(path.filter(|value| !value.is_empty()))
+}
+
+pub(crate) fn sqlite_paths_match(lhs: &str, rhs: &str) -> bool {
+    let lhs_path = std::path::Path::new(lhs);
+    let rhs_path = std::path::Path::new(rhs);
+    match (lhs_path.canonicalize(), rhs_path.canonicalize()) {
+        (Ok(lhs), Ok(rhs)) => lhs == rhs,
+        _ => lhs == rhs,
+    }
+}
+
+fn uses_legacy_single_db_observability_compatibility(
+    core_database_path: &str,
+    configured_observability_database_path: &str,
+    attached_database_path: Option<&str>,
+) -> bool {
+    attached_database_path.is_some_and(|attached_database_path| {
+        sqlite_paths_match(core_database_path, attached_database_path)
+            && !sqlite_paths_match(
+                configured_observability_database_path,
+                attached_database_path,
+            )
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
