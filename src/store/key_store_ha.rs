@@ -152,59 +152,6 @@ impl KeyStore {
         Ok(())
     }
 
-    pub(crate) async fn persist_ha_source_settings(
-        &self,
-        source_settings: Option<&HaSourceSettingsView>,
-    ) -> Result<(), ProxyError> {
-        let (source_kind, direct_origin_scheme, direct_origin_host, direct_origin_port, origin_group_id) =
-            match source_settings {
-                Some(settings) => match settings.source_kind {
-                    HaSourceKind::Direct => (
-                        Some(settings.source_kind.as_str().to_string()),
-                        settings
-                            .direct_origin_scheme
-                            .map(|scheme| format!("{scheme:?}").to_ascii_lowercase()),
-                        settings.direct_origin_host.clone(),
-                        settings.direct_origin_port.map(i64::from),
-                        None,
-                    ),
-                    HaSourceKind::OriginGroup => (
-                        Some(settings.source_kind.as_str().to_string()),
-                        None,
-                        None,
-                        None,
-                        settings.origin_group_id.clone(),
-                    ),
-                },
-                None => (None, None, None, None, None),
-            };
-        sqlx::query(
-            r#"
-            INSERT INTO ha_node_state (
-                id, ha_source_kind, ha_direct_origin_scheme, ha_direct_origin_host,
-                ha_direct_origin_port, ha_origin_group_id, updated_at
-            )
-            VALUES ('local', ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                ha_source_kind = excluded.ha_source_kind,
-                ha_direct_origin_scheme = excluded.ha_direct_origin_scheme,
-                ha_direct_origin_host = excluded.ha_direct_origin_host,
-                ha_direct_origin_port = excluded.ha_direct_origin_port,
-                ha_origin_group_id = excluded.ha_origin_group_id,
-                updated_at = excluded.updated_at
-            "#,
-        )
-        .bind(source_kind)
-        .bind(direct_origin_scheme)
-        .bind(direct_origin_host)
-        .bind(direct_origin_port)
-        .bind(origin_group_id)
-        .bind(Utc::now().timestamp())
-        .execute(&self.pool)
-        .await?;
-        Ok(())
-    }
-
     pub(crate) async fn get_ha_source_settings(
         &self,
     ) -> Result<Option<HaSourceSettings>, ProxyError> {

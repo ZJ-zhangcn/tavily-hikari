@@ -1411,7 +1411,7 @@ async fn ha_source_endpoint_persists_origin_group_settings() {
     });
     let addr = spawn_ha_admin_server(proxy, ha, true).await;
 
-    let response: Value = Client::new()
+    let response = Client::new()
         .put(format!("http://{addr}/api/admin/ha/source"))
         .json(&serde_json::json!({
             "sourceKind": "origin_group",
@@ -1420,10 +1420,14 @@ async fn ha_source_endpoint_persists_origin_group_settings() {
         }))
         .send()
         .await
-        .expect("source settings response")
-        .json()
-        .await
-        .expect("source settings body");
+        .expect("source settings response");
+    let status = response.status();
+    let body = response.text().await.expect("source settings body text");
+    assert!(
+        status.is_success(),
+        "source settings request should succeed, got {status}: {body}"
+    );
+    let response: Value = serde_json::from_str(&body).expect("source settings body");
 
     assert_eq!(response["haSourceOverride"]["sourceKind"], "origin_group");
     assert_eq!(response["haSourceOverride"]["originGroupId"], "eo-group-api-test");

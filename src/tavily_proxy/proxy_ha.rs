@@ -16,15 +16,6 @@ impl TavilyProxy {
         self.key_store.get_ha_source_settings().await
     }
 
-    pub async fn persist_ha_source_settings(
-        &self,
-        source_settings: Option<&HaSourceSettingsView>,
-    ) -> Result<(), ProxyError> {
-        self.key_store
-            .persist_ha_source_settings(source_settings)
-            .await
-    }
-
     pub async fn get_persisted_ha_node_role(&self) -> Result<Option<HaNodeRole>, ProxyError> {
         self.key_store.get_persisted_ha_node_role().await
     }

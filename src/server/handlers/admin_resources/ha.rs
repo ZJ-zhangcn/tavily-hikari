@@ -100,7 +100,13 @@ async fn put_admin_ha_source_settings(
             .map_err(|err| (StatusCode::CONFLICT, err))?;
         state
             .proxy
-            .persist_ha_source_settings(status.ha_source_effective.as_ref())
+            .persist_ha_node_state(
+                &status.node_id,
+                status.role,
+                status.edgeone_origin.as_deref(),
+                status.ha_source_effective.as_ref(),
+                status.message.as_deref(),
+            )
             .await
             .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
         for (idx, entry) in audit_entries.iter().enumerate() {
@@ -133,7 +139,13 @@ async fn put_admin_ha_source_settings(
             .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err))?;
         state
             .proxy
-            .persist_ha_source_settings(status.ha_source_effective.as_ref())
+            .persist_ha_node_state(
+                &status.node_id,
+                status.role,
+                status.edgeone_origin.as_deref(),
+                status.ha_source_effective.as_ref(),
+                status.message.as_deref(),
+            )
             .await
             .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
         status
