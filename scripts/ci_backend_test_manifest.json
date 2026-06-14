@@ -87,6 +87,7 @@
         "tests::startup_",
         "tests::pending_",
         "tests::proxy_",
+        "tests::observability_",
         "tests::mcp_",
         "tests::public_",
         "tests::quota_",
