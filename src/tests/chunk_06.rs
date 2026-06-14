@@ -1688,6 +1688,11 @@ async fn billing_ledger_audit_detects_bound_token_month_residue_and_rebase_prese
     for _ in 0..5 {
         seed_charged_business_attempt(&proxy, &token.id, 1).await;
     }
+    proxy
+        .key_store
+        .flush_request_stats_writes()
+        .await
+        .expect("flush request stats before manual monthly rebase");
 
     let current_month_start = start_of_month(Utc::now()).timestamp();
     let baseline_verdict = proxy
