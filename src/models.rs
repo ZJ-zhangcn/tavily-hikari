@@ -369,6 +369,9 @@ pub fn resolve_client_ip_info(
 
 #[cfg(test)]
 mod client_ip_tests;
+mod dashboard_month_series;
+
+pub use dashboard_month_series::{DashboardMonthSeries, DashboardMonthSeriesPoint};
 
 #[derive(Debug)]
 pub(crate) struct ApiKeyLease {
@@ -1383,29 +1386,6 @@ pub struct DashboardHourlyRequestWindow {
     pub visible_buckets: i64,
     pub retained_buckets: i64,
     pub buckets: Vec<DashboardHourlyRequestBucket>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DashboardMonthSeriesPoint {
-    pub bucket_start: i64,
-    pub display_bucket_start: Option<i64>,
-    pub total: Option<i64>,
-    pub valuable_success: Option<i64>,
-    pub valuable_failure: Option<i64>,
-    pub other_success: Option<i64>,
-    pub other_failure: Option<i64>,
-    pub unknown: Option<i64>,
-    pub upstream_exhausted: Option<i64>,
-    pub new_keys: Option<i64>,
-    pub new_quarantines: Option<i64>,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DashboardMonthSeries {
-    pub current: Vec<DashboardMonthSeriesPoint>,
-    pub comparison: Vec<DashboardMonthSeriesPoint>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
