@@ -637,6 +637,10 @@ export interface AdminTranslationsShape {
       sourceSaved: string
       sourceApplied: string
       sourceSaveFailed: string
+      sourceSaveFailedTitle: string
+      sourceApplyFailedTitle: string
+      sourceSubmitFailedDescription: string
+      sourceTechnicalDetailsLabel: string
       sourceInvalidDirectHost: string
       sourceInvalidDirectPort: string
       sourceInvalidOriginGroup: string

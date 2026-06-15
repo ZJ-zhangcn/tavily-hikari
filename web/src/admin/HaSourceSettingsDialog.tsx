@@ -1,15 +1,26 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import type { HaSourceKind, HaSourceScheme, HaSourceSettings, HaStatus } from '../api'
+import type {
+  HaSourceKind,
+  HaSourceScheme,
+  HaSourceSettings,
+  HaSourceSettingsApiError,
+  HaStatus,
+} from '../api'
 import { updateAdminHaSourceSettings } from '../api'
 import type { AdminTranslations } from '../i18n'
+import { Alert, AlertDescription, AlertTitle } from '../components/ui/alert'
 import { Button } from '../components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog'
 import { Input } from '../components/ui/input'
 import SegmentedTabs from '../components/ui/SegmentedTabs'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select'
 
-type SourceDialogMode = 'save' | 'apply'
+type SubmitFailureState = {
+  title: string
+  description: string
+  technicalDetail: string | null
+}
 
 const sourceKindOptions: ReadonlyArray<{ value: HaSourceKind; labelKey: keyof AdminTranslations['systemSettings']['ha'] }> = [
   { value: 'direct', labelKey: 'sourceKindDirect' },
@@ -71,6 +82,7 @@ interface HaSourceSettingsDialogProps {
   strings: AdminTranslations['systemSettings']['ha']
   onOpenChange: (open: boolean) => void
   onSaved: (status: HaStatus) => void
+  submitSourceSettings?: typeof updateAdminHaSourceSettings
 }
 
 export default function HaSourceSettingsDialog({
@@ -79,6 +91,7 @@ export default function HaSourceSettingsDialog({
   strings,
   onOpenChange,
   onSaved,
+  submitSourceSettings = updateAdminHaSourceSettings,
 }: HaSourceSettingsDialogProps): JSX.Element {
   const [sourceKind, setSourceKind] = useState<HaSourceKind>('direct')
   const [directOriginScheme, setDirectOriginScheme] = useState<HaSourceScheme>('https')
@@ -86,8 +99,9 @@ export default function HaSourceSettingsDialog({
   const [directOriginPort, setDirectOriginPort] = useState('443')
   const [originGroupId, setOriginGroupId] = useState('')
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [submitFailure, setSubmitFailure] = useState<SubmitFailureState | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const [technicalDetailsOpen, setTechnicalDetailsOpen] = useState(false)
 
   const draft = useMemo(() => toDraftSourceSettings(status), [status])
   const canApplyToEdgeone = status?.role === 'full_master' || status?.role === 'provisional_master'
@@ -99,8 +113,9 @@ export default function HaSourceSettingsDialog({
     setDirectOriginHost(draft.directOriginHost ?? '')
     setDirectOriginPort(draft.directOriginPort != null ? String(draft.directOriginPort) : '443')
     setOriginGroupId(draft.originGroupId ?? '')
-    setError(null)
+    setSubmitFailure(null)
     setSuccess(null)
+    setTechnicalDetailsOpen(false)
   }, [canApplyToEdgeone, draft, open])
 
   const directHostError = sourceKind === 'direct' && directOriginHost.trim().length === 0 ? strings.sourceInvalidDirectHost : null
@@ -109,23 +124,36 @@ export default function HaSourceSettingsDialog({
     sourceKind === 'origin_group' && originGroupId.trim().length === 0 ? strings.sourceInvalidOriginGroup : null
   const currentTargetLabel = status?.haSourceEffective?.target ?? status?.edgeoneCurrentTarget ?? status?.edgeoneOrigin ?? '—'
 
+  const directFieldError = directHostError ?? directPortError
+  const hasLocalValidationError = sourceKind === 'direct' ? directFieldError != null : originGroupError != null
+
+  function buildSubmitFailure(error: HaSourceSettingsApiError, applyToEdgeone: boolean): SubmitFailureState {
+    const rawDetail = error.rawDetail?.trim() ?? error.message.trim()
+    return {
+      title: applyToEdgeone ? strings.sourceApplyFailedTitle : strings.sourceSaveFailedTitle,
+      description: strings.sourceSubmitFailedDescription,
+      technicalDetail: rawDetail.length > 0 ? rawDetail : null,
+    }
+  }
+
   async function handleSubmit(applyToEdgeone: boolean): Promise<void> {
     if (!status) return
     const port = sourceKind === 'direct' ? validatePort(directOriginPort) : null
     if (sourceKind === 'direct' && (!directOriginHost.trim() || port == null)) {
-      setError(directHostError ?? directPortError ?? strings.sourceSaveFailed)
+      setSubmitFailure(null)
       return
     }
     if (sourceKind === 'origin_group' && !originGroupId.trim()) {
-      setError(originGroupError ?? strings.sourceSaveFailed)
+      setSubmitFailure(null)
       return
     }
 
     setSaving(true)
-    setError(null)
+    setSubmitFailure(null)
     setSuccess(null)
+    setTechnicalDetailsOpen(false)
     try {
-      const nextStatus = await updateAdminHaSourceSettings({
+      const nextStatus = await submitSourceSettings({
         sourceKind,
         directOriginScheme: sourceKind === 'direct' ? directOriginScheme : null,
         directOriginHost: sourceKind === 'direct' ? directOriginHost.trim() : null,
@@ -137,7 +165,8 @@ export default function HaSourceSettingsDialog({
       setSuccess(applyToEdgeone ? strings.sourceApplied : strings.sourceSaved)
       onOpenChange(false)
     } catch (err) {
-      setError(err instanceof Error ? err.message : strings.sourceSaveFailed)
+      const fallbackError = new Error(strings.sourceSaveFailed) as HaSourceSettingsApiError
+      setSubmitFailure(buildSubmitFailure(err instanceof Error ? (err as HaSourceSettingsApiError) : fallbackError, applyToEdgeone))
     } finally {
       setSaving(false)
     }
@@ -219,9 +248,12 @@ export default function HaSourceSettingsDialog({
                   <Input
                     value={directOriginHost}
                     disabled={saving}
+                    aria-invalid={directHostError ? true : undefined}
                     onChange={(event) => setDirectOriginHost(event.target.value)}
                     placeholder="203.0.113.9"
+                    className={directHostError ? 'border-destructive focus-visible:ring-destructive' : undefined}
                   />
+                  {directHostError && <p className="text-sm font-medium text-destructive">{directHostError}</p>}
                 </label>
                 <label className="grid gap-2">
                   <span className="text-sm font-semibold">{strings.sourcePortLabel}</span>
@@ -229,9 +261,12 @@ export default function HaSourceSettingsDialog({
                     inputMode="numeric"
                     value={directOriginPort}
                     disabled={saving}
+                    aria-invalid={directPortError ? true : undefined}
                     onChange={(event) => setDirectOriginPort(event.target.value)}
                     placeholder="443"
+                    className={directPortError ? 'border-destructive focus-visible:ring-destructive' : undefined}
                   />
+                  {directPortError && <p className="text-sm font-medium text-destructive">{directPortError}</p>}
                 </label>
               </div>
             </div>
@@ -242,10 +277,13 @@ export default function HaSourceSettingsDialog({
                 <Input
                   value={originGroupId}
                   disabled={saving}
+                  aria-invalid={originGroupError ? true : undefined}
                   onChange={(event) => setOriginGroupId(event.target.value)}
                   placeholder="eo-group-123"
+                  className={originGroupError ? 'border-destructive focus-visible:ring-destructive' : undefined}
                 />
               </label>
+              {originGroupError && <p className="text-sm font-medium text-destructive">{originGroupError}</p>}
               <p className="text-xs text-muted-foreground">{strings.sourceGroupHint}</p>
             </div>
           )}
@@ -267,9 +305,34 @@ export default function HaSourceSettingsDialog({
             </p>
           </div>
 
-          {(error || success || directHostError || directPortError || originGroupError) && (
-            <p className="text-sm font-medium" role="status" aria-live="polite">
-              {error ?? success ?? directHostError ?? directPortError ?? originGroupError}
+          {submitFailure && (
+            <Alert variant="destructive" aria-live="assertive">
+              <AlertTitle>{submitFailure.title}</AlertTitle>
+              <AlertDescription>
+                <p>{submitFailure.description}</p>
+                {submitFailure.technicalDetail && (
+                  <details
+                    className="mt-3"
+                    open={technicalDetailsOpen}
+                    onToggle={(event) => setTechnicalDetailsOpen((event.currentTarget as HTMLDetailsElement).open)}
+                  >
+                    <summary className="cursor-pointer select-none font-semibold">
+                      {strings.sourceTechnicalDetailsLabel}
+                    </summary>
+                    {technicalDetailsOpen && (
+                      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded-2xl bg-background/55 p-3 font-mono text-xs leading-5 text-foreground">
+                        {submitFailure.technicalDetail}
+                      </pre>
+                    )}
+                  </details>
+                )}
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {!submitFailure && success && (
+            <p className="text-sm font-medium text-success" role="status" aria-live="polite">
+              {success}
             </p>
           )}
         </div>
@@ -281,7 +344,8 @@ export default function HaSourceSettingsDialog({
           <Button
             type="button"
             variant="secondary"
-            disabled={saving}
+            disabled={saving || hasLocalValidationError}
+            aria-disabled={saving || hasLocalValidationError}
             onClick={() => void handleSubmit(false)}
           >
             {strings.sourceSave}
@@ -289,7 +353,8 @@ export default function HaSourceSettingsDialog({
           {canApplyToEdgeone && (
             <Button
               type="button"
-              disabled={saving}
+              disabled={saving || hasLocalValidationError}
+              aria-disabled={saving || hasLocalValidationError}
               onClick={() => void handleSubmit(true)}
             >
               {strings.sourceSaveAndApply}

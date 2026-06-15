@@ -107,6 +107,11 @@ describe('HaStatusBanner Storybook proofs', () => {
     expect(markup).toContain('203.0.113.9:58087')
   })
 
+  it('keeps the submit-failure source dialog story available', () => {
+    expect(stories.SourceDialogSubmitFailure).toBeDefined()
+    expect(stories.SourceDialogSubmitFailure.render).toBeDefined()
+  })
+
   it('keeps the direct source selection summary in the story play proof', async () => {
     expect(stories.DirectSourceDialog.play).toBeDefined()
 
