@@ -66,7 +66,7 @@ impl KeyStore {
             ),
             (
                 "request_logs",
-                r#"CREATE INDEX IF NOT EXISTS idx_request_logs_time
+                r#"CREATE INDEX IF NOT EXISTS observability.idx_request_logs_time
                    ON request_logs(created_at DESC, id DESC)"#,
             ),
         ] {
@@ -87,21 +87,17 @@ impl KeyStore {
         let deadline = self.backend_time.deadline_after(Duration::from_secs(10));
         let mut retry_attempt = 0usize;
         loop {
-            let delete_trigger = Self::request_log_catalog_rollup_delete_trigger_sql();
-            let mut tx = self.pool.begin().await?;
             let result = async {
+                let mut tx = self.pool.begin().await?;
                 sqlx::query("PRAGMA secure_delete = OFF")
-                    .execute(&mut *tx)
-                    .await?;
-                sqlx::query("DROP TRIGGER IF EXISTS trg_request_logs_catalog_rollup_delete")
                     .execute(&mut *tx)
                     .await?;
                 let result = sqlx::query(
                     r#"
-                    DELETE FROM request_logs
+                    DELETE FROM observability.request_logs
                     WHERE id IN (
                         SELECT id
-                        FROM request_logs
+                        FROM observability.request_logs
                         WHERE created_at < ?
                         ORDER BY created_at ASC, id ASC
                         LIMIT ?
@@ -112,7 +108,6 @@ impl KeyStore {
                 .bind(batch_size)
                 .execute(&mut *tx)
                 .await?;
-                sqlx::query(&delete_trigger).execute(&mut *tx).await?;
                 tx.commit().await?;
                 Ok::<_, sqlx::Error>(result)
             }
@@ -153,7 +148,7 @@ impl KeyStore {
                 SET request_log_id = NULL
                 WHERE request_log_id IN (
                     SELECT id
-                    FROM request_logs
+                    FROM observability.request_logs
                     WHERE created_at < ?
                     ORDER BY created_at ASC, id ASC
                     LIMIT ?
@@ -168,7 +163,7 @@ impl KeyStore {
                 SET request_log_id = NULL
                 WHERE request_log_id IN (
                     SELECT id
-                    FROM request_logs
+                    FROM observability.request_logs
                     WHERE created_at < ?
                     ORDER BY created_at ASC, id ASC
                     LIMIT ?
@@ -183,7 +178,7 @@ impl KeyStore {
                 SET source_request_log_id = NULL
                 WHERE source_request_log_id IN (
                     SELECT id
-                    FROM request_logs
+                    FROM observability.request_logs
                     WHERE created_at < ?
                     ORDER BY created_at ASC, id ASC
                     LIMIT ?
@@ -240,10 +235,10 @@ impl KeyStore {
         loop {
             match sqlx::query(
                 r#"
-                DELETE FROM request_log_catalog_rollups
+                DELETE FROM observability.request_log_catalog_rollups
                 WHERE rowid IN (
                     SELECT rowid
-                    FROM request_log_catalog_rollups
+                    FROM observability.request_log_catalog_rollups
                     WHERE bucket_start < ?
                     ORDER BY bucket_start ASC
                     LIMIT ?
@@ -278,7 +273,7 @@ impl KeyStore {
 
     async fn has_old_request_log_rows(&self, threshold: i64) -> Result<bool, ProxyError> {
         let exists = sqlx::query_scalar::<_, i64>(
-            "SELECT 1 FROM request_logs WHERE created_at < ? LIMIT 1",
+            "SELECT 1 FROM observability.request_logs WHERE created_at < ? LIMIT 1",
         )
         .bind(threshold)
         .fetch_optional(&self.pool)
@@ -291,7 +286,7 @@ impl KeyStore {
             return Ok(false);
         }
         let exists = sqlx::query_scalar::<_, i64>(
-            "SELECT 1 FROM request_log_catalog_rollups WHERE bucket_start < ? LIMIT 1",
+            "SELECT 1 FROM observability.request_log_catalog_rollups WHERE bucket_start < ? LIMIT 1",
         )
         .bind(threshold)
         .fetch_optional(&self.pool)
@@ -327,7 +322,7 @@ impl KeyStore {
                 r#"
                 SELECT id, created_at, request_user_id, result_status, request_kind_key,
                        request_kind_label, request_kind_detail, path, request_body, response_body
-                FROM request_logs
+                FROM observability.request_logs
                 WHERE (request_body IS NOT NULL OR response_body IS NOT NULL)
                   AND created_at >= ?
                   AND (created_at > ? OR (created_at = ? AND id > ?))
@@ -347,7 +342,7 @@ impl KeyStore {
                 r#"
                 SELECT id, created_at, request_user_id, result_status, request_kind_key,
                        request_kind_label, request_kind_detail, path, request_body, response_body
-                FROM request_logs
+                FROM observability.request_logs
                 WHERE (request_body IS NOT NULL OR response_body IS NOT NULL)
                   AND created_at >= ?
                 ORDER BY created_at ASC, id ASC
@@ -556,7 +551,7 @@ impl KeyStore {
                 let result = loop {
                     match sqlx::query(
                         r#"
-                        UPDATE request_logs
+                        UPDATE observability.request_logs
                         SET request_body = NULL,
                             response_body = NULL,
                             request_kind_key = ?,

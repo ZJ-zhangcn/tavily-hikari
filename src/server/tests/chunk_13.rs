@@ -1089,6 +1089,55 @@ async fn ha_events_ack_records_peer_watermark() {
 }
 
 #[tokio::test]
+async fn ha_sync_watermark_reads_pending_overlay_before_flush() {
+    let db_path = temp_db_path("ha-sync-watermark-pending-overlay");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-sync-watermark-pending-overlay".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("proxy created");
+
+    proxy
+        .persist_ha_sync_watermark(
+            "standby_applied_seq",
+            Some("source-a"),
+            Some("target-a"),
+            42,
+            Some("pending overlay"),
+        )
+        .await
+        .expect("enqueue watermark");
+
+    assert_eq!(
+        proxy
+            .get_ha_sync_watermark("standby_applied_seq")
+            .await
+            .expect("read pending watermark"),
+        Some(42)
+    );
+
+    proxy
+        .flush_ha_state_writes()
+        .await
+        .expect("flush pending watermark");
+
+    assert_eq!(
+        proxy
+            .get_ha_sync_watermark("standby_applied_seq")
+            .await
+            .expect("read flushed watermark"),
+        Some(42)
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+}
+
+#[tokio::test]
 async fn ha_event_apply_preserves_foreign_keys_and_composite_deletes() {
     let db_path = temp_db_path("ha-event-apply-keys");
     let db_str = db_path.to_string_lossy().to_string();
@@ -1434,6 +1483,55 @@ async fn ha_source_endpoint_persists_origin_group_settings() {
     assert_eq!(response["haSourceEffective"]["target"], "eo-group-api-test");
     assert_eq!(response["edgeoneExpectedOrigin"], "eo-group-api-test");
     assert_eq!(response["edgeoneExpectedSourceKind"], "origin_group");
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
+async fn ha_source_endpoint_accepts_lowercase_direct_origin_scheme() {
+    let db_path = temp_db_path("ha-source-direct-scheme");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-source-direct-scheme".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("proxy created");
+    let ha = tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig {
+        mode: tavily_hikari::HaMode::ActiveStandby,
+        node_id: "node-source-direct".to_string(),
+        database_path: Some(db_str.clone()),
+        ..tavily_hikari::HaConfig::default()
+    });
+    let addr = spawn_ha_admin_server(proxy, ha, true).await;
+
+    let response = Client::new()
+        .put(format!("http://{addr}/api/admin/ha/source"))
+        .json(&serde_json::json!({
+            "sourceKind": "direct",
+            "directOriginScheme": "https",
+            "directOriginHost": "gz.ivanli.cc",
+            "directOriginPort": 1443,
+            "applyToEdgeone": false
+        }))
+        .send()
+        .await
+        .expect("source settings response");
+    let status = response.status();
+    let body = response.text().await.expect("source settings body text");
+    assert!(
+        status.is_success(),
+        "direct source settings request should succeed, got {status}: {body}"
+    );
+    let response: Value = serde_json::from_str(&body).expect("source settings body");
+
+    assert_eq!(response["haSourceOverride"]["sourceKind"], "direct");
+    assert_eq!(response["haSourceOverride"]["directOriginScheme"], "https");
+    assert_eq!(response["haSourceOverride"]["directOriginHost"], "gz.ivanli.cc");
+    assert_eq!(response["haSourceOverride"]["directOriginPort"], 1443);
+    assert_eq!(response["haSourceEffective"]["directOriginScheme"], "https");
+    assert_eq!(response["edgeoneExpectedSourceKind"], "direct");
 
     let _ = std::fs::remove_file(db_path);
 }

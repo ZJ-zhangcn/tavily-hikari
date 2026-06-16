@@ -289,33 +289,47 @@ impl KeyStore {
         let started_at = self.backend_time.now_ts();
         let deadline = self.backend_time.deadline_after(Duration::from_secs(10));
         let mut retry_attempt = 0usize;
-        let res = loop {
-            match sqlx::query(
-                r#"
-                INSERT INTO scheduled_jobs (
-                    job_type,
-                    trigger_source,
-                    key_id,
-                    status,
-                    attempt,
-                    queued_at,
-                    started_at
+        loop {
+            let result = async {
+                let mut conn = begin_immediate_sqlite_connection(&self.pool).await?;
+                if let Some((job_id, status, _current_trigger_source)) =
+                    Self::scheduled_job_lookup_active_locked(&mut conn, job_type, key_id).await?
+                    && status == "running"
+                {
+                    sqlx::query("COMMIT").execute(&mut *conn).await?;
+                    return Ok::<i64, ProxyError>(job_id);
+                }
+
+                let res = sqlx::query(
+                    r#"
+                    INSERT INTO scheduled_jobs (
+                        job_type,
+                        trigger_source,
+                        key_id,
+                        status,
+                        attempt,
+                        queued_at,
+                        started_at
+                    )
+                    VALUES (?, ?, ?, 'running', ?, ?, ?)
+                    "#,
                 )
-                VALUES (?, ?, ?, 'running', ?, ?, ?)
-                "#,
-            )
-            .bind(job_type)
-            .bind(trigger_source)
-            .bind(key_id)
-            .bind(attempt)
-            .bind(started_at)
-            .bind(started_at)
-            .execute(&self.pool)
-            .await
-            {
-                Ok(res) => break res,
+                .bind(job_type)
+                .bind(trigger_source)
+                .bind(key_id)
+                .bind(attempt)
+                .bind(started_at)
+                .bind(started_at)
+                .execute(&mut *conn)
+                .await?;
+                sqlx::query("COMMIT").execute(&mut *conn).await?;
+                Ok(res.last_insert_rowid())
+            }
+            .await;
+
+            match result {
+                Ok(job_id) => return Ok(job_id),
                 Err(err) => {
-                    let err = ProxyError::Database(err);
                     if Self::is_scheduled_job_active_identity_conflict(&err)
                         && let Some((job_id, _status, _current_trigger_source)) =
                             self.scheduled_job_lookup_active(job_type, key_id).await?
@@ -338,7 +352,6 @@ impl KeyStore {
                 }
             }
         };
-        Ok(res.last_insert_rowid())
     }
 
     async fn abandon_stale_quota_sync_job_locked(

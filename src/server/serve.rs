@@ -40,15 +40,19 @@ pub async fn serve(
     {
         eprintln!("HA source settings restore warning: {err}");
     }
-    if let Err(err) = proxy
-        .persist_ha_node_state(
-            &startup_ha_status.node_id,
-            startup_ha_status.role,
-            startup_ha_status.edgeone_origin.as_deref(),
-            startup_ha_status.ha_source_effective.as_ref(),
-            startup_ha_status.message.as_deref(),
-        )
-        .await
+    if let Err(err) = async {
+        proxy
+            .persist_ha_node_state(
+                &startup_ha_status.node_id,
+                startup_ha_status.role,
+                startup_ha_status.edgeone_origin.as_deref(),
+                startup_ha_status.ha_source_effective.as_ref(),
+                startup_ha_status.message.as_deref(),
+            )
+            .await?;
+        proxy.flush_ha_state_writes().await
+    }
+    .await
     {
         eprintln!("HA startup node state persist warning: {err}");
     }
@@ -621,6 +625,7 @@ async fn run_ha_standby_sync_once(
                 Some(reset_detail),
             )
             .await?;
+        state.proxy.flush_ha_state_writes().await?;
         return Ok(());
     }
     if !response.status().is_success() {
@@ -656,6 +661,7 @@ async fn run_ha_standby_sync_once(
         }))
         .send()
         .await?;
+    state.proxy.flush_ha_state_writes().await?;
     Ok(())
 }
 
@@ -672,16 +678,20 @@ fn spawn_ha_edgeone_authority_task(state: Arc<AppState>) {
                 .await;
             match state.ha.refresh_authoritative_role().await {
                 Ok(status) => {
-                    if let Err(err) = state
-                        .proxy
-                        .persist_ha_node_state(
-                            &status.node_id,
-                            status.role,
-                            status.edgeone_origin.as_deref(),
-                            status.ha_source_effective.as_ref(),
-                            status.message.as_deref(),
-                        )
-                        .await
+                    if let Err(err) = async {
+                        state
+                            .proxy
+                            .persist_ha_node_state(
+                                &status.node_id,
+                                status.role,
+                                status.edgeone_origin.as_deref(),
+                                status.ha_source_effective.as_ref(),
+                                status.message.as_deref(),
+                            )
+                            .await?;
+                        state.proxy.flush_ha_state_writes().await
+                    }
+                    .await
                     {
                         eprintln!("HA authority state persist failed: {err}");
                     }

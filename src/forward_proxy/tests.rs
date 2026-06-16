@@ -8,7 +8,7 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
     use std::{
-        path::PathBuf,
+        path::{Path, PathBuf},
         time::Duration,
     };
 
@@ -170,6 +170,7 @@ rule-providers:
 
         let key_store = crate::store::KeyStore {
             database_path: db_path.to_string_lossy().into_owned(),
+            observability_database_path: None,
             pool: pool.clone(),
             backend_time: crate::BackendTime::system(),
             token_binding_cache: tokio::sync::RwLock::new(std::collections::HashMap::new()),
@@ -181,6 +182,7 @@ rule-providers:
             user_debug_info_shared_cache: tokio::sync::RwLock::new(
                 std::collections::HashMap::new(),
             ),
+            request_stats_coalescer: crate::store::RequestStatsCoalescer::default(),
             admin_heavy_read_semaphore: tokio::sync::Semaphore::new(1),
             #[cfg(test)]
             forced_pending_claim_miss_log_ids: tokio::sync::Mutex::new(std::collections::HashSet::new()),
@@ -355,6 +357,14 @@ rule-providers:
     }
 
     fn write_fake_xray_binary_with_api_failure(prefix: &str, fail_command: Option<&str>) -> String {
+        write_fake_xray_binary_with_dynamic_api_failure(prefix, fail_command, None)
+    }
+
+    fn write_fake_xray_binary_with_dynamic_api_failure(
+        prefix: &str,
+        fail_command: Option<&str>,
+        fail_command_file: Option<&Path>,
+    ) -> String {
         let path = std::env::temp_dir().join(format!(
             "{prefix}-fake-xray-{}-{}.py",
             std::process::id(),
@@ -371,13 +381,15 @@ import time
 from pathlib import Path
 
 FAIL_COMMAND = "__FAIL_COMMAND__"
+FAIL_COMMAND_FILE = "__FAIL_COMMAND_FILE__"
 
 def state_path_for_config_path(config_path: Path) -> Path:
     return config_path.parent / "fake-xray-state.json"
 
 def state_locator_path_for_server(server: str) -> Path:
     port = server.rsplit(":", 1)[1]
-    return Path(f"/tmp/fake-xray-{port}.json")
+    script_tag = Path(__file__).stem
+    return Path(f"/tmp/{script_tag}-state-{port}.json")
 
 def load_json(path: Path):
     if not path.exists():
@@ -523,7 +535,13 @@ def parse_server(args):
     return server, positionals
 
 def api_mode(command: str, args) -> int:
-    if FAIL_COMMAND and command == FAIL_COMMAND:
+    fail_command = FAIL_COMMAND
+    if FAIL_COMMAND_FILE:
+        try:
+            fail_command = Path(FAIL_COMMAND_FILE).read_text(encoding="utf-8").strip()
+        except FileNotFoundError:
+            fail_command = ""
+    if fail_command and command == fail_command:
         print(f"forced api failure for {command}", file=sys.stderr)
         return 1
     server, positionals = parse_server(args)
@@ -583,7 +601,13 @@ def main():
 if __name__ == "__main__":
     raise SystemExit(main())
 "#
-        .replace("__FAIL_COMMAND__", fail_command.unwrap_or(""));
+        .replace("__FAIL_COMMAND__", fail_command.unwrap_or(""))
+        .replace(
+            "__FAIL_COMMAND_FILE__",
+            &fail_command_file
+                .map(|path| path.to_string_lossy().replace('\\', "\\\\"))
+                .unwrap_or_default(),
+        );
         fs::write(&path, script).expect("write fake xray script");
         #[cfg(unix)]
         {
@@ -2009,10 +2033,12 @@ if __name__ == "__main__":
     async fn shared_xray_cleanup_failure_keeps_retired_handle_retriable() {
         let _guard = acquire_heavy_forward_proxy_test_guard().await;
         let runtime_dir = temp_runtime_dir("shared-xray-cleanup-retriable");
+        let fail_command_file = runtime_dir.join("fail-command");
         let mut supervisor = XraySupervisor::new(
-            write_fake_xray_binary_with_api_failure(
+            write_fake_xray_binary_with_dynamic_api_failure(
                 "shared-xray-cleanup-retriable",
-                Some("rmrules"),
+                None,
+                Some(&fail_command_file),
             ),
             runtime_dir,
         );
@@ -2028,6 +2054,7 @@ if __name__ == "__main__":
             .expect("initial sync");
         let retired_url = sync_endpoints_until_endpoint_url(&mut supervisor, &mut initial).await;
 
+        fs::write(&fail_command_file, "rmrules").expect("enable fake xray rmrules failure");
         let mut changed = vec![subscription_vless_endpoint(
             "node-a",
             "changed.example.com",
@@ -2050,7 +2077,7 @@ if __name__ == "__main__":
             "failed cleanup should retire the stale relay without exposing it to new selections"
         );
 
-        supervisor.binary = write_fake_xray_binary("shared-xray-cleanup-retriable-recovered");
+        fs::write(&fail_command_file, "").expect("disable fake xray rmrules failure");
         supervisor.reap_retired_handles_now().await;
         let recovered_snapshot = supervisor.debug_snapshot().await;
         assert_eq!(recovered_snapshot.active_endpoint_handles, 1);

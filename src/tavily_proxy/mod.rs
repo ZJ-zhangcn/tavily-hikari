@@ -5,7 +5,10 @@ use crate::store::*;
 use crate::*;
 use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::{
+    OnceLock,
+    atomic::{AtomicI64, Ordering},
+};
 
 #[derive(Clone, Debug)]
 struct TokenQuota {
@@ -117,12 +120,150 @@ struct DashboardHourlyRequestWindowCacheState {
     notify: Arc<tokio::sync::Notify>,
 }
 
+type SharedTokenBillingLockMap = Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>;
+
+fn shared_token_billing_locks() -> SharedTokenBillingLockMap {
+    static LOCKS: OnceLock<SharedTokenBillingLockMap> = OnceLock::new();
+    LOCKS
+        .get_or_init(|| Arc::new(Mutex::new(HashMap::new())))
+        .clone()
+}
+
 impl Default for DashboardHourlyRequestWindowCacheState {
     fn default() -> Self {
         Self {
             cached: None,
             loading: false,
             notify: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+struct PendingHaNodeState {
+    node_id: String,
+    role: HaNodeRole,
+    edgeone_origin: Option<String>,
+    source_settings: Option<HaSourceSettingsView>,
+    message: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+struct PendingHaSyncWatermark {
+    source_node_id: Option<String>,
+    target_node_id: Option<String>,
+    watermark: i64,
+    detail: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct HaStateCoalescerState {
+    pending_node_state: Option<PendingHaNodeState>,
+    pending_sync_watermarks: HashMap<String, PendingHaSyncWatermark>,
+    flush_deadline: Option<Instant>,
+    flushing: bool,
+    shutdown: bool,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct HaStateCoalescer {
+    state: Arc<Mutex<HaStateCoalescerState>>,
+    wake: Arc<Notify>,
+    flushed: Arc<Notify>,
+}
+
+impl Default for HaStateCoalescer {
+    fn default() -> Self {
+        Self {
+            state: Arc::new(Mutex::new(HaStateCoalescerState::default())),
+            wake: Arc::new(Notify::new()),
+            flushed: Arc::new(Notify::new()),
+        }
+    }
+}
+
+impl HaStateCoalescer {
+    const MAX_PENDING_KEYS: usize = 100;
+    const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
+
+    fn pending_key_count(state: &HaStateCoalescerState) -> usize {
+        usize::from(state.pending_node_state.is_some()) + state.pending_sync_watermarks.len()
+    }
+
+    fn mark_flush_deadline_if_pending(state: &mut HaStateCoalescerState) {
+        if Self::pending_key_count(state) > 0 && state.flush_deadline.is_none() {
+            state.flush_deadline = Some(Instant::now() + Self::FLUSH_INTERVAL);
+        }
+    }
+
+    async fn enqueue_node_state(
+        &self,
+        node_id: &str,
+        role: HaNodeRole,
+        edgeone_origin: Option<&str>,
+        source_settings: Option<&HaSourceSettingsView>,
+        message: Option<&str>,
+    ) {
+        {
+            let mut state = self.state.lock().await;
+            state.pending_node_state = Some(PendingHaNodeState {
+                node_id: node_id.to_string(),
+                role,
+                edgeone_origin: edgeone_origin.map(str::to_string),
+                source_settings: source_settings.cloned(),
+                message: message.map(str::to_string),
+            });
+            Self::mark_flush_deadline_if_pending(&mut state);
+        }
+        self.wake.notify_one();
+    }
+
+    async fn enqueue_sync_watermark(
+        &self,
+        name: &str,
+        source_node_id: Option<&str>,
+        target_node_id: Option<&str>,
+        watermark: i64,
+        detail: Option<&str>,
+    ) {
+        {
+            let mut state = self.state.lock().await;
+            state.pending_sync_watermarks.insert(
+                name.to_string(),
+                PendingHaSyncWatermark {
+                    source_node_id: source_node_id.map(str::to_string),
+                    target_node_id: target_node_id.map(str::to_string),
+                    watermark,
+                    detail: detail.map(str::to_string),
+                },
+            );
+            Self::mark_flush_deadline_if_pending(&mut state);
+        }
+        self.wake.notify_one();
+    }
+
+    async fn pending_sync_watermark(&self, name: &str) -> Option<PendingHaSyncWatermark> {
+        self.state
+            .lock()
+            .await
+            .pending_sync_watermarks
+            .get(name)
+            .cloned()
+    }
+
+    async fn wait_until_flushed(&self) {
+        loop {
+            let notified = {
+                let state = self.state.lock().await;
+                if !state.flushing
+                    && state.pending_node_state.is_none()
+                    && state.pending_sync_watermarks.is_empty()
+                {
+                    return;
+                }
+                self.flushed.notified()
+            };
+            notified.await;
         }
     }
 }
@@ -212,8 +353,8 @@ pub struct TavilyProxy {
     pub(crate) research_request_owner_affinity: Arc<Mutex<TokenAffinityState>>,
     summary_windows_cache: Arc<Mutex<SummaryWindowsCacheState>>,
     dashboard_hourly_request_window_cache: Arc<Mutex<DashboardHourlyRequestWindowCacheState>>,
-    // Fast in-process lock to collapse duplicate work within one instance. Cross-instance
-    // serialization is provided by quota_subject_locks in SQLite.
+    pub(crate) ha_state_coalescer: HaStateCoalescer,
+    // Fast in-process lock to collapse duplicate work within one instance.
     pub(crate) token_billing_locks: Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>,
     pub(crate) mcp_session_init_locks: Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>,
     pub(crate) mcp_session_request_locks: Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>,
@@ -233,9 +374,10 @@ pub struct TavilyProxyOptions {
 
 impl TavilyProxyOptions {
     pub fn from_database_path(database_path: &str) -> Self {
+        let layout = SqliteDatabaseLayout::from_database_path(database_path);
         Self {
             xray_binary: forward_proxy::default_xray_binary(),
-            xray_runtime_dir: forward_proxy::default_xray_runtime_dir(database_path),
+            xray_runtime_dir: forward_proxy::default_xray_runtime_dir(&layout.core_database_path),
             forward_proxy_trace_url: default_forward_proxy_trace_url(),
             low_quota_depletion_threshold: low_quota_depletion_threshold_from_env(),
             health_readiness_grace_period: Duration::from_secs(90),
@@ -243,116 +385,30 @@ impl TavilyProxyOptions {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct QuotaSubjectDbLease {
-    pub(crate) subject: String,
-    pub(crate) owner: String,
-    pub(crate) ttl: Duration,
-}
-
 #[derive(Debug)]
 struct QuotaSubjectLockGuard {
     store: Arc<KeyStore>,
-    lease: QuotaSubjectDbLease,
-    refresh_stop: Arc<AtomicBool>,
-    lease_lost: Arc<AtomicBool>,
-    refresh_task: tokio::task::JoinHandle<()>,
+    subject: String,
 }
 
 impl QuotaSubjectLockGuard {
-    pub(crate) fn new(store: Arc<KeyStore>, lease: QuotaSubjectDbLease) -> Self {
-        let refresh_stop = Arc::new(AtomicBool::new(false));
-        let lease_lost = Arc::new(AtomicBool::new(false));
-        let refresh_task = {
-            let store = Arc::clone(&store);
-            let backend_time = store.backend_time.clone();
-            let lease = lease.clone();
-            let refresh_stop = Arc::clone(&refresh_stop);
-            let lease_lost = Arc::clone(&lease_lost);
-            tokio::spawn(async move {
-                let refresh_every = Duration::from_secs(QUOTA_SUBJECT_LOCK_REFRESH_SECS);
-                let retry_every = Duration::from_secs(QUOTA_SUBJECT_LOCK_REFRESH_RETRY_SECS);
-                while !refresh_stop.load(AtomicOrdering::Relaxed) {
-                    backend_time.sleep(refresh_every).await;
-                    if refresh_stop.load(AtomicOrdering::Relaxed) {
-                        break;
-                    }
-
-                    let retry_budget = lease.ttl.saturating_sub(refresh_every);
-                    let retry_deadline = backend_time.deadline_after(retry_budget.max(retry_every));
-                    loop {
-                        match store.refresh_quota_subject_lock(&lease).await {
-                            Ok(()) => break,
-                            Err(err) => {
-                                if refresh_stop.load(AtomicOrdering::Relaxed) {
-                                    return;
-                                }
-                                if backend_time.instant_now() >= retry_deadline {
-                                    lease_lost.store(true, AtomicOrdering::Relaxed);
-                                    eprintln!(
-                                        "quota subject lock refresh exhausted retries (subject={} owner={}): {}",
-                                        lease.subject, lease.owner, err
-                                    );
-                                    return;
-                                }
-                                eprintln!(
-                                    "quota subject lock refresh failed (subject={} owner={}): {}; retrying",
-                                    lease.subject, lease.owner, err
-                                );
-                                backend_time.sleep(retry_every).await;
-                            }
-                        }
-                    }
-                }
-            })
-        };
-
-        Self {
-            store,
-            lease,
-            refresh_stop,
-            lease_lost,
-            refresh_task,
-        }
+    pub(crate) fn new(store: Arc<KeyStore>, subject: String) -> Self {
+        Self { store, subject }
     }
 
     pub(crate) fn ensure_live(&self) -> Result<(), ProxyError> {
-        if self.lease_lost.load(AtomicOrdering::Relaxed) {
-            return Err(ProxyError::Other(format!(
-                "quota subject lock lost for {}",
-                self.lease.subject,
-            )));
-        }
         let mut forced = self
             .store
             .forced_quota_subject_lock_loss_subjects
             .lock()
             .expect("forced quota subject lock loss mutex poisoned");
-        if forced.remove(&self.lease.subject) {
+        if forced.remove(&self.subject) {
             return Err(ProxyError::Other(format!(
                 "quota subject lock lost for {}",
-                self.lease.subject,
+                self.subject,
             )));
         }
         Ok(())
-    }
-}
-
-impl Drop for QuotaSubjectLockGuard {
-    fn drop(&mut self) {
-        self.refresh_stop.store(true, AtomicOrdering::Relaxed);
-        self.refresh_task.abort();
-
-        let store = Arc::clone(&self.store);
-        let lease = self.lease.clone();
-        tokio::spawn(async move {
-            if let Err(err) = store.release_quota_subject_lock(&lease).await {
-                eprintln!(
-                    "quota subject lock release failed (subject={} owner={}): {}",
-                    lease.subject, lease.owner, err
-                );
-            }
-        });
     }
 }
 

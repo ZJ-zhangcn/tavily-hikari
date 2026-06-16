@@ -936,6 +936,53 @@ fn cleanup_stale_test_db_dirs() {
     }
 }
 
+fn sqlite_test_layout(database_path: &str) -> SqliteDatabaseLayout {
+    SqliteDatabaseLayout::from_database_path(database_path)
+}
+
+async fn connect_sqlite_test_pool(db_str: &str) -> sqlx::SqlitePool {
+    let layout = sqlite_test_layout(db_str);
+    open_sqlite_pool_with_observability(
+        &layout.core_database_path,
+        layout.observability_database_path.as_deref(),
+        true,
+        false,
+    )
+    .await
+    .expect("open sqlite test pool")
+}
+
+async fn connect_sqlite_test_connection(
+    db_str: &str,
+    create_if_missing: bool,
+    read_only: bool,
+    busy_timeout: std::time::Duration,
+) -> sqlx::SqliteConnection {
+    let layout = sqlite_test_layout(db_str);
+    let mut options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(&layout.core_database_path)
+        .create_if_missing(create_if_missing)
+        .read_only(read_only)
+        .busy_timeout(busy_timeout);
+    if !read_only {
+        options = options.journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+    }
+    let mut conn = sqlx::SqliteConnection::connect_with(&options)
+        .await
+        .expect("connect sqlite test connection");
+    if let Some(observability_database_path) = layout.observability_database_path {
+        let attach_sql = format!(
+            "ATTACH DATABASE '{}' AS observability",
+            observability_database_path.replace('\'', "''")
+        );
+        sqlx::query(&attach_sql)
+            .execute(&mut conn)
+            .await
+            .expect("attach observability sidecar");
+    }
+    conn
+}
+
 #[tokio::test]
 async fn successful_request_logs_do_not_backfill_failure_kind() {
     let db_path = temp_db_path("request-log-success-failure-kind");
@@ -988,15 +1035,18 @@ async fn successful_request_logs_do_not_backfill_failure_kind() {
         .await
         .expect("log success attempt");
 
+    let read_pool = connect_sqlite_test_pool(&db_str).await;
     let row: (String, Option<String>) = sqlx::query_as(
         "SELECT result_status, failure_kind FROM request_logs ORDER BY id DESC LIMIT 1",
     )
-    .fetch_one(&proxy.key_store.pool)
+    .fetch_one(&read_pool)
     .await
     .expect("fetch request log row");
     assert_eq!(row.0, OUTCOME_SUCCESS);
     assert_eq!(row.1, None);
 
+    read_pool.close().await;
+    proxy.key_store.pool.close().await;
     let _ = std::fs::remove_file(db_path);
 }
 
@@ -1927,14 +1977,8 @@ async fn startup_reruns_request_kind_migration_after_request_log_self_heal() {
     proxy.key_store.pool.close().await;
     drop(proxy);
 
-    let options = SqliteConnectOptions::new()
-        .filename(&db_str)
-        .create_if_missing(false)
-        .journal_mode(SqliteJournalMode::Wal)
-        .busy_timeout(Duration::from_secs(5));
-    let mut conn = sqlx::SqliteConnection::connect_with(&options)
-        .await
-        .expect("connect rebuild pool");
+    let mut conn =
+        connect_sqlite_test_connection(&db_str, false, false, Duration::from_secs(5)).await;
 
     sqlx::query("PRAGMA foreign_keys = OFF")
         .execute(&mut conn)
@@ -1946,7 +1990,7 @@ async fn startup_reruns_request_kind_migration_after_request_log_self_heal() {
         .expect("begin request_logs rebuild");
     sqlx::query(
         r#"
-        CREATE TABLE request_logs_self_heal (
+        CREATE TABLE observability.request_logs_self_heal (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             api_key_id TEXT,
             auth_token_id TEXT,
@@ -1976,7 +2020,7 @@ async fn startup_reruns_request_kind_migration_after_request_log_self_heal() {
     .expect("create request_logs self-heal table");
     sqlx::query(
         r#"
-        INSERT INTO request_logs_self_heal (
+        INSERT INTO observability.request_logs_self_heal (
             id,
             api_key_id,
             auth_token_id,
@@ -2019,17 +2063,17 @@ async fn startup_reruns_request_kind_migration_after_request_log_self_heal() {
             dropped_headers,
             visibility,
             created_at
-        FROM request_logs
+        FROM observability.request_logs
         "#,
     )
     .execute(&mut conn)
     .await
     .expect("copy request logs without request-kind columns");
-    sqlx::query("DROP TABLE request_logs")
+    sqlx::query("DROP TABLE observability.request_logs")
         .execute(&mut conn)
         .await
         .expect("drop request_logs");
-    sqlx::query("ALTER TABLE request_logs_self_heal RENAME TO request_logs")
+    sqlx::query("ALTER TABLE observability.request_logs_self_heal RENAME TO request_logs")
         .execute(&mut conn)
         .await
         .expect("rename request_logs self-heal table");
@@ -2299,9 +2343,6 @@ async fn request_kind_database_migration_reclaims_dead_running_owner_immediately
 
 #[tokio::test]
 async fn request_kind_database_migration_retries_after_transient_write_lock() {
-    use sqlx::Connection;
-    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
-
     let db_path = temp_db_path("request-kind-migration-retry-after-busy");
     let db_str = db_path.to_string_lossy().to_string();
 
@@ -2316,14 +2357,36 @@ async fn request_kind_database_migration_retries_after_transient_write_lock() {
         .execute(&proxy.key_store.pool)
         .await
         .expect("clear request-kind migration markers");
-    let options = SqliteConnectOptions::new()
-        .filename(&db_path)
-        .create_if_missing(false)
-        .journal_mode(SqliteJournalMode::Wal)
-        .busy_timeout(std::time::Duration::from_millis(1));
-    let mut lock_conn = sqlx::SqliteConnection::connect_with(&options)
-        .await
-        .expect("connect write lock holder");
+    proxy.key_store.pool.close().await;
+    drop(proxy);
+
+    let pool = connect_sqlite_test_pool(&db_str).await;
+    let store = KeyStore {
+        database_path: db_path.to_string_lossy().into_owned(),
+        observability_database_path: sqlite_test_layout(&db_str).observability_database_path,
+        pool,
+        backend_time: BackendTime::system(),
+        token_binding_cache: RwLock::new(std::collections::HashMap::new()),
+        account_quota_resolution_cache: RwLock::new(std::collections::HashMap::new()),
+        request_logs_catalog_cache: RwLock::new(std::collections::HashMap::new()),
+        request_log_retention_cache: RwLock::new(None),
+        user_debug_info_shared_cache: RwLock::new(std::collections::HashMap::new()),
+        request_stats_coalescer: RequestStatsCoalescer::default(),
+        admin_heavy_read_semaphore: Semaphore::new(ADMIN_HEAVY_READ_CONCURRENCY),
+        #[cfg(test)]
+        forced_pending_claim_miss_log_ids: Mutex::new(std::collections::HashSet::new()),
+        forced_quota_subject_lock_loss_subjects: std::sync::Mutex::new(
+            std::collections::HashSet::new(),
+        ),
+    };
+
+    let mut lock_conn = connect_sqlite_test_connection(
+        &db_str,
+        false,
+        false,
+        std::time::Duration::from_millis(1),
+    )
+    .await;
     sqlx::query("BEGIN IMMEDIATE")
         .execute(&mut lock_conn)
         .await
@@ -2331,21 +2394,28 @@ async fn request_kind_database_migration_retries_after_transient_write_lock() {
 
     let release_lock = tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        sqlx::query("COMMIT")
-            .execute(&mut lock_conn)
-            .await
-            .expect("release write lock");
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            match sqlx::query("COMMIT").execute(&mut lock_conn).await {
+                Ok(_) => break,
+                Err(sqlx::Error::Database(err))
+                    if err.message().contains("database is locked")
+                        && tokio::time::Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                Err(err) => panic!("release write lock: {err}"),
+            }
+        }
     });
 
-    proxy
-        .key_store
+    store
         .ensure_request_kind_canonical_migration_v1()
         .await
         .expect("migration should retry after transient busy");
     release_lock.await.expect("join lock release");
 
-    let migration_done_at = proxy
-        .key_store
+    let migration_done_at = store
         .get_meta_i64(META_KEY_REQUEST_KIND_CANONICAL_MIGRATION_V1_DONE)
         .await
         .expect("migration done marker");

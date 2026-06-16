@@ -85,6 +85,41 @@ brief contention visible as HTTP 500s or failed background bookkeeping.
   in-process worker. Same-job duplicate claiming alone is not enough when different logical jobs,
   such as retention GC, quota sync, rollups, and compaction, can all compete for the single writer
   slot.
+- Keep hot-path billing subject serialization in-process for the single-process deployment model.
+  Using a SQLite lock table for every request turns one writer-slot collision into a write-amplified
+  failure mode.
+- Split billing truth from request history. `billing_ledger` should carry the synchronous pending /
+  charged state, while `auth_token_logs` remains the legacy history surface that is mirrored for
+  compatibility.
+- Batch request-derived rollups. `request_logs` should write synchronously, but dashboard/API-key
+  usage, auth-token activity counters, account request-rate buckets, and catalog rollups should be
+  coalesced and flushed in bounded windows instead of being updated per request.
+- If those observability-heavy tables move into an attached sidecar SQLite file, treat them as
+  rebuildable/eventually consistent views rather than HA-trigger-replicated truth. SQLite attached
+  database triggers cannot safely write back into `main`, so the HA outbox should stay focused on
+  core control-plane and billing truth tables.
+- Once observability tables move into a sidecar, test helpers and admin/read paths must become
+  sidecar-aware too. Unqualified schema probes or direct core-only SQLite opens can silently stop
+  covering `request_logs` even though production still reads that table through the attached
+  `observability` database.
+- If a legacy DB is large enough that inline sidecar migration would blow the startup budget, do
+  not force that copy in the readiness path. Keep `observability` attached to the core DB for that
+  startup/maintenance session, and let offline GC or later explicit migration handle the backlog.
+- That large-legacy compatibility path should not also collapse the SQLite pool to a single
+  connection. Doing both at once makes owner-facing summary flushes and early scheduler enqueues
+  contend for one slot, so `/health` may go green while `/api/summary` still returns transient
+  500s.
+- When both `main.request_logs` and `observability.request_logs` can coexist temporarily, schema
+  probes must target the attached schema explicitly. Generic `pragma_table_info('request_logs')`
+  lookups can resolve against the wrong DB and trigger duplicate-column repairs.
+- Owner-facing log pages that rely on coalesced catalog rollups should flush or rebuild those
+  rollups before serving totals/facets. Otherwise the sidecar split removes write pressure from the
+  hot path, but leaves `/api/logs` vulnerable to showing empty totals while raw `request_logs` rows
+  are still present.
+- After moving synchronous billing truth into `billing_ledger`, any admin history query that joins
+  `auth_token_logs` to billing state must qualify legacy-table columns explicitly and avoid
+  unnecessary joins in count/facet queries. Mixed ledger/history reads otherwise regress into
+  `ambiguous column name` failures under ordinary owner-facing token-log filters.
 - For maintenance jobs that mix remote I/O with SQLite writes, split those phases. Remote fetches
   such as forward-proxy GEO refresh or quota `/usage` probes should not hold the SQLite-writing
   execution gate, and they should not pin the queue worker when the remaining DB phase can be
@@ -133,6 +168,8 @@ brief contention visible as HTTP 500s or failed background bookkeeping.
   triggers in mind. For `request_logs`, GC deletes expired rollup buckets separately and suppresses
   the per-row rollup delete trigger inside each batch transaction to avoid spending minutes per
   batch on redundant aggregate updates.
+- If an owner-facing read surface depends on coalesced rollups, flush the batcher before reading
+  or rebuild from source rows when a legacy/manual path bypasses the coalescer.
 
 ## References
 
