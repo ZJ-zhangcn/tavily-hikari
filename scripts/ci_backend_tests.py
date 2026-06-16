@@ -120,6 +120,22 @@ def artifact_target_dir_name(target_id):
     return f"{slug}-{digest}"
 
 
+SUPPORT_BINARIES_BY_TARGET = {
+    "integration:mcp_billing_regression": {
+        "TAVILY_HIKARI_TEST_BIN": "tavily-hikari",
+    },
+    "integration:mcp_session_affinity_e2e": {
+        "TAVILY_HIKARI_TEST_BIN": "tavily-hikari",
+    },
+    "integration:request_kind_canonical_backfill": {
+        "REQUEST_KIND_CANONICAL_BACKFILL_TEST_BIN": "request_kind_canonical_backfill",
+    },
+    "integration:server_http_contract": {
+        "TAVILY_HIKARI_TEST_BIN": "tavily-hikari",
+    },
+}
+
+
 def target_matches_requested(target_name, target_kind, requested):
     target_kind = set(target_kind)
     return (
@@ -228,7 +244,7 @@ def capture_test_list_via_executables(list_args):
     return sorted(set(tests))
 
 
-def build_test_executables(cargo_args):
+def build_test_executables(cargo_args, include_non_test_binaries=False):
     maybe_prune_build_artifacts()
     requested = parse_requested_targets(cargo_args)
     cmd = BASE_CARGO_ARGS + cargo_args + ["--no-run", "--message-format", "json"]
@@ -248,17 +264,20 @@ def build_test_executables(cargo_args):
             continue
         target = record.get("target", {})
         profile = record.get("profile", {})
-        if not profile.get("test"):
+        is_test_profile = profile.get("test", False)
+        if not is_test_profile and not include_non_test_binaries:
             continue
         target_name = target.get("name")
         target_kind = target.get("kind", [])
-        if not target_matches_requested(target_name, target_kind, requested):
+        is_plain_binary = "bin" in target_kind and not is_test_profile
+        if not is_plain_binary and not target_matches_requested(target_name, target_kind, requested):
             continue
         executables.append(
             {
                 "name": target_name,
                 "kind": tuple(target_kind),
                 "path": executable,
+                "test_profile": is_test_profile,
             }
         )
     return executables
@@ -298,6 +317,10 @@ def list_tests_from_executables(executables):
 
 
 def run_exact_tests(executable_path, selected_tests):
+    run_exact_tests_with_env(executable_path, selected_tests)
+
+
+def run_exact_tests_with_env(executable_path, selected_tests, extra_env=None):
     if not selected_tests:
         return
 
@@ -308,10 +331,25 @@ def run_exact_tests(executable_path, selected_tests):
             for batch in batches
         ],
         max_workers=min(6, len(batches)),
+        extra_env=extra_env,
     )
 
 
-def run_filtered_tests(executable_path, filters, test_threads, process_workers):
+def run_filtered_tests(
+    executable_path, filters, test_threads, process_workers, extra_env=None
+):
+    run_filtered_tests_with_env(
+        executable_path,
+        filters,
+        test_threads,
+        process_workers,
+        extra_env=extra_env,
+    )
+
+
+def run_filtered_tests_with_env(
+    executable_path, filters, test_threads, process_workers, extra_env=None
+):
     if not filters:
         return
 
@@ -322,10 +360,14 @@ def run_filtered_tests(executable_path, filters, test_threads, process_workers):
         [executable_path, f"--test-threads={test_threads}", filter_name]
         for filter_name in filters
     ]
-    run_parallel_test_commands(commands, max_workers=min(process_workers, len(commands)))
+    run_parallel_test_commands(
+        commands,
+        max_workers=min(process_workers, len(commands)),
+        extra_env=extra_env,
+    )
 
 
-def run_parallel_test_commands(commands, max_workers):
+def run_parallel_test_commands(commands, max_workers, extra_env=None):
     if not commands:
         return
 
@@ -339,6 +381,7 @@ def run_parallel_test_commands(commands, max_workers):
                 cwd=ROOT,
                 capture_output=True,
                 text=True,
+                env=extra_env,
             ): command
             for command in commands
         }
@@ -359,9 +402,13 @@ def run_parallel_test_commands(commands, max_workers):
 
 
 def run_all_tests(executable_path, test_threads):
+    run_all_tests_with_env(executable_path, test_threads)
+
+
+def run_all_tests_with_env(executable_path, test_threads, extra_env=None):
     cmd = [executable_path, f"--test-threads={test_threads}"]
     print("+", " ".join(cmd), flush=True)
-    subprocess.run(cmd, cwd=ROOT, check=True)
+    subprocess.run(cmd, cwd=ROOT, check=True, env=extra_env)
 
 
 def build_artifacts(output_dir):
@@ -370,15 +417,23 @@ def build_artifacts(output_dir):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     combined_args = combined_coverage_list_args(targets)
-    executables = build_test_executables(combined_args)
+    executables = build_test_executables(combined_args, include_non_test_binaries=True)
     if not executables:
         raise SystemExit("no test executables produced while preparing backend test artifacts")
     built_executables_by_target = {target_id: [] for target_id in targets}
     for executable in executables:
+        if not executable.get("test_profile", False):
+            continue
         for target_id, target in targets.items():
             requested = parse_requested_targets(target["list_args"])
             if target_matches_requested(executable["name"], executable["kind"], requested):
                 built_executables_by_target[target_id].append(executable)
+
+    built_support_binaries = {}
+    for executable in executables:
+        if "bin" not in executable["kind"] or executable.get("test_profile", True):
+            continue
+        built_support_binaries[executable["name"]] = executable["path"]
 
     _, shards = load_manifest()
     target_shards = defaultdict(list)
@@ -388,6 +443,8 @@ def build_artifacts(output_dir):
     executables_requiring_test_lists = []
     for target_id, executable_entries in built_executables_by_target.items():
         shards_for_target = target_shards[target_id]
+        if not shards_for_target:
+            continue
         needs_test_list = not (
             len(shards_for_target) == 1 and shards_for_target[0]["mode"] == "all"
         )
@@ -403,6 +460,7 @@ def build_artifacts(output_dir):
         target_dir = output_dir / artifact_target_dir_name(target_id)
         target_dir.mkdir(parents=True, exist_ok=True)
         metadata = {}
+        support_binary_metadata = {}
         for executable in executable_entries:
             source = Path(executable["path"])
             destination = target_dir / source.name
@@ -413,8 +471,24 @@ def build_artifacts(output_dir):
             executable_tests = executable.get("tests")
             if executable_tests is not None:
                 metadata[destination.name] = executable_tests
+        for env_name, binary_name in SUPPORT_BINARIES_BY_TARGET.get(target_id, {}).items():
+            source_path = built_support_binaries.get(binary_name)
+            if source_path is None:
+                raise SystemExit(
+                    f"missing support binary {binary_name} required by coverage target {target_id}"
+                )
+            source = Path(source_path)
+            destination = target_dir / source.name
+            if not destination.exists():
+                shutil.copy2(source, destination)
+                destination.chmod(
+                    destination.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+                )
+            support_binary_metadata[env_name] = destination.name
         with (target_dir / "tests.json").open("w", encoding="utf-8") as fh:
             json.dump(metadata, fh, sort_keys=True)
+        with (target_dir / "support_binaries.json").open("w", encoding="utf-8") as fh:
+            json.dump(support_binary_metadata, fh, sort_keys=True)
 
 
 def load_prebuilt_executables(artifact_root, coverage_target):
@@ -432,8 +506,19 @@ def load_prebuilt_executables(artifact_root, coverage_target):
         with metadata_path.open("r", encoding="utf-8") as fh:
             metadata = json.load(fh)
 
+    support_binaries = {}
+    support_binaries_path = target_dir / "support_binaries.json"
+    if support_binaries_path.exists():
+        with support_binaries_path.open("r", encoding="utf-8") as fh:
+            support_binaries = json.load(fh)
+    support_binary_names = set(support_binaries.values())
+
     executables = sorted(
-        path for path in target_dir.iterdir() if path.is_file() and path.name != "tests.json"
+        path
+        for path in target_dir.iterdir()
+        if path.is_file()
+        and path.name not in {"tests.json", "support_binaries.json"}
+        and path.name not in support_binary_names
     )
     if not executables:
         raise SystemExit(f"no executable files found in {target_dir}")
@@ -442,7 +527,10 @@ def load_prebuilt_executables(artifact_root, coverage_target):
     for path in executables:
         path.chmod(path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
         normalized.append({"name": path.name, "path": str(path), "tests": metadata.get(path.name)})
-    return normalized
+    resolved_support_binaries = {
+        env_name: str(target_dir / file_name) for env_name, file_name in support_binaries.items()
+    }
+    return normalized, resolved_support_binaries
 
 
 def populate_executable_test_lists(executables):
@@ -556,9 +644,8 @@ def verify_manifest(prebuilt_root=None):
             continue
 
         if prebuilt_root:
-            tests = list_tests_from_executables(
-                load_prebuilt_executables(prebuilt_root, target_id)
-            )
+            executables, _support_binaries = load_prebuilt_executables(prebuilt_root, target_id)
+            tests = list_tests_from_executables(executables)
         else:
             tests = capture_test_list_via_executables(target["list_args"])
         owners = defaultdict(list)
@@ -622,17 +709,20 @@ def run_shard(shard_id, prebuilt_root=None, filtered_test_threads=None):
     filtered_process_workers = shard["filtered_process_workers"]
 
     target_id = shard["coverage_target"]
+    extra_env = os.environ.copy()
     if shard["mode"] == "all":
         if prebuilt_root:
-            executables = load_prebuilt_executables(prebuilt_root, target_id)
+            executables, support_binaries = load_prebuilt_executables(prebuilt_root, target_id)
+            extra_env.update(support_binaries)
         else:
             executables = build_test_executables(shard["run_args"])
         for executable in executables:
-            run_all_tests(executable["path"], filtered_test_threads)
+            run_all_tests_with_env(executable["path"], filtered_test_threads, extra_env=extra_env)
         return
 
     if prebuilt_root:
-        executables = load_prebuilt_executables(prebuilt_root, target_id)
+        executables, support_binaries = load_prebuilt_executables(prebuilt_root, target_id)
+        extra_env.update(support_binaries)
         target_tests = list_tests_from_executables(executables)
     else:
         executables = build_test_executables(shard["run_args"])
@@ -661,10 +751,13 @@ def run_shard(shard_id, prebuilt_root=None, filtered_test_threads=None):
             filter_groups,
             filtered_test_threads,
             filtered_process_workers,
+            extra_env=extra_env,
         )
         for serial_filter in serial_filter_groups:
-            run_filtered_tests(executable["path"], [serial_filter], 1, 1)
-        run_exact_tests(executable["path"], exact_fallback)
+            run_filtered_tests(
+                executable["path"], [serial_filter], 1, 1, extra_env=extra_env
+            )
+        run_exact_tests_with_env(executable["path"], exact_fallback, extra_env=extra_env)
 
 
 def benchmark_shards(max_workers, filtered_test_threads=None):

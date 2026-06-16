@@ -477,6 +477,46 @@ pub(crate) async fn begin_immediate_sqlite_connection(
     Ok(conn)
 }
 
+pub(crate) async fn begin_immediate_sqlite_connection_with_retry(
+    pool: &SqlitePool,
+    backend_time: &BackendTime,
+    operation: &str,
+    retry_window: Duration,
+) -> Result<sqlx::pool::PoolConnection<Sqlite>, ProxyError> {
+    let deadline = backend_time.instant_now() + retry_window;
+    let mut attempt = 0;
+    loop {
+        match begin_immediate_sqlite_connection(pool).await {
+            Ok(conn) => return Ok(conn),
+            Err(err)
+                if sleep_before_sqlite_transient_write_retry(
+                    backend_time,
+                    operation,
+                    attempt,
+                    deadline,
+                    &err,
+                )
+                .await =>
+            {
+                attempt += 1;
+            }
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+pub(crate) async fn begin_immediate_sqlite_connection_for_monthly_quota_rebase(
+    pool: &SqlitePool,
+) -> Result<sqlx::pool::PoolConnection<Sqlite>, ProxyError> {
+    begin_immediate_sqlite_connection_with_retry(
+        pool,
+        &BackendTime::system(),
+        "rebase_current_month_business_quota_with_pool",
+        Duration::from_secs(5),
+    )
+    .await
+}
+
 pub(crate) async fn begin_read_snapshot_sqlite_connection(
     pool: &SqlitePool,
 ) -> Result<sqlx::pool::PoolConnection<Sqlite>, ProxyError> {

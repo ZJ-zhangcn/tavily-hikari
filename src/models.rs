@@ -2656,7 +2656,7 @@ pub(crate) async fn rebase_current_month_business_quota_with_pool(
     meta_key: &str,
     update_meta: bool,
 ) -> Result<MonthlyQuotaRebaseReport, ProxyError> {
-    let mut conn = begin_immediate_sqlite_connection(pool).await?;
+    let mut conn = begin_immediate_sqlite_connection_for_monthly_quota_rebase(pool).await?;
     let windows = BillingLedgerWindows::from_now(now);
 
     let result = async {
@@ -2735,7 +2735,6 @@ pub(crate) async fn rebase_current_month_business_quota_with_pool(
                 }
             }
         }
-
         let meta_updated =
             update_meta && previous_rebase_month_start != Some(windows.month_window_start);
         if update_meta {
