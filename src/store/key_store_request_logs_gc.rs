@@ -84,7 +84,7 @@ impl KeyStore {
         threshold: i64,
         batch_size: i64,
     ) -> Result<i64, ProxyError> {
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let deadline = self.backend_time.deadline_after(Duration::from_secs(10));
         let mut retry_attempt = 0usize;
         loop {
             let delete_trigger = Self::request_log_catalog_rollup_delete_trigger_sql();
@@ -122,6 +122,7 @@ impl KeyStore {
                 Err(err) => {
                     let err = ProxyError::Database(err);
                     if sleep_before_sqlite_transient_write_retry(
+                        &self.backend_time,
                         "request logs gc batch delete",
                         retry_attempt,
                         deadline,
@@ -193,7 +194,7 @@ impl KeyStore {
             if !self.table_exists(table).await? {
                 continue;
             }
-            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            let deadline = self.backend_time.deadline_after(Duration::from_secs(10));
             let mut retry_attempt = 0usize;
             loop {
                 match sqlx::query(sql)
@@ -206,6 +207,7 @@ impl KeyStore {
                     Err(err) => {
                         let err = ProxyError::Database(err);
                         if sleep_before_sqlite_transient_write_retry(
+                            &self.backend_time,
                             operation,
                             retry_attempt,
                             deadline,
@@ -233,7 +235,7 @@ impl KeyStore {
         if !self.table_exists("request_log_catalog_rollups").await? {
             return Ok(0);
         }
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let deadline = self.backend_time.deadline_after(Duration::from_secs(10));
         let mut retry_attempt = 0usize;
         loop {
             match sqlx::query(
@@ -257,6 +259,7 @@ impl KeyStore {
                 Err(err) => {
                     let err = ProxyError::Database(err);
                     if sleep_before_sqlite_transient_write_retry(
+                        &self.backend_time,
                         "request log rollups gc batch delete",
                         retry_attempt,
                         deadline,
@@ -362,9 +365,13 @@ impl KeyStore {
             .map_err(ProxyError::from)
     }
 
-    fn request_log_body_is_expired(created_at: i64, retention_days: i64) -> bool {
+    fn request_log_body_is_expired(
+        created_at: i64,
+        retention_days: i64,
+        now: chrono::DateTime<Local>,
+    ) -> bool {
         retention_days <= 0
-            || created_at < configured_request_logs_retention_threshold_utc_ts(retention_days)
+            || created_at < configured_request_logs_retention_threshold_utc_ts_at(retention_days, now)
     }
 
     fn request_log_body_cursor_restart_at(
@@ -442,14 +449,16 @@ impl KeyStore {
         &self,
         settings: &RequestLogRetentionSettings,
         batch_size: i64,
-        deadline: std::time::Instant,
+        deadline: Instant,
     ) -> Result<RequestLogBodyGcBatch, ProxyError> {
         let mut cleaned = 0_i64;
         let mut has_more = false;
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let mut cursor = self.get_request_log_body_gc_cursor().await?;
-        let row_retention_threshold =
-            configured_request_logs_retention_threshold_utc_ts(settings.max_log_retention_days);
+        let row_retention_threshold = configured_request_logs_retention_threshold_utc_ts_at(
+            settings.max_log_retention_days,
+            self.backend_time.local_now(),
+        );
         if cursor
             .and_then(|cursor| cursor.restart_at)
             .is_some_and(|restart_at| restart_at <= now)
@@ -463,7 +472,7 @@ impl KeyStore {
         let scan_limit = batch_size.saturating_mul(REQUEST_LOG_BODY_GC_SCAN_MULTIPLIER);
         'scan: while cleaned < batch_size
             && scanned < scan_limit
-            && std::time::Instant::now() < deadline
+            && self.backend_time.instant_now() < deadline
         {
             let candidates = self
                 .fetch_request_log_body_gc_candidates(batch_size, after, row_retention_threshold)
@@ -501,7 +510,11 @@ impl KeyStore {
                     )
                     .await?;
                 let retention_days = retention_decision.days;
-                if !Self::request_log_body_is_expired(candidate.created_at, retention_days) {
+                if !Self::request_log_body_is_expired(
+                    candidate.created_at,
+                    retention_days,
+                    self.backend_time.local_now(),
+                ) {
                     let cursor_retention_days = Self::request_log_body_cursor_retention_days(
                         settings,
                         &retention_decision,
@@ -519,7 +532,7 @@ impl KeyStore {
                             .map(|current| current.min(candidate_restart_at))
                             .unwrap_or(candidate_restart_at),
                     );
-                    if scanned >= scan_limit || std::time::Instant::now() >= deadline {
+                    if scanned >= scan_limit || self.backend_time.instant_now() >= deadline {
                         has_more = true;
                         break 'scan;
                     }
@@ -581,6 +594,7 @@ impl KeyStore {
                         Err(err) => {
                             let err = ProxyError::Database(err);
                             if sleep_before_sqlite_transient_write_retry(
+                                &self.backend_time,
                                 "request log body cleanup",
                                 retry_attempt,
                                 deadline,
@@ -598,7 +612,7 @@ impl KeyStore {
                 cleaned += result.rows_affected() as i64;
                 if cleaned >= batch_size
                     || scanned >= scan_limit
-                    || std::time::Instant::now() >= deadline
+                    || self.backend_time.instant_now() >= deadline
                 {
                     has_more = true;
                     break 'scan;
@@ -617,7 +631,7 @@ impl KeyStore {
                 }
             }))
             .await?;
-        } else if std::time::Instant::now() >= deadline && after.is_some() {
+        } else if self.backend_time.instant_now() >= deadline && after.is_some() {
             has_more = true;
             self.set_request_log_body_gc_cursor(after.map(|(created_at, id)| {
                 RequestLogBodyGcCursor {
@@ -652,15 +666,17 @@ impl KeyStore {
     ) -> Result<RequestLogsGcReport, ProxyError> {
         let batch_size = options.batch_size.max(1);
         let max_batches = options.max_batches.max(1);
-        let deadline = std::time::Instant::now() + Duration::from_secs(options.max_runtime_secs);
-        let started = std::time::Instant::now();
+        let deadline = self
+            .backend_time
+            .deadline_after(Duration::from_secs(options.max_runtime_secs));
+        let started = self.backend_time.instant_now();
         let mut cleaned_request_log_bodies = 0_i64;
         let mut deleted_request_logs = 0_i64;
         let mut deleted_rollups = 0_i64;
         let mut body_batch_has_more = false;
         let mut batches = 0_i64;
 
-        while batches < max_batches && std::time::Instant::now() < deadline {
+        while batches < max_batches && self.backend_time.instant_now() < deadline {
             let body_batch = self
                 .clear_request_log_body_batch(settings, batch_size, deadline)
                 .await?;
@@ -687,7 +703,9 @@ impl KeyStore {
             }
 
             if batches < max_batches && options.inter_batch_sleep_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(options.inter_batch_sleep_ms)).await;
+                self.backend_time
+                    .sleep(Duration::from_millis(options.inter_batch_sleep_ms))
+                    .await;
             }
         }
 

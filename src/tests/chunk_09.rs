@@ -1,18 +1,36 @@
 async fn hold_sqlite_write_lock_for_test(
     pool: &SqlitePool,
 ) -> tokio::task::JoinHandle<()> {
-    hold_sqlite_write_lock_for_test_for(pool, Duration::from_millis(5_200)).await
+    hold_sqlite_write_lock_for_test_for(pool, Duration::from_millis(120)).await
+}
+
+async fn begin_held_sqlite_write_lock_for_test(pool: &SqlitePool) -> sqlx::pool::PoolConnection<sqlx::Sqlite> {
+    begin_immediate_sqlite_connection(pool)
+        .await
+        .expect("begin immediate transaction")
 }
 
 async fn hold_sqlite_write_lock_for_test_for(
     pool: &SqlitePool,
     hold_for: Duration,
 ) -> tokio::task::JoinHandle<()> {
+    hold_sqlite_write_lock_for_test_for_with_release(pool, hold_for, None).await
+}
+
+async fn hold_sqlite_write_lock_for_test_for_with_release(
+    pool: &SqlitePool,
+    hold_for: Duration,
+    release: Option<crate::ManualBackendTime>,
+) -> tokio::task::JoinHandle<()> {
     let mut immediate_conn = begin_immediate_sqlite_connection(pool)
         .await
         .expect("begin immediate transaction");
     tokio::spawn(async move {
-        tokio::time::sleep(hold_for).await;
+        if let Some(release) = release {
+            release.advance(hold_for).await;
+        } else {
+            tokio::time::sleep(hold_for).await;
+        }
         sqlx::query("ROLLBACK")
             .execute(&mut *immediate_conn)
             .await
@@ -20,17 +38,63 @@ async fn hold_sqlite_write_lock_for_test_for(
     })
 }
 
+async fn ensure_quota_subject_lock_schema_for_test(pool: &SqlitePool) {
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS quota_subject_locks (
+            subject TEXT PRIMARY KEY,
+            owner TEXT NOT NULL,
+            expires_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        )
+        "#,
+    )
+    .execute(pool)
+    .await
+    .expect("create quota_subject_locks table");
+    sqlx::query(
+        r#"CREATE INDEX IF NOT EXISTS idx_quota_subject_locks_expires_at
+           ON quota_subject_locks(expires_at)"#,
+    )
+    .execute(pool)
+    .await
+    .expect("create quota_subject_locks expires index");
+}
+
 #[tokio::test]
 async fn quota_subject_lock_retries_transient_sqlite_write_lock() {
     let db_path = temp_db_path("quota-subject-lock-retries-sqlite-lock");
-    let db_str = db_path.to_string_lossy().to_string();
-    let proxy = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
+    let options = SqliteConnectOptions::new()
+        .filename(&db_path)
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(std::time::Duration::from_millis(1));
+    let pool = SqlitePoolOptions::new()
+        .min_connections(1)
+        .max_connections(5)
+        .connect_with(options)
         .await
-        .expect("proxy created");
-    let release = hold_sqlite_write_lock_for_test(&proxy.key_store.pool).await;
+        .expect("busy-test pool");
+    let store = KeyStore {
+        database_path: db_path.to_string_lossy().into_owned(),
+        pool,
+        backend_time: BackendTime::system(),
+        token_binding_cache: RwLock::new(std::collections::HashMap::new()),
+        account_quota_resolution_cache: RwLock::new(std::collections::HashMap::new()),
+        request_logs_catalog_cache: RwLock::new(std::collections::HashMap::new()),
+        request_log_retention_cache: RwLock::new(None),
+        user_debug_info_shared_cache: RwLock::new(std::collections::HashMap::new()),
+        admin_heavy_read_semaphore: Semaphore::new(ADMIN_HEAVY_READ_CONCURRENCY),
+        #[cfg(test)]
+        forced_pending_claim_miss_log_ids: Mutex::new(std::collections::HashSet::new()),
+        forced_quota_subject_lock_loss_subjects: std::sync::Mutex::new(
+            std::collections::HashSet::new(),
+        ),
+    };
+    ensure_quota_subject_lock_schema_for_test(&store.pool).await;
+    let release = hold_sqlite_write_lock_for_test_for(&store.pool, Duration::from_millis(120)).await;
 
-    let lease = proxy
-        .key_store
+    let lease = store
         .acquire_quota_subject_lock(
             "test:quota-subject-lock-retry",
             Duration::from_secs(20),
@@ -39,8 +103,7 @@ async fn quota_subject_lock_retries_transient_sqlite_write_lock() {
         .await
         .expect("acquire lock after transient sqlite write lock");
     assert_eq!(lease.subject, "test:quota-subject-lock-retry");
-    proxy
-        .key_store
+    store
         .release_quota_subject_lock(&lease)
         .await
         .expect("release lock");
@@ -59,9 +122,13 @@ async fn scheduled_job_start_retries_transient_sqlite_write_lock() {
         .await
         .expect("proxy created");
     let release = hold_sqlite_write_lock_for_test(&proxy.key_store.pool).await;
+    let job_type = format!(
+        "sqlite_lock_retry_test_{}",
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+    );
 
     let job_id = proxy
-        .scheduled_job_start("sqlite_lock_retry_test", None, 1)
+        .scheduled_job_start(&job_type, None, 1)
         .await
         .expect("scheduled job starts after transient sqlite write lock");
     assert!(job_id > 0);
@@ -532,11 +599,7 @@ async fn scheduled_job_enqueue_coalesces_running_manual_job_without_waiting_for_
         .await
         .expect("claim manual gc job")
         .expect("manual gc job created");
-    let release = hold_sqlite_write_lock_for_test_for(
-        &proxy.key_store.pool,
-        Duration::from_secs(12),
-    )
-    .await;
+    let mut immediate_conn = begin_held_sqlite_write_lock_for_test(&proxy.key_store.pool).await;
 
     let started = Instant::now();
     let manual = proxy
@@ -554,7 +617,10 @@ async fn scheduled_job_enqueue_coalesces_running_manual_job_without_waiting_for_
     assert_eq!(manual.status, "running");
     assert_eq!(manual.trigger_source, "manual");
 
-    release.await.expect("release task");
+    sqlx::query("ROLLBACK")
+        .execute(&mut *immediate_conn)
+        .await
+        .expect("rollback immediate transaction");
 
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
@@ -1485,7 +1551,14 @@ async fn request_log_policy_applies_heavy_usage_business_body_days() {
 async fn request_logs_gc_clears_expired_body_without_deleting_visible_row() {
     let db_path = temp_db_path("request-log-retention-gc-clears-body");
     let db_str = db_path.to_string_lossy().to_string();
-    let proxy = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
+    let (backend_time, manual_clock) = crate::BackendTime::manual_from_ts(1_700_000_000);
+    let proxy = TavilyProxy::with_options_and_time(
+        Vec::<String>::new(),
+        DEFAULT_UPSTREAM,
+        &db_str,
+        crate::TavilyProxyOptions::from_database_path(&db_str),
+        backend_time,
+    )
         .await
         .expect("proxy created");
     let mut settings = proxy
@@ -1499,7 +1572,8 @@ async fn request_logs_gc_clears_expired_body_without_deleting_visible_row() {
         .await
         .expect("save retention settings");
 
-    let old_ts = Utc::now().timestamp() - 2 * SECS_PER_DAY;
+    manual_clock.set_now_ts(1_700_000_000);
+    let old_ts = manual_clock.now_ts() - 2 * SECS_PER_DAY;
     let log_id: i64 = sqlx::query_scalar(
         r#"
         INSERT INTO request_logs (
@@ -1828,9 +1902,16 @@ async fn request_logs_gc_scans_past_unexpired_body_to_clear_later_expired_body()
     let _env_guard = RequestLogsRetentionEnvGuard::set_32_days();
     let db_path = temp_db_path("request-log-retention-gc-scans-past-unexpired");
     let db_str = db_path.to_string_lossy().to_string();
-    let proxy = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
-        .await
-        .expect("proxy created");
+    let (backend_time, manual_clock) = crate::BackendTime::manual_from_ts(1_700_000_000);
+    let proxy = TavilyProxy::with_options_and_time(
+        Vec::<String>::new(),
+        DEFAULT_UPSTREAM,
+        &db_str,
+        crate::TavilyProxyOptions::from_database_path(&db_str),
+        backend_time,
+    )
+    .await
+    .expect("proxy created");
     let user = proxy
         .upsert_oauth_account(&OAuthAccountProfile {
             provider: "github".to_string(),
@@ -1860,8 +1941,9 @@ async fn request_logs_gc_scans_past_unexpired_body_to_clear_later_expired_body()
         .set_system_settings(&settings)
         .await
         .expect("save retention settings");
+    manual_clock.set_now_ts(1_700_000_000);
 
-    let now = Utc::now().timestamp();
+    let now = manual_clock.now_ts();
     let unexpired_id: i64 = sqlx::query_scalar(
         r#"
         INSERT INTO request_logs (
@@ -1942,6 +2024,7 @@ async fn request_logs_gc_scans_past_unexpired_body_to_clear_later_expired_body()
     .fetch_one(&proxy.key_store.pool)
     .await
     .expect("seed another expired non-business body");
+    manual_clock.advance_wall(Duration::from_secs(SECS_PER_MINUTE as u64 + 1));
     let second_report = proxy
         .gc_request_logs_with_options(RequestLogsGcOptions {
             batch_size: 10,

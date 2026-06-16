@@ -1,8 +1,31 @@
 impl KeyStore {
+    #[cfg(test)]
+    async fn acquire_test_schema_init_guard() -> tokio::sync::OwnedSemaphorePermit {
+        static LOCK: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
+            std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(4)))
+            .clone()
+            .acquire_owned()
+            .await
+            .expect("test schema init semaphore closed")
+    }
+
+    #[allow(dead_code)]
     pub(crate) async fn new(database_path: &str) -> Result<Self, ProxyError> {
+        Self::new_with_time(database_path, BackendTime::system()).await
+    }
+
+    pub(crate) async fn new_with_time(
+        database_path: &str,
+        backend_time: BackendTime,
+    ) -> Result<Self, ProxyError> {
+        #[cfg(test)]
+        let _schema_init_guard = Self::acquire_test_schema_init_guard().await;
+        let pool = open_sqlite_pool(database_path, true, false).await?;
         let store = Self {
             database_path: database_path.to_string(),
-            pool: open_sqlite_pool(database_path, true, false).await?,
+            pool,
+            backend_time,
             token_binding_cache: RwLock::new(HashMap::new()),
             account_quota_resolution_cache: RwLock::new(HashMap::new()),
             request_logs_catalog_cache: RwLock::new(HashMap::new()),
@@ -20,9 +43,20 @@ impl KeyStore {
     pub(crate) async fn open_for_request_logs_gc(
         database_path: &str,
     ) -> Result<Self, ProxyError> {
+        Self::open_for_request_logs_gc_with_time(database_path, BackendTime::system()).await
+    }
+
+    pub(crate) async fn open_for_request_logs_gc_with_time(
+        database_path: &str,
+        backend_time: BackendTime,
+    ) -> Result<Self, ProxyError> {
+        #[cfg(test)]
+        let _schema_init_guard = Self::acquire_test_schema_init_guard().await;
+        let pool = open_sqlite_pool(database_path, true, false).await?;
         let store = Self {
             database_path: database_path.to_string(),
-            pool: open_sqlite_pool(database_path, true, false).await?,
+            pool,
+            backend_time,
             token_binding_cache: RwLock::new(HashMap::new()),
             account_quota_resolution_cache: RwLock::new(HashMap::new()),
             request_logs_catalog_cache: RwLock::new(HashMap::new()),
@@ -1354,7 +1388,7 @@ impl KeyStore {
             self.backfill_api_key_created_at().await?;
             self.set_meta_i64(
                 META_KEY_API_KEY_CREATED_AT_BACKFILL_V1,
-                Utc::now().timestamp(),
+                self.backend_time.now_ts(),
             )
             .await?;
         }
@@ -1459,7 +1493,7 @@ impl KeyStore {
         {
             self.set_meta_i64(
                 META_KEY_BUSINESS_QUOTA_CREDITS_CUTOVER_V1,
-                Utc::now().timestamp(),
+                self.backend_time.now_ts(),
             )
             .await?;
         }
@@ -1481,7 +1515,7 @@ impl KeyStore {
             self.backfill_account_quota_inherits_defaults_v1().await?;
             self.set_meta_i64(
                 META_KEY_ACCOUNT_QUOTA_INHERITS_DEFAULTS_BACKFILL_V1,
-                Utc::now().timestamp(),
+                self.backend_time.now_ts(),
             )
             .await?;
         }
@@ -1492,7 +1526,7 @@ impl KeyStore {
         {
             self.set_meta_i64(
                 META_KEY_ACCOUNT_QUOTA_ZERO_BASE_CUTOVER_V1,
-                Utc::now().timestamp(),
+                self.backend_time.now_ts(),
             )
             .await?;
         }
@@ -1511,7 +1545,7 @@ impl KeyStore {
             .is_none()
         {
             self.force_user_relogin_v1().await?;
-            self.set_meta_i64(META_KEY_FORCE_USER_RELOGIN_V1, Utc::now().timestamp())
+            self.set_meta_i64(META_KEY_FORCE_USER_RELOGIN_V1, self.backend_time.now_ts())
                 .await?;
         }
         self.seed_linuxdo_system_tags().await?;
@@ -1523,7 +1557,7 @@ impl KeyStore {
             self.backfill_linuxdo_system_tag_default_deltas_v1().await?;
             self.set_meta_i64(
                 META_KEY_LINUXDO_SYSTEM_TAG_DEFAULTS_V1,
-                Utc::now().timestamp(),
+                self.backend_time.now_ts(),
             )
             .await?;
         }
@@ -1534,11 +1568,11 @@ impl KeyStore {
         if self
             .get_meta_i64(META_KEY_BUSINESS_QUOTA_MONTHLY_REBASE_V1)
             .await?
-            != Some(start_of_month(Utc::now()).timestamp())
+            != Some(start_of_month(self.backend_time.now_utc()).timestamp())
         {
             match rebase_current_month_business_quota_with_pool(
                 &self.pool,
-                Utc::now(),
+                self.backend_time.now_utc(),
                 META_KEY_BUSINESS_QUOTA_MONTHLY_REBASE_V1,
                 true,
             )
@@ -1556,6 +1590,7 @@ impl KeyStore {
     }
 
     async fn ensure_ha_schema(&self) -> Result<(), ProxyError> {
+        let mut conn = self.pool.acquire().await?;
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS ha_node_state (
@@ -1573,11 +1608,11 @@ impl KeyStore {
             )
             "#,
         )
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?;
         if !self.table_column_exists("ha_node_state", "message").await? {
             sqlx::query("ALTER TABLE ha_node_state ADD COLUMN message TEXT")
-                .execute(&self.pool)
+                .execute(&mut *conn)
                 .await?;
         }
         for (column, ddl) in [
@@ -1600,7 +1635,7 @@ impl KeyStore {
             ),
         ] {
             if !self.table_column_exists("ha_node_state", column).await? {
-                sqlx::query(ddl).execute(&self.pool).await?;
+                sqlx::query(ddl).execute(&mut *conn).await?;
             }
         }
 
@@ -1616,7 +1651,7 @@ impl KeyStore {
             )
             "#,
         )
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?;
 
         sqlx::query(
@@ -1634,7 +1669,7 @@ impl KeyStore {
             )
             "#,
         )
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?;
 
         sqlx::query(
@@ -1650,7 +1685,7 @@ impl KeyStore {
             )
             "#,
         )
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?;
 
         sqlx::query(
@@ -1683,7 +1718,7 @@ impl KeyStore {
             )
             "#,
         )
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?;
         sqlx::query(
             r#"
@@ -1692,22 +1727,22 @@ impl KeyStore {
             )
             "#,
         )
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?;
         sqlx::query("DELETE FROM ha_outbox_suppression WHERE id = 'local'")
-            .execute(&self.pool)
+            .execute(&mut *conn)
             .await?;
         sqlx::query(
             r#"CREATE INDEX IF NOT EXISTS idx_ha_outbox_resource
                ON ha_outbox(resource, resource_id, seq)"#,
         )
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?;
         sqlx::query(
             r#"CREATE INDEX IF NOT EXISTS idx_ha_outbox_created
                ON ha_outbox(created_at, seq)"#,
         )
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?;
 
         sqlx::query(
@@ -1719,7 +1754,7 @@ impl KeyStore {
             )
             "#,
         )
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?;
 
         self.ensure_ha_outbox_triggers().await?;

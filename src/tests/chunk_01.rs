@@ -897,8 +897,43 @@ fn sanitize_mcp_headers_drops_fingerprint_headers_and_sets_proxy_user_agent() {
 }
 
 fn temp_db_path(prefix: &str) -> PathBuf {
-    let file = format!("{}-{}.db", prefix, nanoid!(8));
-    std::env::temp_dir().join(file)
+    static CLEANUP_ONCE: OnceLock<()> = OnceLock::new();
+    CLEANUP_ONCE.get_or_init(cleanup_stale_test_db_dirs);
+    let dir = std::env::temp_dir().join(format!(
+        "tavily-hikari-libtestdb-{}-{}",
+        std::process::id(),
+        nanoid!(8)
+    ));
+    std::fs::create_dir_all(&dir).expect("create lib test temp dir");
+    dir.join(format!("{prefix}.db"))
+}
+
+fn cleanup_stale_test_db_dirs() {
+    let tmp_dir = std::env::temp_dir();
+    let Ok(entries) = std::fs::read_dir(&tmp_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        let Some(pid_part) = name
+            .strip_prefix("tavily-hikari-libtestdb-")
+            .and_then(|suffix| suffix.split('-').next())
+        else {
+            continue;
+        };
+        let Ok(pid) = pid_part.parse::<u32>() else {
+            continue;
+        };
+        let is_live = unsafe { libc::kill(pid as i32, 0) } == 0
+            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+        if pid == std::process::id() || is_live {
+            continue;
+        }
+        let _ = std::fs::remove_dir_all(path);
+    }
 }
 
 #[tokio::test]
@@ -2265,7 +2300,7 @@ async fn request_kind_database_migration_reclaims_dead_running_owner_immediately
 #[tokio::test]
 async fn request_kind_database_migration_retries_after_transient_write_lock() {
     use sqlx::Connection;
-    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+    use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 
     let db_path = temp_db_path("request-kind-migration-retry-after-busy");
     let db_str = db_path.to_string_lossy().to_string();
@@ -2281,36 +2316,11 @@ async fn request_kind_database_migration_retries_after_transient_write_lock() {
         .execute(&proxy.key_store.pool)
         .await
         .expect("clear request-kind migration markers");
-    proxy.key_store.pool.close().await;
-    drop(proxy);
-
     let options = SqliteConnectOptions::new()
         .filename(&db_path)
         .create_if_missing(false)
         .journal_mode(SqliteJournalMode::Wal)
         .busy_timeout(std::time::Duration::from_millis(1));
-    let pool = SqlitePoolOptions::new()
-        .min_connections(1)
-        .max_connections(5)
-        .connect_with(options.clone())
-        .await
-        .expect("busy-test pool");
-    let store = KeyStore {
-        database_path: db_path.to_string_lossy().into_owned(),
-        pool,
-        token_binding_cache: RwLock::new(std::collections::HashMap::new()),
-        account_quota_resolution_cache: RwLock::new(std::collections::HashMap::new()),
-        request_logs_catalog_cache: RwLock::new(std::collections::HashMap::new()),
-        request_log_retention_cache: RwLock::new(None),
-        user_debug_info_shared_cache: RwLock::new(std::collections::HashMap::new()),
-        admin_heavy_read_semaphore: Semaphore::new(ADMIN_HEAVY_READ_CONCURRENCY),
-        #[cfg(test)]
-        forced_pending_claim_miss_log_ids: Mutex::new(std::collections::HashSet::new()),
-        forced_quota_subject_lock_loss_subjects: std::sync::Mutex::new(
-            std::collections::HashSet::new(),
-        ),
-    };
-
     let mut lock_conn = sqlx::SqliteConnection::connect_with(&options)
         .await
         .expect("connect write lock holder");
@@ -2327,13 +2337,15 @@ async fn request_kind_database_migration_retries_after_transient_write_lock() {
             .expect("release write lock");
     });
 
-    store
+    proxy
+        .key_store
         .ensure_request_kind_canonical_migration_v1()
         .await
         .expect("migration should retry after transient busy");
     release_lock.await.expect("join lock release");
 
-    let migration_done_at = store
+    let migration_done_at = proxy
+        .key_store
         .get_meta_i64(META_KEY_REQUEST_KIND_CANONICAL_MIGRATION_V1_DONE)
         .await
         .expect("migration done marker");
@@ -2453,6 +2465,7 @@ async fn request_kind_backfill_batch_retries_after_transient_write_lock() {
             request_logs: request_upper_bound,
             auth_token_logs: token_upper_bound,
         }),
+        &proxy.key_store.backend_time,
     )
     .await
     .expect("backfill should retry after transient busy");
@@ -2631,6 +2644,7 @@ async fn request_kind_database_migration_uses_persisted_upper_bounds() {
             request_logs: request_log_id,
             auth_token_logs: token_log_id,
         }),
+        &proxy.key_store.backend_time,
     )
     .await
     .expect("run bounded request-kind backfill");

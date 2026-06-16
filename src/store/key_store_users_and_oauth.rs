@@ -2,7 +2,7 @@ impl KeyStore {
     const USER_DEBUG_INFO_SHARED_CACHE_TTL: Duration = Duration::from_secs(5);
 
     pub(crate) async fn user_debug_info_shared(&self, user_id: &str) -> Result<bool, ProxyError> {
-        let now = Instant::now();
+        let now = self.backend_time.now_ts();
         if let Some(cached) = self
             .user_debug_info_shared_cache
             .read()
@@ -24,7 +24,7 @@ impl KeyStore {
             user_id.to_string(),
             UserDebugInfoSharedCacheEntry {
                 shared,
-                expires_at: now + Self::USER_DEBUG_INFO_SHARED_CACHE_TTL,
+                expires_at: now + Self::USER_DEBUG_INFO_SHARED_CACHE_TTL.as_secs() as i64,
             },
         );
         Ok(shared)
@@ -35,7 +35,7 @@ impl KeyStore {
         user_id: &str,
         shared: bool,
     ) -> Result<bool, ProxyError> {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let result = sqlx::query(
             r#"
             UPDATE users
@@ -53,7 +53,7 @@ impl KeyStore {
                 user_id.to_string(),
                 UserDebugInfoSharedCacheEntry {
                     shared,
-                    expires_at: Instant::now() + Self::USER_DEBUG_INFO_SHARED_CACHE_TTL,
+                    expires_at: now + Self::USER_DEBUG_INFO_SHARED_CACHE_TTL.as_secs() as i64,
                 },
             );
             self.clear_request_log_body_gc_cursor().await?;
@@ -86,7 +86,7 @@ impl KeyStore {
             let shared: i64 = row.try_get("debug_info_shared")?;
             map.insert(id, shared != 0);
         }
-        let now = Instant::now();
+        let now = self.backend_time.now_ts();
         let mut cache = self.user_debug_info_shared_cache.write().await;
         cache.retain(|_, entry| entry.expires_at > now);
         for (id, shared) in &map {
@@ -94,7 +94,7 @@ impl KeyStore {
                 id.clone(),
                 UserDebugInfoSharedCacheEntry {
                     shared: *shared,
-                    expires_at: now + Self::USER_DEBUG_INFO_SHARED_CACHE_TTL,
+                    expires_at: now + Self::USER_DEBUG_INFO_SHARED_CACHE_TTL.as_secs() as i64,
                 },
             );
         }
@@ -146,7 +146,7 @@ impl KeyStore {
             .filter(|v| !v.is_empty())
             .map(str::to_string);
         let active = if profile.active { 1 } else { 0 };
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
 
         for _ in 0..4 {
             let mut tx = self.pool.begin().await?;
@@ -419,7 +419,7 @@ impl KeyStore {
         refresh_token_ciphertext: &str,
         refresh_token_nonce: &str,
     ) -> Result<(), ProxyError> {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         sqlx::query(
             r#"UPDATE oauth_accounts
                SET refresh_token_ciphertext = ?, refresh_token_nonce = ?, updated_at = ?
@@ -440,7 +440,7 @@ impl KeyStore {
         user_id: &str,
         active: bool,
     ) -> Result<(), ProxyError> {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         sqlx::query(
             r#"UPDATE users
                SET active = ?, updated_at = ?
@@ -555,7 +555,7 @@ impl KeyStore {
         let note = note.unwrap_or("").trim().to_string();
 
         for _ in 0..4 {
-            let now = Utc::now().timestamp();
+            let now = self.backend_time.now_ts();
             let mut tx = self.pool.begin().await?;
 
             let user_exists = sqlx::query_scalar::<_, Option<i64>>(
@@ -646,7 +646,7 @@ impl KeyStore {
         user_id: &str,
         token_id: &str,
     ) -> Result<(), ProxyError> {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let result = sqlx::query(
             r#"UPDATE auth_tokens
                SET enabled = 0, deleted_at = ?
@@ -743,7 +743,7 @@ impl KeyStore {
                 .await?
         {
             for _ in 0..4 {
-                let now = Utc::now().timestamp();
+                let now = self.backend_time.now_ts();
                 let mut tx = self.pool.begin().await?;
 
                 let owner = sqlx::query_as::<_, (String,)>(
@@ -826,7 +826,7 @@ impl KeyStore {
         }
 
         const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let note = note.unwrap_or("").trim().to_string();
 
         for _ in 0..4 {
@@ -984,7 +984,7 @@ impl KeyStore {
         session_max_age_secs: i64,
     ) -> Result<UserSession, ProxyError> {
         const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_";
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let expires_at = now + session_max_age_secs.max(60);
 
         sqlx::query("DELETE FROM user_sessions WHERE expires_at < ? OR revoked_at IS NOT NULL")
@@ -1024,7 +1024,7 @@ impl KeyStore {
         &self,
         token: &str,
     ) -> Result<Option<UserSession>, ProxyError> {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         sqlx::query("DELETE FROM user_sessions WHERE expires_at < ?")
             .bind(now)
             .execute(&self.pool)
@@ -1089,7 +1089,7 @@ impl KeyStore {
     }
 
     pub(crate) async fn revoke_user_session(&self, token: &str) -> Result<(), ProxyError> {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         sqlx::query(
             "UPDATE user_sessions SET revoked_at = ? WHERE token = ? AND revoked_at IS NULL",
         )
@@ -1122,7 +1122,7 @@ impl KeyStore {
         selection_effect_summary: Option<&str>,
         request_log_id: Option<i64>,
     ) -> Result<(), ProxyError> {
-        let created_at = Utc::now().timestamp();
+        let created_at = self.backend_time.now_ts();
         let request_kind = self
             .resolve_token_log_request_kind(request_log_id, request_kind)
             .await?;
@@ -1226,7 +1226,7 @@ impl KeyStore {
         selection_effect_summary: Option<&str>,
         request_log_id: Option<i64>,
     ) -> Result<i64, ProxyError> {
-        let created_at = Utc::now().timestamp();
+        let created_at = self.backend_time.now_ts();
         let request_kind = self
             .resolve_token_log_request_kind(request_log_id, request_kind)
             .await?;
@@ -1658,7 +1658,7 @@ impl KeyStore {
                 if result_status == OUTCOME_SUCCESS {
                     self.refresh_user_api_key_binding(&mut tx, user_id, api_key_id, created_at)
                         .await?;
-                    let now = Utc::now().timestamp();
+                    let now = self.backend_time.now_ts();
                     sqlx::query(
                         r#"
                         INSERT INTO user_primary_api_key_affinity (user_id, api_key_id, created_at, updated_at)
@@ -1760,7 +1760,7 @@ impl KeyStore {
             {
                 self.refresh_token_api_key_binding(&mut tx, token_id, api_key_id, created_at)
                     .await?;
-                let now = Utc::now().timestamp();
+                let now = self.backend_time.now_ts();
                 sqlx::query(
                     r#"
                     INSERT INTO token_primary_api_key_affinity (
@@ -1833,18 +1833,19 @@ impl KeyStore {
             std::process::id(),
             QUOTA_SUBJECT_LOCK_OWNER_SEQ.fetch_add(1, AtomicOrdering::Relaxed)
         );
-        let deadline = Instant::now() + wait_timeout;
+        let deadline = self.backend_time.deadline_after(wait_timeout);
         let ttl_secs = ttl.as_secs().max(1) as i64;
         let mut transient_retry_attempt = 0usize;
 
         loop {
-            let now = Utc::now().timestamp();
+            let now = self.backend_time.now_ts();
             let expires_at = now + ttl_secs;
             let mut tx = match self.pool.begin().await {
                 Ok(tx) => tx,
                 Err(err) => {
                     let err = ProxyError::Database(err);
                     if sleep_before_sqlite_transient_write_retry(
+                        &self.backend_time,
                         "quota subject lock acquire begin",
                         transient_retry_attempt,
                         deadline,
@@ -1887,6 +1888,7 @@ impl KeyStore {
                 Err(err) => {
                     tx.rollback().await.ok();
                     if sleep_before_sqlite_transient_write_retry(
+                        &self.backend_time,
                         "quota subject lock acquire write",
                         transient_retry_attempt,
                         deadline,
@@ -1905,6 +1907,7 @@ impl KeyStore {
                 if let Err(err) = tx.commit().await {
                     let err = ProxyError::Database(err);
                     if sleep_before_sqlite_transient_write_retry(
+                        &self.backend_time,
                         "quota subject lock acquire commit",
                         transient_retry_attempt,
                         deadline,
@@ -1926,12 +1929,12 @@ impl KeyStore {
 
             tx.rollback().await.ok();
             transient_retry_attempt = 0;
-            if Instant::now() >= deadline {
+            if self.backend_time.instant_now() >= deadline {
                 return Err(ProxyError::Other(format!(
                     "timed out acquiring quota subject lock for {subject}",
                 )));
             }
-            tokio::time::sleep(Duration::from_millis(50)).await;
+            self.backend_time.sleep(Duration::from_millis(50)).await;
         }
     }
 
@@ -1939,10 +1942,10 @@ impl KeyStore {
         &self,
         lease: &QuotaSubjectDbLease,
     ) -> Result<(), ProxyError> {
-        let deadline = Instant::now() + lease.ttl;
+        let deadline = self.backend_time.deadline_after(lease.ttl);
         let mut attempt = 0usize;
         let rows = loop {
-            let now = Utc::now().timestamp();
+            let now = self.backend_time.now_ts();
             let expires_at = now + lease.ttl.as_secs().max(1) as i64;
             match sqlx::query(
                 "UPDATE quota_subject_locks SET expires_at = ?, updated_at = ? WHERE subject = ? AND owner = ?",
@@ -1958,6 +1961,7 @@ impl KeyStore {
                 Err(err) => {
                     let err = ProxyError::Database(err);
                     if sleep_before_sqlite_transient_write_retry(
+                        &self.backend_time,
                         "quota subject lock refresh",
                         attempt,
                         deadline,
@@ -1985,7 +1989,7 @@ impl KeyStore {
         &self,
         lease: &QuotaSubjectDbLease,
     ) -> Result<(), ProxyError> {
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let deadline = self.backend_time.deadline_after(Duration::from_secs(2));
         let mut attempt = 0usize;
         loop {
             match sqlx::query("DELETE FROM quota_subject_locks WHERE subject = ? AND owner = ?")
@@ -1998,6 +2002,7 @@ impl KeyStore {
                 Err(err) => {
                     let err = ProxyError::Database(err);
                     if sleep_before_sqlite_transient_write_retry(
+                        &self.backend_time,
                         "quota subject lock release",
                         attempt,
                         deadline,

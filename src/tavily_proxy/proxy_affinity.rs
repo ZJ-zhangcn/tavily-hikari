@@ -281,7 +281,7 @@ impl TavilyProxy {
             return Ok(false);
         };
 
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let retry_after_secs =
             Self::transient_backoff_retry_after_secs(headers, now, reason_code);
         let cooldown_until = now + retry_after_secs;
@@ -321,7 +321,7 @@ impl TavilyProxy {
                 settings.mcp_session_affinity_key_count,
             )
             .await?;
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let ordered = self
             .build_mcp_session_init_candidates(token_id, user_id.as_deref(), &ranked, now)
             .await?;
@@ -562,7 +562,7 @@ impl TavilyProxy {
             return Ok(false);
         }
 
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let retry_after_secs =
             Self::transient_backoff_retry_after_secs(headers, now, reason_code);
         let cooldown_until = now + retry_after_secs;
@@ -592,7 +592,7 @@ impl TavilyProxy {
             return Ok(false);
         };
 
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let retry_after_secs =
             Self::transient_backoff_retry_after_secs(headers, now, reason_code);
         let cooldown_until = now + retry_after_secs;
@@ -622,7 +622,7 @@ impl TavilyProxy {
             return Ok(false);
         };
 
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let retry_after_secs =
             Self::transient_backoff_retry_after_secs(headers, now, reason_code);
         let cooldown_until = now + retry_after_secs;
@@ -648,7 +648,7 @@ impl TavilyProxy {
             .list_active_api_key_transient_backoffs(
                 &[key_id.to_string()],
                 HTTP_GLOBAL_BACKOFF_SCOPE,
-                Utc::now().timestamp(),
+                self.backend_time.now_ts(),
             )
             .await?
             .contains_key(key_id))
@@ -674,7 +674,7 @@ impl TavilyProxy {
         let existing_key_id = existing_binding
             .as_ref()
             .map(|binding| binding.api_key_id.clone());
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
 
         if let Some(existing_key_id) = existing_key_id.as_deref() {
             let project_backoff = self
@@ -793,7 +793,7 @@ impl TavilyProxy {
         let context = self
             .resolve_api_route_affinity_context(auth_token_id, route_key)
             .await?;
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
 
         if let Some(context) = context.as_ref() {
             let existing_binding = self
@@ -952,7 +952,7 @@ impl TavilyProxy {
             return Err(ProxyError::NoAvailableKeys);
         }
 
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let ordered = self
             .build_rebalance_mcp_http_candidates(&ranked, now)
             .await?;
@@ -1026,7 +1026,7 @@ impl TavilyProxy {
             return Ok(false);
         };
 
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let retry_after_secs =
             Self::transient_backoff_retry_after_secs(headers, now, reason_code);
         let cooldown_until = now + retry_after_secs;
@@ -1165,7 +1165,7 @@ impl TavilyProxy {
         auth_token_id: Option<&str>,
         research_request_id: Option<&str>,
     ) -> Result<ApiKeyLease, ProxyError> {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
 
         if let Some(request_id) = research_request_id {
             let mut candidate_key_id = {
@@ -1225,7 +1225,7 @@ impl TavilyProxy {
         key_id: &str,
         token_id: &str,
     ) -> Result<(), ProxyError> {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         self.populate_research_request_affinity_caches(request_id, key_id, token_id, now)
             .await;
         self.key_store
@@ -1247,7 +1247,7 @@ impl TavilyProxy {
             return Ok(false);
         };
 
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         if let Some(owner) = {
             let mut state = self.research_request_owner_affinity.lock().await;
             state.get_candidate(request_id, now)
@@ -1319,7 +1319,7 @@ impl TavilyProxy {
                         status_after: after.status,
                         quarantine_before: before.quarantined,
                         quarantine_after: after.quarantined,
-                        created_at: Utc::now().timestamp(),
+                        created_at: self.backend_time.now_ts(),
                     })
                     .await?;
                 Ok(KeyEffect::new(
@@ -1362,7 +1362,7 @@ impl TavilyProxy {
                         status_after: after.status,
                         quarantine_before: before.quarantined,
                         quarantine_after: after.quarantined,
-                        created_at: Utc::now().timestamp(),
+                        created_at: self.backend_time.now_ts(),
                     })
                     .await?;
                 Ok(KeyEffect::new(
@@ -1405,7 +1405,7 @@ impl TavilyProxy {
                         status_after: after.status,
                         quarantine_before: before.quarantined,
                         quarantine_after: after.quarantined,
-                        created_at: Utc::now().timestamp(),
+                        created_at: self.backend_time.now_ts(),
                     })
                     .await?;
                 Ok(KeyEffect::new(
@@ -1422,7 +1422,7 @@ impl TavilyProxy {
         source: &str,
         auth_token_id: Option<&str>,
     ) -> Result<KeyEffect, ProxyError> {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let before = self.key_store.fetch_key_state_snapshot(key_id).await?;
         let cleared = self
             .key_store
@@ -1481,7 +1481,7 @@ impl TavilyProxy {
             .link_latest_transient_backoff_clear_record(
                 key_id,
                 request_log_id,
-                Utc::now().timestamp(),
+                self.backend_time.now_ts(),
             )
             .await
     }
@@ -1532,7 +1532,7 @@ impl TavilyProxy {
                     status_after: after.status,
                     quarantine_before: before.quarantined,
                     quarantine_after: after.quarantined,
-                    created_at: Utc::now().timestamp(),
+                    created_at: self.backend_time.now_ts(),
                 })
                 .await?;
         }

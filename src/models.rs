@@ -2657,8 +2657,7 @@ pub(crate) async fn rebase_current_month_business_quota_with_pool(
     update_meta: bool,
 ) -> Result<MonthlyQuotaRebaseReport, ProxyError> {
     let mut conn = begin_immediate_sqlite_connection(pool).await?;
-    let locked_now = Utc::now();
-    let windows = BillingLedgerWindows::from_now(if locked_now > now { locked_now } else { now });
+    let windows = BillingLedgerWindows::from_now(now);
 
     let result = async {
         ensure_charged_subjects_are_valid(
@@ -2925,16 +2924,21 @@ pub fn parse_explicit_today_window(
 
 #[allow(dead_code)]
 pub(crate) fn request_logs_retention_threshold_utc_ts(retention_days: i64) -> i64 {
-    let days = retention_days.max(REQUEST_LOGS_MIN_RETENTION_DAYS);
-    configured_request_logs_retention_threshold_utc_ts(days)
+    configured_request_logs_retention_threshold_utc_ts_at(
+        retention_days.max(REQUEST_LOGS_MIN_RETENTION_DAYS),
+        BackendTime::system().local_now(),
+    )
 }
 
-pub(crate) fn configured_request_logs_retention_threshold_utc_ts(retention_days: i64) -> i64 {
+pub(crate) fn configured_request_logs_retention_threshold_utc_ts_at(
+    retention_days: i64,
+    now: chrono::DateTime<Local>,
+) -> i64 {
     let days = retention_days.max(0);
     if days == 0 {
-        return Local::now().with_timezone(&Utc).timestamp();
+        return now.with_timezone(&Utc).timestamp();
     }
-    let today = Local::now().date_naive();
+    let today = now.date_naive();
     let keep_from_date = today
         .checked_sub_days(chrono::Days::new((days - 1) as u64))
         .unwrap_or(today);
@@ -2944,7 +2948,7 @@ pub(crate) fn configured_request_logs_retention_threshold_utc_ts(retention_days:
     match Local.from_local_datetime(&naive) {
         chrono::LocalResult::Single(dt) => dt.with_timezone(&Utc).timestamp(),
         chrono::LocalResult::Ambiguous(dt, _) => dt.with_timezone(&Utc).timestamp(),
-        chrono::LocalResult::None => Local::now().with_timezone(&Utc).timestamp(),
+        chrono::LocalResult::None => now.with_timezone(&Utc).timestamp(),
     }
 }
 

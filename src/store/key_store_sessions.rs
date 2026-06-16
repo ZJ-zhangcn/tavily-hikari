@@ -522,7 +522,7 @@ impl KeyStore {
         let page = page.max(1);
         let per_page = per_page.clamp(1, 100);
         let offset = (page - 1) * per_page;
-        let now = Local::now();
+        let now = self.backend_time.local_now();
         let today_start = start_of_local_day_utc_ts(now);
         let yesterday_start = previous_local_day_start_utc_ts(now);
         let month_start = start_of_local_month_utc_ts(now);
@@ -730,7 +730,7 @@ impl KeyStore {
             0
         };
 
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         sqlx::query(
             r#"INSERT INTO account_quota_limits (
                     user_id,
@@ -814,7 +814,7 @@ impl KeyStore {
     }
 
     pub(crate) async fn sync_account_quota_limits_with_defaults(&self) -> Result<(), ProxyError> {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let defaults = AccountQuotaLimits::legacy_defaults();
         let affected_user_ids = sqlx::query_scalar::<_, String>(
             r#"SELECT user_id
@@ -912,7 +912,7 @@ impl KeyStore {
             return Ok(existing);
         }
 
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let defaults = self.default_account_quota_limits_for_user(user_id).await?;
         sqlx::query(
             r#"INSERT INTO account_quota_limits (
@@ -966,7 +966,7 @@ impl KeyStore {
             return Ok(());
         }
 
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let defaults_by_user = self
             .default_account_quota_limits_for_users(&missing_user_ids)
             .await?;
@@ -1136,7 +1136,7 @@ impl KeyStore {
 
         self.ensure_account_quota_limits(user_id).await?;
         let base_limit = self.fetch_user_blocked_key_base_limit().await?;
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         sqlx::query(
             r#"UPDATE account_quota_limits
                SET monthly_broken_limit = ?, monthly_blocked_key_limit_delta = ?, updated_at = ?
@@ -1227,7 +1227,7 @@ impl KeyStore {
     pub(crate) async fn backfill_current_month_auto_subject_breakages(
         &self,
     ) -> Result<(), ProxyError> {
-        let month_start = start_of_month(Utc::now()).timestamp();
+        let month_start = start_of_month(self.backend_time.now_utc()).timestamp();
         let rows =
             sqlx::query_as::<_, (String, String, String, i64, Option<String>, Option<String>)>(
                 r#"
@@ -1646,7 +1646,7 @@ impl KeyStore {
     }
 
     pub(crate) async fn seed_linuxdo_system_tags(&self) -> Result<(), ProxyError> {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let (hourly_any_delta, hourly_delta, daily_delta, monthly_delta) =
             linuxdo_system_tag_default_deltas();
         for level in 0..=4 {
@@ -1782,7 +1782,7 @@ impl KeyStore {
             return Ok(());
         }
 
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let affected_user_ids = self.list_user_ids_for_linuxdo_system_tags().await?;
         let updated = sqlx::query(
             r#"UPDATE user_tags
@@ -1823,7 +1823,7 @@ impl KeyStore {
     pub(crate) async fn backfill_linuxdo_system_tag_default_deltas_v1(
         &self,
     ) -> Result<(), ProxyError> {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let (hourly_any_delta, hourly_delta, daily_delta, monthly_delta) =
             linuxdo_system_tag_default_deltas();
         let affected_user_ids = self.list_user_ids_for_linuxdo_system_tags().await?;
@@ -1872,7 +1872,7 @@ impl KeyStore {
         trust_level: Option<i64>,
         force_refresh: bool,
     ) -> Result<bool, ProxyError> {
-        let changed_at = Utc::now().timestamp();
+        let changed_at = self.backend_time.now_ts();
         let mut tx = self.pool.begin().await?;
         let changed = self
             .sync_linuxdo_system_tag_binding_in_tx(&mut tx, user_id, trust_level, force_refresh)
@@ -1929,7 +1929,7 @@ impl KeyStore {
             return Ok(false);
         }
 
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         sqlx::query(
             r#"DELETE FROM user_tag_bindings
                WHERE user_id = ?
@@ -2024,7 +2024,7 @@ impl KeyStore {
         &self,
         max_age_secs: i64,
     ) -> Result<i64, ProxyError> {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let Some(refreshed_at) = self
             .get_meta_i64(META_KEY_LINUXDO_USER_TAG_BINDINGS_REFRESH_V1)
             .await?
@@ -2065,7 +2065,7 @@ impl KeyStore {
         }
         self.set_meta_i64(
             META_KEY_LINUXDO_USER_TAG_BINDINGS_REFRESH_V1,
-            Utc::now().timestamp(),
+            self.backend_time.now_ts(),
         )
         .await?;
         Ok(refreshed)
@@ -2216,7 +2216,7 @@ impl KeyStore {
             ));
         }
         const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         for _ in 0..8 {
             let id = random_string(ALPHABET, 8);
             let inserted = sqlx::query(
@@ -2295,7 +2295,7 @@ impl KeyStore {
             return Ok(None);
         };
         let affected_user_ids = self.list_user_ids_for_tag(tag_id).await?;
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         if existing.is_system() {
             if existing.name != name
                 || existing.display_name != display_name
@@ -2391,7 +2391,7 @@ impl KeyStore {
             .await;
         self.record_effective_account_quota_snapshots_for_users_at(
             &affected_user_ids,
-            Utc::now().timestamp(),
+            self.backend_time.now_ts(),
         )
         .await?;
         Ok(true)
@@ -2417,7 +2417,7 @@ impl KeyStore {
                 "system user tags are managed by the server".to_string(),
             ));
         }
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         sqlx::query(
             r#"INSERT INTO user_tag_bindings (user_id, tag_id, source, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?)
@@ -2468,7 +2468,7 @@ impl KeyStore {
             .execute(&self.pool)
             .await?;
         self.invalidate_account_quota_resolution(user_id).await;
-        self.record_effective_account_quota_snapshot_at(user_id, Utc::now().timestamp())
+        self.record_effective_account_quota_snapshot_at(user_id, self.backend_time.now_ts())
             .await?;
         Ok(true)
     }
@@ -2634,7 +2634,7 @@ impl KeyStore {
             return Ok(HashMap::new());
         }
 
-        let now = Utc::now();
+        let now = self.backend_time.now_utc();
         let month_start = start_of_month(now).timestamp();
 
         let mut builder = QueryBuilder::new(
@@ -2721,7 +2721,7 @@ impl KeyStore {
             return Ok(HashMap::new());
         }
 
-        let now = Utc::now();
+        let now = self.backend_time.now_utc();
         let month_start = start_of_month(now).timestamp();
 
         let mut builder = QueryBuilder::new(
@@ -2806,7 +2806,7 @@ impl KeyStore {
         bind_token_id: Option<&str>,
     ) -> Result<String, ProxyError> {
         const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let expires_at = now + ttl_secs.max(60);
 
         sqlx::query(
@@ -2851,7 +2851,7 @@ impl KeyStore {
         state: &str,
         binding_hash: Option<&str>,
     ) -> Result<Option<OAuthLoginStatePayload>, ProxyError> {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let mut tx = self.pool.begin().await?;
 
         sqlx::query(

@@ -276,8 +276,13 @@ impl KeyStore {
         created_at_sql.to_string()
     }
 
-    fn clamp_request_logs_rollup_since(since: Option<i64>, retention_days: i64) -> Option<i64> {
-        let retention_since = configured_request_logs_retention_threshold_utc_ts(retention_days);
+    fn clamp_request_logs_rollup_since_at(
+        since: Option<i64>,
+        retention_days: i64,
+        now: chrono::DateTime<Local>,
+    ) -> Option<i64> {
+        let retention_since =
+            configured_request_logs_retention_threshold_utc_ts_at(retention_days, now);
         Some(since.unwrap_or(retention_since).max(retention_since))
     }
 
@@ -584,7 +589,8 @@ impl KeyStore {
         include_key_facets: bool,
         filters: RequestLogsCatalogFilters<'_>,
     ) -> Result<RequestLogsCatalog, ProxyError> {
-        let since = Self::clamp_request_logs_rollup_since(since, retention_days);
+        let since =
+            Self::clamp_request_logs_rollup_since_at(since, retention_days, self.backend_time.local_now());
         let cache_key = Self::request_logs_catalog_filters_are_empty(filters).then(|| {
             Self::request_logs_catalog_cache_key(
                 scoped_key_id,
@@ -691,7 +697,8 @@ impl KeyStore {
             .await?
             .request_log_retention
             .max_log_retention_days;
-        let since = Self::clamp_request_logs_rollup_since(since, retention_days);
+        let since =
+            Self::clamp_request_logs_rollup_since_at(since, retention_days, self.backend_time.local_now());
         let page_size = page_size.clamp(1, 200);
         let query_limit = page_size + 1;
         let normalized_request_kinds = Self::normalize_request_kind_filters(request_kinds);
@@ -941,7 +948,8 @@ impl KeyStore {
             .await?
             .request_log_retention
             .max_log_retention_days;
-        let since = Self::clamp_request_logs_rollup_since(since, retention_days);
+        let since =
+            Self::clamp_request_logs_rollup_since_at(since, retention_days, self.backend_time.local_now());
         let page = page.max(1);
         let per_page = per_page.clamp(1, 200);
         let offset = (page - 1) * per_page;
@@ -1434,7 +1442,10 @@ impl KeyStore {
             .await?
             .request_log_retention
             .max_log_retention_days;
-        let since = configured_request_logs_retention_threshold_utc_ts(retention_days);
+        let since = configured_request_logs_retention_threshold_utc_ts_at(
+            retention_days,
+            self.backend_time.local_now(),
+        );
         let exprs = Self::request_log_catalog_rollup_exprs("");
         let canonical_request_kind_predicate_sql =
             canonical_request_kind_stored_predicate_sql("request_kind_key");
@@ -1667,7 +1678,7 @@ impl KeyStore {
         &self,
         older_than_secs: i64,
     ) -> Result<Vec<String>, ProxyError> {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let threshold = now - older_than_secs;
         let rows = sqlx::query_scalar::<_, String>(
             r#"
@@ -1698,7 +1709,7 @@ impl KeyStore {
         active_within_secs: i64,
         stale_after_secs: i64,
     ) -> Result<Vec<String>, ProxyError> {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let active_since = now - active_within_secs;
         let stale_before = now - stale_after_secs;
         let rows = sqlx::query_scalar::<_, String>(
@@ -2357,7 +2368,7 @@ impl KeyStore {
         day_start: i64,
         day_end: i64,
     ) -> Result<SuccessBreakdown, ProxyError> {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let month_request_log_floor = self
             .fetch_visible_request_log_floor_since(month_start)
             .await?;
@@ -2874,7 +2885,7 @@ impl KeyStore {
             .fetch_utc_month_gap_bucket_metrics(
                 month_since,
                 month_request_log_floor,
-                Utc::now().timestamp(),
+                self.backend_time.now_ts(),
             )
             .await?
             .success_count;

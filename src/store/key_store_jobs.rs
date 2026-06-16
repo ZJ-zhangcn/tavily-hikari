@@ -1,4 +1,13 @@
 impl KeyStore {
+    fn is_scheduled_job_active_identity_conflict(err: &ProxyError) -> bool {
+        let ProxyError::Database(sqlx::Error::Database(db_err)) = err else {
+            return false;
+        };
+        let message = db_err.message();
+        message.contains("idx_scheduled_jobs_active_identity")
+            || message.contains("scheduled_jobs.job_type")
+    }
+
     fn scheduled_job_stale_group(job_type: &str) -> Option<&'static str> {
         match job_type {
             "quota_sync" | "quota_sync/manual" => Some("quota_sync"),
@@ -277,8 +286,8 @@ impl KeyStore {
         key_id: Option<&str>,
         attempt: i64,
     ) -> Result<i64, ProxyError> {
-        let started_at = Utc::now().timestamp();
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let started_at = self.backend_time.now_ts();
+        let deadline = self.backend_time.deadline_after(Duration::from_secs(10));
         let mut retry_attempt = 0usize;
         let res = loop {
             match sqlx::query(
@@ -307,7 +316,14 @@ impl KeyStore {
                 Ok(res) => break res,
                 Err(err) => {
                     let err = ProxyError::Database(err);
+                    if Self::is_scheduled_job_active_identity_conflict(&err)
+                        && let Some((job_id, _status, _current_trigger_source)) =
+                            self.scheduled_job_lookup_active(job_type, key_id).await?
+                    {
+                        return Ok(job_id);
+                    }
                     if sleep_before_sqlite_transient_write_retry(
+                        &self.backend_time,
                         "scheduled job start",
                         retry_attempt,
                         deadline,
@@ -441,8 +457,8 @@ impl KeyStore {
             }
         }
 
-        let queued_at = Utc::now().timestamp();
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let queued_at = self.backend_time.now_ts();
+        let deadline = self.backend_time.deadline_after(Duration::from_secs(10));
         let mut retry_attempt = 0usize;
         loop {
             let result = async {
@@ -520,6 +536,7 @@ impl KeyStore {
                 Ok(outcome) => return Ok(outcome),
                 Err(err) => {
                     if sleep_before_sqlite_transient_write_retry(
+                        &self.backend_time,
                         "scheduled job enqueue",
                         retry_attempt,
                         deadline,
@@ -578,8 +595,8 @@ impl KeyStore {
         &self,
         job_id: i64,
     ) -> Result<Option<JobLog>, ProxyError> {
-        let started_at = Utc::now().timestamp();
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let started_at = self.backend_time.now_ts();
+        let deadline = self.backend_time.deadline_after(Duration::from_secs(10));
         let mut retry_attempt = 0usize;
         loop {
             let result = async {
@@ -674,6 +691,7 @@ impl KeyStore {
                 Ok(job) => return Ok(job),
                 Err(err) => {
                     if sleep_before_sqlite_transient_write_retry(
+                        &self.backend_time,
                         "scheduled job mark running",
                         retry_attempt,
                         deadline,
@@ -771,8 +789,8 @@ impl KeyStore {
         key_id: Option<&str>,
         attempt: i64,
     ) -> Result<Option<i64>, ProxyError> {
-        let now = Utc::now().timestamp();
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let now = self.backend_time.now_ts();
+        let deadline = self.backend_time.deadline_after(Duration::from_secs(10));
         let mut retry_attempt = 0usize;
         loop {
             let result = async {
@@ -817,6 +835,7 @@ impl KeyStore {
                 Ok(job_id) => return Ok(job_id),
                 Err(err) => {
                     if sleep_before_sqlite_transient_write_retry(
+                        &self.backend_time,
                         "scheduled job claim",
                         retry_attempt,
                         deadline,
@@ -834,8 +853,8 @@ impl KeyStore {
     }
 
     pub(crate) async fn abandon_active_scheduled_jobs(&self) -> Result<u64, ProxyError> {
-        let now = Utc::now().timestamp();
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let now = self.backend_time.now_ts();
+        let deadline = self.backend_time.deadline_after(Duration::from_secs(10));
         let mut retry_attempt = 0usize;
         loop {
             match sqlx::query(
@@ -856,6 +875,7 @@ impl KeyStore {
                 Err(err) => {
                     let err = ProxyError::Database(err);
                     if sleep_before_sqlite_transient_write_retry(
+                        &self.backend_time,
                         "scheduled job abandon",
                         retry_attempt,
                         deadline,
@@ -882,8 +902,8 @@ impl KeyStore {
         status: &str,
         message: Option<&str>,
     ) -> Result<(), ProxyError> {
-        let finished_at = Utc::now().timestamp();
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let finished_at = self.backend_time.now_ts();
+        let deadline = self.backend_time.deadline_after(Duration::from_secs(10));
         let mut retry_attempt = 0usize;
         loop {
             match sqlx::query(
@@ -900,6 +920,7 @@ impl KeyStore {
                 Err(err) => {
                     let err = ProxyError::Database(err);
                     if sleep_before_sqlite_transient_write_retry(
+                        &self.backend_time,
                         "scheduled job finish",
                         retry_attempt,
                         deadline,
@@ -922,7 +943,7 @@ impl KeyStore {
         job_id: i64,
         message: Option<&str>,
     ) -> Result<(), ProxyError> {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = self.backend_time.deadline_after(Duration::from_secs(10));
         let mut retry_attempt = 0usize;
         loop {
             match sqlx::query(r#"UPDATE scheduled_jobs SET message = ? WHERE id = ?"#)
@@ -935,6 +956,7 @@ impl KeyStore {
                 Err(err) => {
                     let err = ProxyError::Database(err);
                     if sleep_before_sqlite_transient_write_retry(
+                        &self.backend_time,
                         "scheduled job update message",
                         retry_attempt,
                         deadline,

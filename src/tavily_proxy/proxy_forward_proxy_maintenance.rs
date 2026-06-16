@@ -335,20 +335,24 @@ impl TavilyProxy {
         cancellation: Option<&ForwardProxyCancellation>,
     ) -> Result<f64, ProxyError> {
         ensure_forward_proxy_not_cancelled(cancellation)?;
-        let (resolved, relay_lease) = self
-            .resolve_forward_proxy_validation_endpoint(endpoint)
-            .await?;
-        let result = run_forward_proxy_future_with_cancel(
-            cancellation,
-            forward_proxy::probe_forward_proxy_endpoint(
-                &self.forward_proxy_clients,
-                &resolved,
-                probe_url,
-                timeout,
-            ),
-        )
-        .await;
-        relay_lease.release().await;
+        let result = {
+            let (resolved, relay_lease) = self
+                .resolve_forward_proxy_validation_endpoint(endpoint)
+                .await?;
+            let result = run_forward_proxy_future_with_cancel(
+                cancellation,
+                forward_proxy::probe_forward_proxy_endpoint(
+                    &self.forward_proxy_clients,
+                    &resolved,
+                    probe_url,
+                    timeout,
+                ),
+            )
+            .await;
+            drop(resolved);
+            relay_lease.release().await;
+            result
+        };
         result?
     }
 
@@ -369,33 +373,36 @@ impl TavilyProxy {
             return Some(trace);
         }
         let trace_url = self.forward_proxy_trace_url.clone();
-        let (resolved, relay_lease) = self
-            .resolve_forward_proxy_validation_endpoint(endpoint)
-            .await
-            .ok()?;
-        let result = run_forward_proxy_future_with_cancel(cancellation, async {
-            let client = self
-                .forward_proxy_clients
-                .client_for(resolved.endpoint_url.as_ref())
+        {
+            let (resolved, relay_lease) = self
+                .resolve_forward_proxy_validation_endpoint(endpoint)
                 .await
                 .ok()?;
-            tokio::time::timeout(timeout, async {
-                let response = client.get(trace_url).send().await.ok()?;
-                if !response.status().is_success() {
-                    return None;
-                }
-                let body = response.text().await.ok()?;
-                parse_forward_proxy_trace_response(&body)
+            let result = run_forward_proxy_future_with_cancel(cancellation, async {
+                let client = self
+                    .forward_proxy_clients
+                    .client_for(resolved.endpoint_url.as_ref())
+                    .await
+                    .ok()?;
+                tokio::time::timeout(timeout, async {
+                    let response = client.get(trace_url).send().await.ok()?;
+                    if !response.status().is_success() {
+                        return None;
+                    }
+                    let body = response.text().await.ok()?;
+                    parse_forward_proxy_trace_response(&body)
+                })
+                .await
+                .ok()
+                .flatten()
             })
             .await
             .ok()
-            .flatten()
-        })
-        .await
-        .ok()
-        .flatten();
-        relay_lease.release().await;
-        result
+            .flatten();
+            drop(resolved);
+            relay_lease.release().await;
+            result
+        }
     }
 
     #[cfg(test)]
@@ -494,9 +501,12 @@ impl TavilyProxy {
                 return Ok(record.clone());
             }
         }
-        let persisted =
-            forward_proxy::load_forward_proxy_key_affinity(&self.key_store.pool, api_key_id)
-                .await?;
+        let persisted = forward_proxy::load_forward_proxy_key_affinity(
+            &self.key_store.pool,
+            &self.backend_time,
+            api_key_id,
+        )
+        .await?;
         let record = CachedForwardProxyAffinityRecord {
             record: persisted.clone().unwrap_or_default(),
             has_persisted_row: persisted.is_some(),
@@ -677,7 +687,7 @@ impl TavilyProxy {
         let registration_ip = state.registration_ip;
         let registration_region = state.registration_region;
         let has_registration_metadata = registration_ip.is_some() || registration_region.is_some();
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         {
             let mut manager = self.forward_proxy.lock().await;
             manager.ensure_non_zero_weight();
@@ -821,7 +831,7 @@ impl TavilyProxy {
                 forward_proxy::ForwardProxyAffinityRecord {
                     primary_proxy_key: Some(succeeded_proxy_key.to_string()),
                     secondary_proxy_key,
-                    updated_at: Utc::now().timestamp(),
+                    updated_at: self.backend_time.now_ts(),
                 },
             )
             .await?;
@@ -858,7 +868,7 @@ impl TavilyProxy {
             {
                 record.secondary_proxy_key = Some(next_secondary.key.clone());
             }
-            record.updated_at = Utc::now().timestamp();
+            record.updated_at = self.backend_time.now_ts();
             self.store_proxy_affinity_record(api_key_id, record).await?;
         }
         Ok(())
@@ -1006,7 +1016,7 @@ impl TavilyProxy {
                 .collect::<HashMap<_, _>>()
         };
 
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let mut refresh_targets = Vec::new();
         for endpoint in &endpoints {
             let (cached_source, cached_ips, cached_regions, geo_refreshed_at) = cached
@@ -1049,7 +1059,7 @@ impl TavilyProxy {
             }
         }
 
-        let refreshed_at = Utc::now().timestamp();
+        let refreshed_at = self.backend_time.now_ts();
         let trace_timeout = Duration::from_millis(FORWARD_PROXY_TRACE_TIMEOUT_MS);
         let resolved_refresh = futures_util::stream::iter(refresh_targets.into_iter().map(
             |(endpoint, cached_source, cached_ips, cached_regions, geo_refreshed_at)| async move {
@@ -1112,7 +1122,8 @@ impl TavilyProxy {
             .collect::<HashSet<_>>()
             .into_iter()
             .collect::<Vec<_>>();
-        let region_by_ip = resolve_registration_regions(geo_origin, &geo_lookup_ips).await;
+        let region_by_ip =
+            resolve_registration_regions(geo_origin, &geo_lookup_ips, &self.backend_time).await;
 
         let refreshed_candidates = resolved_refresh
             .into_iter()
@@ -1230,7 +1241,7 @@ impl TavilyProxy {
     }
 
     pub async fn forward_proxy_geo_refresh_wait_secs(&self, max_age_secs: i64) -> i64 {
-        let now = Utc::now().timestamp();
+        let now = self.backend_time.now_ts();
         let manager = self.forward_proxy.lock().await;
         let mut saw_non_direct = false;
         let mut min_wait = max_age_secs.max(0);
@@ -1422,7 +1433,7 @@ impl TavilyProxy {
             forward_proxy::ForwardProxyAffinityRecord {
                 primary_proxy_key,
                 secondary_proxy_key,
-                updated_at: Utc::now().timestamp(),
+                updated_at: self.backend_time.now_ts(),
             },
             primary
                 .zip(primary_match_kind)
@@ -1461,7 +1472,7 @@ impl TavilyProxy {
     ) -> Result<forward_proxy::ForwardProxyAffinityRecord, ProxyError> {
         if preferred_primary_proxy_key == forward_proxy::FORWARD_PROXY_DIRECT_KEY {
             return Ok(forward_proxy::ForwardProxyAffinityRecord {
-                updated_at: Utc::now().timestamp(),
+                updated_at: self.backend_time.now_ts(),
                 ..Default::default()
             });
         }
@@ -1474,7 +1485,7 @@ impl TavilyProxy {
         };
         if !preferred_exists {
             return Ok(forward_proxy::ForwardProxyAffinityRecord {
-                updated_at: Utc::now().timestamp(),
+                updated_at: self.backend_time.now_ts(),
                 ..Default::default()
             });
         }
@@ -1501,7 +1512,7 @@ impl TavilyProxy {
         Ok(forward_proxy::ForwardProxyAffinityRecord {
             primary_proxy_key: Some(preferred_primary_proxy_key.to_string()),
             secondary_proxy_key,
-            updated_at: Utc::now().timestamp(),
+            updated_at: self.backend_time.now_ts(),
         })
     }
 
@@ -1614,8 +1625,9 @@ impl TavilyProxy {
             let mut manager = self.forward_proxy.lock().await;
             manager.record_attempt(proxy_key, success, latency_ms, failure_kind);
             if let Some(runtime) = manager.runtime(proxy_key).cloned() {
-                let bucket_start = (Utc::now().timestamp() / 3600) * 3600;
-                let sample_epoch_us = Utc::now().timestamp_nanos_opt().unwrap_or_default() / 1_000;
+                let now = self.backend_time.now_utc();
+                let bucket_start = (now.timestamp() / 3600) * 3600;
+                let sample_epoch_us = now.timestamp_micros();
                 forward_proxy::persist_forward_proxy_runtime_health_state(
                     &self.key_store.pool,
                     &runtime,
@@ -1899,7 +1911,9 @@ impl TavilyProxy {
                             let _ = self.annotate_pending_billing_attempt(log_id, &msg).await;
                             return Err(ProxyError::Other(msg));
                         }
-                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        self.backend_time
+                            .sleep(Duration::from_millis(10))
+                            .await;
                     }
                 }
             }
