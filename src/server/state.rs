@@ -411,8 +411,8 @@ const DEV_OPEN_ADMIN_REQUEST_TOKEN_ID: &str = "dev";
 
 #[derive(Clone, Debug)]
 struct BuiltinAdminSession {
-    issued_at: i64,
-    expires_at: i64,
+    issued_at: tokio::time::Instant,
+    expires_at: tokio::time::Instant,
 }
 
 #[derive(Clone, Debug)]
@@ -460,7 +460,7 @@ impl BuiltinAdminAuth {
         let Some(value) = cookie_value(headers, BUILTIN_ADMIN_COOKIE_NAME) else {
             return false;
         };
-        let now = self.backend_time.now_ts();
+        let now = self.backend_time.instant_now();
         let Ok(mut sessions) = self.sessions.write() else {
             return false;
         };
@@ -495,8 +495,9 @@ impl BuiltinAdminAuth {
         if !self.enabled {
             return;
         }
-        let now = self.backend_time.now_ts();
-        let expires_at = now.saturating_add(BUILTIN_ADMIN_SESSION_MAX_AGE_SECS as i64);
+        let now = self.backend_time.instant_now();
+        let expires_at =
+            now + std::time::Duration::from_secs(BUILTIN_ADMIN_SESSION_MAX_AGE_SECS);
         if let Ok(mut sessions) = self.sessions.write() {
             sessions.retain(|_, session| session.expires_at > now);
             sessions.insert(
@@ -510,7 +511,7 @@ impl BuiltinAdminAuth {
             // Bound memory usage: if too many sessions accumulate, evict oldest.
             if sessions.len() > BUILTIN_ADMIN_SESSION_MAX_COUNT {
                 let over = sessions.len() - BUILTIN_ADMIN_SESSION_MAX_COUNT;
-                let mut issued: Vec<(String, i64)> = sessions
+                let mut issued: Vec<(String, tokio::time::Instant)> = sessions
                     .iter()
                     .map(|(k, v)| (k.clone(), v.issued_at))
                     .collect();

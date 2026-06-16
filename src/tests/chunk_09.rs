@@ -116,6 +116,7 @@ async fn quota_subject_lock_retries_transient_sqlite_write_lock() {
     let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
 }
 
+
 #[tokio::test]
 async fn scheduled_job_start_retries_transient_sqlite_write_lock() {
     let db_path = temp_db_path("scheduled-job-start-retries-sqlite-lock");

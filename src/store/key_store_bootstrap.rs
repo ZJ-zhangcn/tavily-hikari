@@ -2283,25 +2283,19 @@ impl KeyStore {
                 .await?;
             self.backfill_linuxdo_user_tag_bindings().await?;
             self.sync_account_quota_limits_with_defaults().await?;
-            if self
-                .get_meta_i64(META_KEY_BUSINESS_QUOTA_MONTHLY_REBASE_V1)
-                .await?
-                != Some(start_of_month(self.backend_time.now_utc()).timestamp())
+            match maybe_rebase_current_month_business_quota_with_pool(
+                &self.pool,
+                || self.backend_time.now_utc(),
+                META_KEY_BUSINESS_QUOTA_MONTHLY_REBASE_V1,
+                true,
+            )
+            .await
             {
-                match rebase_current_month_business_quota_with_pool(
-                    &self.pool,
-                    self.backend_time.now_utc(),
-                    META_KEY_BUSINESS_QUOTA_MONTHLY_REBASE_V1,
-                    true,
-                )
-                .await
-                {
-                    Ok(_) => {}
-                    Err(err) if is_invalid_current_month_billing_subject_error(&err) => {
-                        eprintln!("startup monthly quota rebase skipped: {err}");
-                    }
-                    Err(err) => return Err(err),
+                Ok(_) => {}
+                Err(err) if is_invalid_current_month_billing_subject_error(&err) => {
+                    eprintln!("startup monthly quota rebase skipped: {err}");
                 }
+                Err(err) => return Err(err),
             }
         }
 
