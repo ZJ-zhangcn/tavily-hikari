@@ -425,9 +425,9 @@
 - capture_scope: `browser-viewport`
 - requested_viewport: `1440x1600`
 - viewport_strategy: `devtools-emulate`
-- submission_gate: `approved`
+- submission_gate: `pending-owner-approval`
 - PR: include
 - evidence_note:
-  `Shared Usage Trends` 新增 `Biz 1h` tab，默认仍不抢占 `quota1h` 首屏，但在该 story 中激活后可见 5 分钟 success/failure 堆叠柱与 rolling 1h pressure 折线；图例同时区分 `Success / Failure / Pressure`，与新增接口 `series=businessCalls1h` 的返回形状保持一致。空白裁剪脚本返回 `ambiguous_border`，因此按原图保留；证据绑定当前实现提交。
+  `Shared Usage Trends` 的 `Biz 1h` 图表证据已按面板级范围刷新，用于确认 5 分钟 `success/failure` 柱段保持同桶堆叠，而 `pressure` 继续作为独立折线显示；图例仍明确区分 `Success / Failure / Pressure`，与 `series=businessCalls1h` 的返回形状一致。由于整页渐变边框会让空白裁剪脚本判定为 `ambiguous_border`，最终证据改为受控 viewport 截图后的面板级裁图。
 
 ![用户详情业务 1h 图表](./assets/user-detail-business-calls-1h-chart.png)
