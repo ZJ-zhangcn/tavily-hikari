@@ -609,19 +609,7 @@ async fn observability_sidecar_migrate_rejects_live_service_lock_holder() {
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
     let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
-    let lock_path = format!(
-        "{}{}{}",
-        db_path
-            .parent()
-            .expect("db parent")
-            .to_string_lossy(),
-        std::path::MAIN_SEPARATOR,
-        format!(
-            "{}-observability-migrate.lock",
-            db_path.file_stem().and_then(|value| value.to_str()).unwrap_or("sqlite")
-        )
-    );
-    let _ = std::fs::remove_file(lock_path);
+    let _ = std::fs::remove_file(crate::store::sqlite_lock_sidecar_path(&db_str));
 }
 
 #[tokio::test]

@@ -20,7 +20,7 @@ pub struct ObservabilityOfflineProbe {
     pub sqlite_write_probe_ok: bool,
 }
 
-fn sqlite_lock_sidecar_path(database_path: &str) -> String {
+pub(crate) fn sqlite_lock_sidecar_path(database_path: &str) -> String {
     sqlite_sidecar_path(database_path, "observability-migrate.lock")
 }
 
@@ -2246,6 +2246,7 @@ pub(crate) struct KeyStore {
 }
 
 include!("key_store_bootstrap.rs");
+include!("key_store_observability_sidecar.rs");
 include!("key_store_request_logs_gc.rs");
 include!("key_store_migrations_a.rs");
 include!("key_store_migrations_b.rs");
