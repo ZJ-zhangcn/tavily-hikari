@@ -66,6 +66,7 @@ function createAbortableLoader() {
 
 function buildEmptySeries(limit: number): AdminUserUsageSeries {
   return {
+    kind: 'quotaLike',
     limit,
     points: [{ bucketStart: 1_776_200_400, value: null, limitValue: null }],
   }
@@ -126,6 +127,7 @@ describe('UserDetailSharedUsagePanel tab presentation', () => {
     expect(labels).toEqual([
       ZH.admin.users.detail.sharedUsageTabs.fiveMinute,
       ZH.admin.users.detail.sharedUsageTabs.oneHour,
+      ZH.admin.users.detail.sharedUsageTabs.businessOneHour,
       ZH.admin.users.detail.sharedUsageTabs.daily,
       ZH.admin.users.detail.sharedUsageTabs.monthly,
       ZH.admin.users.detail.sharedUsageTabs.ip,
@@ -213,6 +215,7 @@ describe('UserDetailSharedUsagePanel loading behavior', () => {
   it('keeps missing historical limit snapshots out of the always-visible copy', async () => {
     const { container, root } = await mountPanel({
       loadSeries: async () => ({
+        kind: 'quotaLike',
         limit: 120,
         points: [{ bucketStart: 1_776_200_400, value: 36, limitValue: null }],
       }),
