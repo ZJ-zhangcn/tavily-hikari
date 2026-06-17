@@ -541,6 +541,8 @@ impl KeyStore {
         #[cfg(test)]
         let _schema_init_guard = Self::acquire_test_schema_init_guard().await;
         let layout = SqliteDatabaseLayout::from_database_path(database_path);
+        let observability_lock =
+            acquire_observability_service_shared_lock(&layout.core_database_path)?;
         let pool = open_sqlite_pool_with_observability(
             &layout.core_database_path,
             layout.observability_database_path.as_deref(),
@@ -561,9 +563,7 @@ impl KeyStore {
         let store = Self {
             database_path: layout.core_database_path.clone(),
             observability_database_path,
-            _observability_lock: Some(acquire_observability_service_shared_lock(
-                &layout.core_database_path,
-            )?),
+            _observability_lock: Some(observability_lock),
             pool,
             backend_time,
             token_binding_cache: RwLock::new(HashMap::new()),
@@ -594,6 +594,8 @@ impl KeyStore {
         #[cfg(test)]
         let _schema_init_guard = Self::acquire_test_schema_init_guard().await;
         let layout = SqliteDatabaseLayout::from_database_path(database_path);
+        let observability_lock =
+            acquire_observability_service_shared_lock(&layout.core_database_path)?;
         let pool = open_sqlite_pool_with_observability(
             &layout.core_database_path,
             layout.observability_database_path.as_deref(),
@@ -614,9 +616,7 @@ impl KeyStore {
         let store = Self {
             database_path: layout.core_database_path.clone(),
             observability_database_path,
-            _observability_lock: Some(acquire_observability_service_shared_lock(
-                &layout.core_database_path,
-            )?),
+            _observability_lock: Some(observability_lock),
             pool,
             backend_time,
             token_binding_cache: RwLock::new(HashMap::new()),

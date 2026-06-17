@@ -610,7 +610,7 @@ async fn observability_sidecar_migrate_rejects_live_service_lock_holder() {
         .expect_err("live service lock holder must block migration");
     let message = err.to_string();
     assert!(
-        message.contains("exclusive observability lock"),
+        message.contains("exclusive observability service lock"),
         "unexpected live-service migration error: {message}"
     );
 
@@ -621,6 +621,148 @@ async fn observability_sidecar_migrate_rejects_live_service_lock_holder() {
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
     let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+    let _ = std::fs::remove_file(crate::store::sqlite_lock_sidecar_path(&db_str));
+}
+
+#[tokio::test]
+async fn observability_sidecar_migrate_closes_pool_before_same_process_reopen() {
+    let db_path = temp_db_path("observability-sidecar-explicit-migrate-reopen");
+    let db_str = db_path.to_string_lossy().to_string();
+    let layout = SqliteDatabaseLayout::from_database_path(&db_str);
+    let observability_path = layout
+        .observability_database_path
+        .clone()
+        .expect("sidecar path");
+
+    let pool = sqlx::SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(true),
+    )
+    .await
+    .expect("open legacy sqlite pool");
+    sqlx::query(
+        r#"
+        CREATE TABLE request_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            method TEXT NOT NULL,
+            path TEXT NOT NULL,
+            result_status TEXT NOT NULL DEFAULT 'success',
+            visibility TEXT NOT NULL DEFAULT 'visible',
+            created_at INTEGER NOT NULL
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("create legacy request_logs");
+    sqlx::query(
+        "INSERT INTO request_logs (method, path, created_at) VALUES ('POST', '/api/tavily/search', 1)",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed request log");
+    drop(pool);
+
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&db_path)
+        .expect("open sqlite file for resize")
+        .set_len(LEGACY_REQUEST_LOGS_INLINE_SIDECAR_MIGRATION_MAX_BYTES + 4096)
+        .expect("expand sqlite file");
+
+    let report = run_observability_sidecar_migrate(&db_str, 1, false)
+        .await
+        .expect("offline migration succeeds");
+    assert!(report.completed);
+
+    let reopened = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
+        .await
+        .expect("same-process reopen succeeds immediately after migration");
+    let attached_path = reopened
+        .sqlite_observability_database_path()
+        .expect("observability database attached");
+    assert!(
+        sqlite_paths_match(attached_path, &observability_path),
+        "reopened proxy should attach the sibling sidecar file"
+    );
+    drop(reopened);
+
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+    let _ = std::fs::remove_file(&observability_path);
+    let _ = std::fs::remove_file(format!("{observability_path}-shm"));
+    let _ = std::fs::remove_file(format!("{observability_path}-wal"));
+    let _ = std::fs::remove_file(crate::store::sqlite_lock_sidecar_path(&db_str));
+}
+
+#[tokio::test]
+async fn observability_sidecar_migrate_blocks_startup_before_opening_sqlite() {
+    let db_path = temp_db_path("observability-sidecar-explicit-migrate-startup-race");
+    let db_str = db_path.to_string_lossy().to_string();
+    let layout = SqliteDatabaseLayout::from_database_path(&db_str);
+    let observability_path = layout
+        .observability_database_path
+        .clone()
+        .expect("sidecar path");
+
+    let pool = sqlx::SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(true),
+    )
+    .await
+    .expect("open legacy sqlite pool");
+    sqlx::query(
+        r#"
+        CREATE TABLE request_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            method TEXT NOT NULL,
+            path TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("create legacy request_logs");
+    sqlx::query(
+        "INSERT INTO request_logs (method, path, created_at) VALUES ('POST', '/api/tavily/search', 1)",
+    )
+    .execute(&pool)
+    .await
+    .expect("seed request log");
+    drop(pool);
+
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(&db_path)
+        .expect("open sqlite file for resize")
+        .set_len(LEGACY_REQUEST_LOGS_INLINE_SIDECAR_MIGRATION_MAX_BYTES + 4096)
+        .expect("expand sqlite file");
+
+    let _offline_guard =
+        crate::store::acquire_observability_offline_guard(&db_str).expect("hold offline guard");
+    let startup_err = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
+        .await
+        .expect_err("startup should fail while offline guard is held");
+    let message = startup_err.to_string();
+    assert!(
+        message.contains("shared observability service lock"),
+        "unexpected startup error while offline guard is held: {message}"
+    );
+    assert!(
+        !std::path::Path::new(&observability_path).exists(),
+        "startup must not create the sidecar file before it acquires the shared lock"
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+    let _ = std::fs::remove_file(&observability_path);
+    let _ = std::fs::remove_file(format!("{observability_path}-shm"));
+    let _ = std::fs::remove_file(format!("{observability_path}-wal"));
     let _ = std::fs::remove_file(crate::store::sqlite_lock_sidecar_path(&db_str));
 }
 

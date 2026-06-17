@@ -361,13 +361,12 @@ impl KeyStore {
                 layout.core_database_path
             )));
         }
+        let _offline_guard = if dry_run {
+            None
+        } else {
+            Some(acquire_observability_offline_guard(&layout.core_database_path)?)
+        };
         let offline_probe = probe_observability_offline_state(&layout.core_database_path).await?;
-        if !dry_run && !offline_probe.service_lock_held_exclusively {
-            return Err(ProxyError::Other(format!(
-                "offline migration requires the service to be stopped; could not acquire exclusive observability lock at {}",
-                offline_probe.sibling_lock_path
-            )));
-        }
         let offline_lock_acquired = offline_probe.service_lock_held_exclusively;
 
         let core_file_bytes = core_database_file_size(&layout.core_database_path)?;
@@ -470,144 +469,147 @@ impl KeyStore {
                     false,
                 )
             } else {
-                let _offline_guard = acquire_observability_offline_guard(&layout.core_database_path)?;
                 let store = Self::open_for_observability_sidecar_migration(database_path).await?;
-                let attached_observability_path = store
-                    .observability_database_path
-                    .clone()
-                    .unwrap_or_else(|| layout.core_database_path.clone());
-                let sidecar_request_log_rows_before: i64 =
-                    sqlx::query_scalar("SELECT COUNT(*) FROM observability.request_logs")
-                        .fetch_one(&store.pool)
-                        .await?;
+                let result = {
+                    let attached_observability_path = store
+                        .observability_database_path
+                        .clone()
+                        .unwrap_or_else(|| layout.core_database_path.clone());
+                    let sidecar_request_log_rows_before: i64 =
+                        sqlx::query_scalar("SELECT COUNT(*) FROM observability.request_logs")
+                            .fetch_one(&store.pool)
+                            .await?;
 
-                let request_log_catalog_rollup_retention_days = store
-                    .get_system_settings()
-                    .await?
-                    .request_log_retention
-                    .max_log_retention_days;
-                let mut copied_request_logs = 0_i64;
-                let mut batches = 0_i64;
-                let mut dropped_main_request_logs = false;
-                let mut dropped_legacy_api_key_usage_buckets = false;
-                let mut dropped_legacy_dashboard_request_rollup_buckets = false;
-                let mut dropped_legacy_request_log_catalog_rollups = false;
-                let mut reset_api_key_usage_buckets_meta = false;
-                let mut reset_dashboard_request_rollup_buckets_meta = false;
-                let mut reset_request_log_catalog_rollup_meta = false;
-                let child_reference_checks_passed;
+                    let request_log_catalog_rollup_retention_days = store
+                        .get_system_settings()
+                        .await?
+                        .request_log_retention
+                        .max_log_retention_days;
+                    let mut copied_request_logs = 0_i64;
+                    let mut batches = 0_i64;
+                    let mut dropped_main_request_logs = false;
+                    let mut dropped_legacy_api_key_usage_buckets = false;
+                    let mut dropped_legacy_dashboard_request_rollup_buckets = false;
+                    let mut dropped_legacy_request_log_catalog_rollups = false;
+                    let mut reset_api_key_usage_buckets_meta = false;
+                    let mut reset_dashboard_request_rollup_buckets_meta = false;
+                    let mut reset_request_log_catalog_rollup_meta = false;
+                    let child_reference_checks_passed;
 
-                if legacy_request_logs_exists {
-                    store
-                        .rebuild_request_log_soft_reference_tables_if_needed()
-                        .await?;
-                    let (copied, copied_batches) =
-                        Self::copy_legacy_request_logs_into_observability_batched_in_pool(
+                    if legacy_request_logs_exists {
+                        store
+                            .rebuild_request_log_soft_reference_tables_if_needed()
+                            .await?;
+                        let (copied, copied_batches) =
+                            Self::copy_legacy_request_logs_into_observability_batched_in_pool(
+                                &store.pool,
+                                batch_size,
+                            )
+                            .await?;
+                        copied_request_logs = copied;
+                        batches = copied_batches;
+                        Self::ensure_request_logs_rebuild_references_valid_in_pool(
                             &store.pool,
-                            batch_size,
+                            "request_logs schema migration produced invalid preserved references",
                         )
                         .await?;
-                    copied_request_logs = copied;
-                    batches = copied_batches;
-                    Self::ensure_request_logs_rebuild_references_valid_in_pool(
-                        &store.pool,
-                        "request_logs schema migration produced invalid preserved references",
-                    )
-                    .await?;
-                    sqlx::query("DROP TABLE request_logs")
-                        .execute(&store.pool)
+                        sqlx::query("DROP TABLE request_logs")
+                            .execute(&store.pool)
+                            .await?;
+                        dropped_main_request_logs = true;
+                        child_reference_checks_passed = true;
+                    } else {
+                        Self::ensure_request_logs_rebuild_references_valid_in_pool(
+                            &store.pool,
+                            "request_logs schema migration produced invalid preserved references",
+                        )
                         .await?;
-                    dropped_main_request_logs = true;
-                    child_reference_checks_passed = true;
-                } else {
-                    Self::ensure_request_logs_rebuild_references_valid_in_pool(
-                        &store.pool,
-                        "request_logs schema migration produced invalid preserved references",
-                    )
-                    .await?;
-                    child_reference_checks_passed = true;
-                }
+                        child_reference_checks_passed = true;
+                    }
 
-                if legacy_api_key_usage_buckets_exists {
-                    let mut tx = store.pool.begin().await?;
-                    sqlx::query(
-                        r#"
-                        INSERT INTO meta (key, value)
-                        VALUES (?, '0'), (?, '0')
-                        ON CONFLICT(key) DO UPDATE SET value = excluded.value
-                        "#,
-                    )
-                    .bind(META_KEY_API_KEY_USAGE_BUCKETS_V1_DONE)
-                    .bind(META_KEY_API_KEY_USAGE_BUCKETS_REQUEST_VALUE_V2_DONE)
-                    .execute(&mut *tx)
-                    .await?;
-                    sqlx::query("DROP TABLE api_key_usage_buckets")
+                    if legacy_api_key_usage_buckets_exists {
+                        let mut tx = store.pool.begin().await?;
+                        sqlx::query(
+                            r#"
+                            INSERT INTO meta (key, value)
+                            VALUES (?, '0'), (?, '0')
+                            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                            "#,
+                        )
+                        .bind(META_KEY_API_KEY_USAGE_BUCKETS_V1_DONE)
+                        .bind(META_KEY_API_KEY_USAGE_BUCKETS_REQUEST_VALUE_V2_DONE)
                         .execute(&mut *tx)
                         .await?;
-                    tx.commit().await?;
-                    dropped_legacy_api_key_usage_buckets = true;
-                    reset_api_key_usage_buckets_meta = true;
-                }
-                if legacy_dashboard_request_rollup_buckets_exists {
-                    let mut tx = store.pool.begin().await?;
-                    sqlx::query(
-                        r#"
-                        INSERT INTO meta (key, value)
-                        VALUES (?, '0')
-                        ON CONFLICT(key) DO UPDATE SET value = excluded.value
-                        "#,
-                    )
-                    .bind(META_KEY_DASHBOARD_REQUEST_ROLLUP_BUCKETS_V1_DONE)
-                    .execute(&mut *tx)
-                    .await?;
-                    sqlx::query("DROP TABLE dashboard_request_rollup_buckets")
+                        sqlx::query("DROP TABLE api_key_usage_buckets")
+                            .execute(&mut *tx)
+                            .await?;
+                        tx.commit().await?;
+                        dropped_legacy_api_key_usage_buckets = true;
+                        reset_api_key_usage_buckets_meta = true;
+                    }
+                    if legacy_dashboard_request_rollup_buckets_exists {
+                        let mut tx = store.pool.begin().await?;
+                        sqlx::query(
+                            r#"
+                            INSERT INTO meta (key, value)
+                            VALUES (?, '0')
+                            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                            "#,
+                        )
+                        .bind(META_KEY_DASHBOARD_REQUEST_ROLLUP_BUCKETS_V1_DONE)
                         .execute(&mut *tx)
                         .await?;
-                    tx.commit().await?;
-                    dropped_legacy_dashboard_request_rollup_buckets = true;
-                    reset_dashboard_request_rollup_buckets_meta = true;
-                }
-                if legacy_request_log_catalog_rollups_exists {
-                    let mut tx = store.pool.begin().await?;
-                    sqlx::query(
-                        r#"
-                        INSERT INTO meta (key, value)
-                        VALUES (?, '0'), (?, ?)
-                        ON CONFLICT(key) DO UPDATE SET value = excluded.value
-                        "#,
-                    )
-                    .bind(META_KEY_REQUEST_LOG_CATALOG_ROLLUP_V1_DONE)
-                    .bind(META_KEY_REQUEST_LOG_CATALOG_ROLLUP_V1_RETENTION_DAYS)
-                    .bind(request_log_catalog_rollup_retention_days.to_string())
-                    .execute(&mut *tx)
-                    .await?;
-                    sqlx::query("DROP TABLE request_log_catalog_rollups")
+                        sqlx::query("DROP TABLE dashboard_request_rollup_buckets")
+                            .execute(&mut *tx)
+                            .await?;
+                        tx.commit().await?;
+                        dropped_legacy_dashboard_request_rollup_buckets = true;
+                        reset_dashboard_request_rollup_buckets_meta = true;
+                    }
+                    if legacy_request_log_catalog_rollups_exists {
+                        let mut tx = store.pool.begin().await?;
+                        sqlx::query(
+                            r#"
+                            INSERT INTO meta (key, value)
+                            VALUES (?, '0'), (?, ?)
+                            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                            "#,
+                        )
+                        .bind(META_KEY_REQUEST_LOG_CATALOG_ROLLUP_V1_DONE)
+                        .bind(META_KEY_REQUEST_LOG_CATALOG_ROLLUP_V1_RETENTION_DAYS)
+                        .bind(request_log_catalog_rollup_retention_days.to_string())
                         .execute(&mut *tx)
                         .await?;
-                    tx.commit().await?;
-                    dropped_legacy_request_log_catalog_rollups = true;
-                    reset_request_log_catalog_rollup_meta = true;
-                }
+                        sqlx::query("DROP TABLE request_log_catalog_rollups")
+                            .execute(&mut *tx)
+                            .await?;
+                        tx.commit().await?;
+                        dropped_legacy_request_log_catalog_rollups = true;
+                        reset_request_log_catalog_rollup_meta = true;
+                    }
 
-                let sidecar_request_log_rows_after: i64 =
-                    sqlx::query_scalar("SELECT COUNT(*) FROM observability.request_logs")
-                        .fetch_one(&store.pool)
-                        .await?;
-                (
-                    attached_observability_path,
-                    sidecar_request_log_rows_before,
-                    sidecar_request_log_rows_after,
-                    copied_request_logs,
-                    batches,
-                    dropped_main_request_logs,
-                    dropped_legacy_api_key_usage_buckets,
-                    dropped_legacy_dashboard_request_rollup_buckets,
-                    dropped_legacy_request_log_catalog_rollups,
-                    reset_api_key_usage_buckets_meta,
-                    reset_dashboard_request_rollup_buckets_meta,
-                    reset_request_log_catalog_rollup_meta,
-                    child_reference_checks_passed,
-                )
+                    let sidecar_request_log_rows_after: i64 =
+                        sqlx::query_scalar("SELECT COUNT(*) FROM observability.request_logs")
+                            .fetch_one(&store.pool)
+                            .await?;
+                    (
+                        attached_observability_path,
+                        sidecar_request_log_rows_before,
+                        sidecar_request_log_rows_after,
+                        copied_request_logs,
+                        batches,
+                        dropped_main_request_logs,
+                        dropped_legacy_api_key_usage_buckets,
+                        dropped_legacy_dashboard_request_rollup_buckets,
+                        dropped_legacy_request_log_catalog_rollups,
+                        reset_api_key_usage_buckets_meta,
+                        reset_dashboard_request_rollup_buckets_meta,
+                        reset_request_log_catalog_rollup_meta,
+                        child_reference_checks_passed,
+                    )
+                };
+                store.pool.close().await;
+                result
             };
         let available_bytes_after = available_disk_bytes_for_path(&layout.core_database_path)?;
         let sidecar_file_bytes_after = std::fs::metadata(&sidecar_path)
