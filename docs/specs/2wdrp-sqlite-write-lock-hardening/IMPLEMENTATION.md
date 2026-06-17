@@ -227,7 +227,7 @@
   - remote run `/srv/codex/workspaces/ivan/tavily-hikari__7aa37deb/runs/20260617_035715_7dfaaa12_sidecar`
   - compose project `codex_tavily-hikari__7aa37deb_20260617_035715_7dfaaa12_sidecar`
   - migration CLI evidence:
-    `observability_sidecar_migrate: dry_run=false completed=true offline_lock=true copied_request_logs=2 batches=2 already_migrated=false resumed_copy=false`
+    `observability_sidecar_migrate: dry_run=false completed=true offline_lock=true sqlite_write_probe_ok=true copied_request_logs=2 batches=2 already_migrated=false resumed_copy=false`
   - smoke evidence:
     `{\"backend\":\"0.2.0\",\"tokenId\":\"UED8\",\"logPaths\":[\"/api/tavily/search\",\"/mcp\"],\"sidecarRowCount\":4}`
 
@@ -275,8 +275,12 @@
   - upload the rollback anchor to codex-testbox:
     `ssh 192.168.31.11 'cat /tmp/tavily_proxy.pre_sidecar.db.gz' | ssh codex-testbox 'cat > /srv/codex/workspaces/ivan/tavily-hikari__7aa37deb/backups/tavily_proxy.pre_sidecar.db.gz'`
   - run the explicit migration on 101:
-    `ssh 192.168.31.11 'cd /home/ivan/srv/ai && docker compose run --rm -T tavily-hikari observability_sidecar_migrate --db-path /srv/app/data/tavily_proxy.db --batch-size 5000 --json'`
+    `ssh 192.168.31.11 'cd /home/ivan/srv/ai && docker compose run --rm -T --entrypoint observability_sidecar_migrate tavily-hikari --db-path /srv/app/data/tavily_proxy.db --batch-size 5000 --json'`
   - restart and validate:
     `ssh 192.168.31.11 'cd /home/ivan/srv/ai && docker compose up -d tavily-hikari && docker compose ps tavily-hikari'`
   - rollback if validation fails:
     `ssh 192.168.31.11 'cd /home/ivan/srv/ai && docker compose stop tavily-hikari && gzip -dc /tmp/tavily_proxy.pre_sidecar.db.gz > /var/lib/docker/volumes/ai-tavily-hikari-data/_data/tavily_proxy.db && rm -f /var/lib/docker/volumes/ai-tavily-hikari-data/_data/tavily_proxy-observability.db && docker compose up -d tavily-hikari'`
+- The stop-service proof for this runbook is the sibling `tavily_proxy-observability-migrate.lock`:
+  live server and GC paths hold it shared, while the explicit migration command must acquire it
+  exclusively before mutating the legacy core DB. The remaining SQLite write probe stays in the
+  JSON/plain report as a diagnostic signal, not as the primary proof that the live service exited.

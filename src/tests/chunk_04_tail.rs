@@ -1,3 +1,42 @@
+fn resolve_test_binary(file_name: &str) -> std::path::PathBuf {
+    let current_exe = std::env::current_exe().expect("resolve current test executable");
+    if let Some(debug_dir) = current_exe.parent().and_then(|deps| deps.parent()) {
+        let direct = debug_dir.join(file_name);
+        if direct.is_file() {
+            return direct;
+        }
+    }
+    if let Some(parent) = current_exe.parent() {
+        let direct = parent.join(file_name);
+        if direct.is_file() {
+            return direct;
+        }
+        if let Ok(entries) = std::fs::read_dir(parent) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+                    continue;
+                };
+                if name == file_name || name.starts_with(&format!("{file_name}-")) {
+                    #[cfg(unix)]
+                    let executable = {
+                        use std::os::unix::fs::PermissionsExt;
+                        path.metadata()
+                            .map(|metadata| metadata.is_file() && (metadata.permissions().mode() & 0o111) != 0)
+                            .unwrap_or(false)
+                    };
+                    #[cfg(not(unix))]
+                    let executable = path.is_file();
+                    if executable {
+                        return path;
+                    }
+                }
+            }
+        }
+    }
+    panic!("unable to resolve sibling test binary {file_name}");
+}
+
 #[tokio::test]
 async fn large_legacy_single_db_request_logs_stay_in_core_database_for_startup() {
     let db_path = temp_db_path("observability-sidecar-large-legacy-compat");
@@ -476,6 +515,8 @@ async fn observability_sidecar_migrate_moves_large_legacy_request_logs_offline()
         .expect("dry run succeeds");
     assert!(dry_run.large_legacy_fallback_active);
     assert!(dry_run.legacy_request_logs_exists);
+    assert!(dry_run.offline_lock_acquired);
+    assert!(dry_run.sqlite_write_probe_ok);
     assert!(!std::path::Path::new(&observability_path).exists());
 
     let report = run_observability_sidecar_migrate(&db_str, 2, false)
@@ -487,6 +528,12 @@ async fn observability_sidecar_migrate_moves_large_legacy_request_logs_offline()
     assert!(report.dropped_main_request_logs);
     assert!(report.child_reference_checks_passed);
     assert!(std::path::Path::new(&observability_path).exists());
+
+    let rerun = run_observability_sidecar_migrate(&db_str, 2, false)
+        .await
+        .expect("rerun stays idempotent");
+    assert_eq!(rerun.copied_request_logs, 0);
+    assert!(rerun.already_migrated);
 
     let proxy = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
         .await
@@ -512,18 +559,69 @@ async fn observability_sidecar_migrate_moves_large_legacy_request_logs_offline()
     assert!(main_request_logs_exists.is_none());
     drop(proxy);
 
-    let rerun = run_observability_sidecar_migrate(&db_str, 2, false)
-        .await
-        .expect("rerun stays idempotent");
-    assert_eq!(rerun.copied_request_logs, 0);
-    assert!(rerun.already_migrated);
-
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
     let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
     let _ = std::fs::remove_file(&observability_path);
     let _ = std::fs::remove_file(format!("{observability_path}-shm"));
     let _ = std::fs::remove_file(format!("{observability_path}-wal"));
+}
+
+#[tokio::test]
+async fn observability_sidecar_migrate_rejects_live_service_lock_holder() {
+    let db_path = temp_db_path("observability-sidecar-explicit-migrate-live-lock-holder");
+    let db_str = db_path.to_string_lossy().to_string();
+    let _proxy = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
+        .await
+        .expect("proxy created");
+
+    let helper_path = resolve_test_binary("observability_lock_holder");
+    let mut holder = std::process::Command::new(helper_path)
+        .args(["--db-path", &db_str])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn observability lock holder");
+    let stdout = holder.stdout.take().expect("lock holder stdout");
+    let mut reader = std::io::BufReader::new(stdout);
+    let mut ready = String::new();
+    std::io::BufRead::read_line(&mut reader, &mut ready).expect("read lock holder ready");
+    assert_eq!(ready.trim(), "lock-held");
+
+    let dry_run = run_observability_sidecar_migrate(&db_str, 2, true)
+        .await
+        .expect("dry run while service is live still reports state");
+    assert!(!dry_run.offline_lock_acquired);
+
+    let err = run_observability_sidecar_migrate(&db_str, 2, false)
+        .await
+        .expect_err("live service lock holder must block migration");
+    let message = err.to_string();
+    assert!(
+        message.contains("exclusive observability lock"),
+        "unexpected live-service migration error: {message}"
+    );
+
+    drop(reader);
+    drop(holder.stdin.take());
+    let status = holder.wait().expect("wait for lock holder exit");
+    assert!(status.success(), "lock holder exit status: {status}");
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+    let lock_path = format!(
+        "{}{}{}",
+        db_path
+            .parent()
+            .expect("db parent")
+            .to_string_lossy(),
+        std::path::MAIN_SEPARATOR,
+        format!(
+            "{}-observability-migrate.lock",
+            db_path.file_stem().and_then(|value| value.to_str()).unwrap_or("sqlite")
+        )
+    );
+    let _ = std::fs::remove_file(lock_path);
 }
 
 #[tokio::test]
@@ -536,10 +634,8 @@ async fn observability_sidecar_migrate_resumes_copy_from_preseeded_sidecar_gaps(
         .clone()
         .expect("sidecar path");
 
-    let proxy = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
-        .await
-        .expect("proxy created");
-    drop(proxy);
+    let store = KeyStore::new(&db_str).await.expect("keystore created");
+    drop(store);
 
     let pool = sqlx::SqlitePool::connect_with(
         sqlx::sqlite::SqliteConnectOptions::new()
@@ -620,6 +716,12 @@ async fn observability_sidecar_migrate_resumes_copy_from_preseeded_sidecar_gaps(
     assert_eq!(report.batches, 2);
     assert!(report.dropped_main_request_logs);
 
+    let rerun = run_observability_sidecar_migrate(&db_str, 1, false)
+        .await
+        .expect("rerun stays idempotent");
+    assert_eq!(rerun.copied_request_logs, 0);
+    assert!(rerun.already_migrated);
+
     let reopened = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
         .await
         .expect("reopen migrated db");
@@ -631,12 +733,6 @@ async fn observability_sidecar_migrate_resumes_copy_from_preseeded_sidecar_gaps(
     .expect("fetch migrated ids");
     assert_eq!(ids, vec![1, 2, 4]);
     drop(reopened);
-
-    let rerun = run_observability_sidecar_migrate(&db_str, 1, false)
-        .await
-        .expect("rerun stays idempotent");
-    assert_eq!(rerun.copied_request_logs, 0);
-    assert!(rerun.already_migrated);
 
     let _ = std::fs::remove_file(&db_path);
     let _ = std::fs::remove_file(db_path.with_extension("db-shm"));

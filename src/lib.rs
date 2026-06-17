@@ -248,6 +248,8 @@ pub struct DbCompactionReport {
 pub struct ObservabilitySidecarMigrationReport {
     pub dry_run: bool,
     pub offline_lock_acquired: bool,
+    pub sibling_lock_path: String,
+    pub sqlite_write_probe_ok: bool,
     pub core_path: String,
     pub sidecar_path: String,
     pub attached_observability_path: String,

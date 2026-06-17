@@ -5,6 +5,81 @@ use crate::*;
 use sqlx::Connection;
 use sqlx::Row;
 use sqlx::SqliteConnection;
+use std::fs::{File, OpenOptions};
+use std::os::fd::AsRawFd;
+
+pub(crate) struct ObservabilityOfflineGuard {
+    _lock_file: File,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObservabilityOfflineProbe {
+    pub sibling_lock_path: String,
+    pub service_lock_held_exclusively: bool,
+    pub sqlite_write_probe_ok: bool,
+}
+
+fn sqlite_lock_sidecar_path(database_path: &str) -> String {
+    sqlite_sidecar_path(database_path, "observability-migrate.lock")
+}
+
+fn flock_nonblocking(file: &File, operation: libc::c_int) -> std::io::Result<()> {
+    let rc = unsafe { libc::flock(file.as_raw_fd(), operation | libc::LOCK_NB) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+pub(crate) fn acquire_observability_service_shared_lock(
+    database_path: &str,
+) -> Result<File, ProxyError> {
+    let lock_path = sqlite_lock_sidecar_path(database_path);
+    let file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|err| {
+            ProxyError::Other(format!(
+                "failed to open observability service lock file {lock_path}: {err}"
+            ))
+        })?;
+    flock_nonblocking(&file, libc::LOCK_SH).map_err(|err| {
+        ProxyError::Other(format!(
+            "failed to acquire shared observability service lock {lock_path}: {err}"
+        ))
+    })?;
+    Ok(file)
+}
+
+pub(crate) fn acquire_observability_offline_guard(
+    database_path: &str,
+) -> Result<ObservabilityOfflineGuard, ProxyError> {
+    let lock_path = sqlite_lock_sidecar_path(database_path);
+    let lock_file = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .map_err(|err| {
+            ProxyError::Other(format!(
+                "failed to open observability offline lock file {lock_path}: {err}"
+            ))
+        })?;
+    flock_nonblocking(&lock_file, libc::LOCK_EX).map_err(|err| {
+        ProxyError::Other(format!(
+            "offline migration requires the service to be stopped; could not acquire exclusive observability service lock {lock_path}: {err}"
+        ))
+    })?;
+    Ok(ObservabilityOfflineGuard {
+        _lock_file: lock_file,
+    })
+}
 
 pub(crate) fn is_transient_sqlite_write_error(err: &ProxyError) -> bool {
     let ProxyError::Database(db_err) = err else {
@@ -469,7 +544,20 @@ pub(crate) fn available_disk_bytes_for_path(path: &str) -> Result<u64, ProxyErro
     Ok(available_kib.saturating_mul(1024))
 }
 
-pub(crate) async fn probe_sqlite_offline_exclusive_lock(
+pub(crate) async fn probe_observability_offline_state(
+    database_path: &str,
+) -> Result<ObservabilityOfflineProbe, ProxyError> {
+    let sibling_lock_path = sqlite_lock_sidecar_path(database_path);
+    let service_lock_held_exclusively = acquire_observability_offline_guard(database_path).is_ok();
+    let sqlite_write_probe_ok = probe_sqlite_offline_write_lock(database_path).await?;
+    Ok(ObservabilityOfflineProbe {
+        sibling_lock_path,
+        service_lock_held_exclusively,
+        sqlite_write_probe_ok,
+    })
+}
+
+pub(crate) async fn probe_sqlite_offline_write_lock(
     database_path: &str,
 ) -> Result<bool, ProxyError> {
     let options = SqliteConnectOptions::new()
@@ -480,7 +568,7 @@ pub(crate) async fn probe_sqlite_offline_exclusive_lock(
     let mut conn = SqliteConnection::connect_with(&options)
         .await
         .map_err(ProxyError::Database)?;
-    match sqlx::query("BEGIN EXCLUSIVE").execute(&mut conn).await {
+    match sqlx::query("BEGIN IMMEDIATE").execute(&mut conn).await {
         Ok(_) => {
             sqlx::query("ROLLBACK")
                 .execute(&mut conn)
@@ -2139,6 +2227,7 @@ impl RequestStatsCoalescer {
 pub(crate) struct KeyStore {
     pub(crate) database_path: String,
     pub(crate) observability_database_path: Option<String>,
+    pub(crate) _observability_lock: Option<File>,
     pub(crate) pool: SqlitePool,
     pub(crate) backend_time: BackendTime,
     pub(crate) token_binding_cache: RwLock<HashMap<String, TokenBindingCacheEntry>>,

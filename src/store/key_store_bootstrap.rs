@@ -818,7 +818,9 @@ impl KeyStore {
         let store = Self {
             database_path: layout.core_database_path.clone(),
             observability_database_path,
+            _observability_lock: None,
             pool,
+            backend_time: BackendTime::system(),
             token_binding_cache: RwLock::new(HashMap::new()),
             account_quota_resolution_cache: RwLock::new(HashMap::new()),
             request_logs_catalog_cache: RwLock::new(HashMap::new()),
@@ -861,18 +863,14 @@ impl KeyStore {
             false,
         )
         .await?;
-        let offline_lock_acquired = if dry_run {
-            probe_sqlite_offline_exclusive_lock(&layout.core_database_path).await?
-        } else {
-            let lock_ok = probe_sqlite_offline_exclusive_lock(&layout.core_database_path).await?;
-            if !lock_ok {
-                return Err(ProxyError::Other(format!(
-                    "offline migration requires the service to be stopped; could not acquire BEGIN EXCLUSIVE on {}",
-                    layout.core_database_path
-                )));
-            }
-            true
-        };
+        let offline_probe = probe_observability_offline_state(&layout.core_database_path).await?;
+        if !dry_run && !offline_probe.service_lock_held_exclusively {
+            return Err(ProxyError::Other(format!(
+                "offline migration requires the service to be stopped; could not acquire exclusive observability lock at {}",
+                offline_probe.sibling_lock_path
+            )));
+        }
+        let offline_lock_acquired = offline_probe.service_lock_held_exclusively;
 
         let core_file_bytes = core_database_file_size(&layout.core_database_path)?;
         let available_bytes_before = available_disk_bytes_for_path(&layout.core_database_path)?;
@@ -967,6 +965,7 @@ impl KeyStore {
                     false,
                 )
             } else {
+                let _offline_guard = acquire_observability_offline_guard(&layout.core_database_path)?;
                 let store = Self::open_for_observability_sidecar_migration(database_path).await?;
                 let attached_observability_path = store
                     .observability_database_path
@@ -1087,6 +1086,8 @@ impl KeyStore {
         Ok(ObservabilitySidecarMigrationReport {
             dry_run,
             offline_lock_acquired,
+            sibling_lock_path: offline_probe.sibling_lock_path,
+            sqlite_write_probe_ok: offline_probe.sqlite_write_probe_ok,
             core_path: layout.core_database_path.clone(),
             sidecar_path,
             attached_observability_path,
@@ -1254,6 +1255,9 @@ impl KeyStore {
         let store = Self {
             database_path: layout.core_database_path.clone(),
             observability_database_path,
+            _observability_lock: Some(acquire_observability_service_shared_lock(
+                &layout.core_database_path,
+            )?),
             pool,
             backend_time,
             token_binding_cache: RwLock::new(HashMap::new()),
@@ -1304,6 +1308,9 @@ impl KeyStore {
         let store = Self {
             database_path: layout.core_database_path.clone(),
             observability_database_path,
+            _observability_lock: Some(acquire_observability_service_shared_lock(
+                &layout.core_database_path,
+            )?),
             pool,
             backend_time,
             token_binding_cache: RwLock::new(HashMap::new()),

@@ -201,14 +201,18 @@ source when a usable persisted runtime already exists.
 - A large legacy SQLite DB whose `request_logs` inline sidecar migration would exceed the startup
   budget still starts successfully, keeps `observability.request_logs` attached to the core file,
   and does not create a sibling sidecar file during that startup path.
-- `observability_sidecar_migrate --dry-run` reports the core path, sibling sidecar path, current
-  attach target, legacy-table presence, fallback status, file sizes, and available disk space
-  without creating or attaching a new sidecar file.
+- `observability_sidecar_migrate --dry-run` reports the core path, sibling sidecar path, sibling
+  `observability-migrate.lock` path, whether the service lock is exclusively available, the
+  best-effort SQLite write probe result, current attach target, legacy-table presence, fallback
+  status, file sizes, and available disk space without creating or attaching a new sidecar file.
 - After `observability_sidecar_migrate` completes on a large legacy sample, the sibling
   `*-observability.db` exists, `main.request_logs` is gone, `observability.request_logs` preserves
   the original `id` coverage, child `request_log_id` / `source_request_log_id` references remain
   valid, and legacy `api_key_usage_buckets`, `dashboard_request_rollup_buckets`, and
   `request_log_catalog_rollups` are removed from `main` with their rebuild markers reset.
+- The explicit migration path must refuse to run while another process still holds the sibling
+  `observability-migrate.lock`; success no longer relies on WAL-mode `BEGIN EXCLUSIVE` semantics to
+  infer that the live service has stopped.
 - Re-running `observability_sidecar_migrate` after a partial or finished copy must not duplicate
   sidecar `request_logs` rows and must report whether it resumed an earlier copy or found the DB
   already migrated.

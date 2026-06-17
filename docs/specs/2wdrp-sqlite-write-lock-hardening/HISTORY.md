@@ -98,6 +98,9 @@
 - Standardized the validation path around a shared-testbox single-node Compose harness plus a 101
   short-maintenance cutover/rollback runbook, with the pre-cutover core DB exported to testbox as
   the rollback anchor.
+- Replaced the earlier WAL-mode offline-lock heuristic with an explicit sibling
+  `observability-migrate.lock` contract so online service holders and the offline migration command
+  coordinate through a process-visible file lock instead of inferring shutdown from `BEGIN EXCLUSIVE`.
 - Recorded the first passing shared-testbox evidence for that flow: isolated compose project build,
   explicit sidecar migration, fresh token-backed `/api/tavily/search`, `/mcp`, and migrated
   request-log reads all succeeded against the migrated snapshot.
