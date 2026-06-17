@@ -123,7 +123,8 @@
 - Added `observability_sidecar_migrate` as an offline operator binary for that explicit cutover.
   The command:
   - always derives the sibling `*-observability.db` path from the core DB path,
-  - probes whether normal startup would still be on the large-legacy compatibility path,
+  - probes whether normal startup would still be on the large-legacy compatibility path while
+    preserving the normal attach decision for existing DBs,
   - supports `--dry-run` / `--json` reporting without mutating or creating the sidecar,
   - rejects missing or mistyped `--db-path` values before creating either the core DB file or the
     sibling sidecar file,

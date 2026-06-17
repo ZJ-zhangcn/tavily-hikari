@@ -786,6 +786,60 @@ async fn observability_sidecar_migrate_rejects_missing_db_path_without_creating_
 }
 
 #[tokio::test]
+async fn observability_sidecar_migrate_dry_run_reports_startup_attach_for_small_legacy_db() {
+    let db_path = temp_db_path("observability-sidecar-explicit-migrate-small-legacy");
+    let db_str = db_path.to_string_lossy().to_string();
+    let layout = SqliteDatabaseLayout::from_database_path(&db_str);
+    let observability_path = layout
+        .observability_database_path
+        .clone()
+        .expect("sidecar path");
+
+    let mut conn = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new()
+            .filename(&db_path)
+            .create_if_missing(true),
+    )
+    .await
+    .expect("open legacy sqlite");
+    sqlx::query(
+        r#"
+        CREATE TABLE request_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            method TEXT NOT NULL,
+            path TEXT NOT NULL,
+            created_at INTEGER NOT NULL
+        )
+        "#,
+    )
+    .execute(&mut conn)
+    .await
+    .expect("create legacy request_logs");
+    sqlx::query(
+        "INSERT INTO request_logs (method, path, created_at) VALUES ('POST', '/api/tavily/search', 1)",
+    )
+    .execute(&mut conn)
+    .await
+    .expect("seed request log");
+    drop(conn);
+
+    let dry_run = run_observability_sidecar_migrate(&db_str, 2, true)
+        .await
+        .expect("dry run succeeds");
+    assert!(!dry_run.large_legacy_fallback_active);
+    assert_eq!(dry_run.attached_observability_path, observability_path);
+    assert!(dry_run.legacy_request_logs_exists);
+    assert!(!std::path::Path::new(&observability_path).exists());
+
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+    let _ = std::fs::remove_file(&observability_path);
+    let _ = std::fs::remove_file(format!("{observability_path}-shm"));
+    let _ = std::fs::remove_file(format!("{observability_path}-wal"));
+}
+
+#[tokio::test]
 async fn heal_orphan_auth_tokens_from_logs_creates_soft_deleted_token() {
     let db_path = temp_db_path("heal-orphan");
     let db_str = db_path.to_string_lossy().to_string();

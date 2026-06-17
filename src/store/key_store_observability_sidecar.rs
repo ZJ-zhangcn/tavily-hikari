@@ -359,7 +359,7 @@ impl KeyStore {
             &layout.core_database_path,
             layout.observability_database_path.as_deref(),
             false,
-            true,
+            false,
         )
         .await?;
         let offline_probe = probe_observability_offline_state(&layout.core_database_path).await?;
