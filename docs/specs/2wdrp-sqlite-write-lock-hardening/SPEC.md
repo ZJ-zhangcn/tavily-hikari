@@ -207,6 +207,8 @@ source when a usable persisted runtime already exists.
   `observability-migrate.lock` path, whether the service lock is exclusively available, the
   best-effort SQLite write probe result, current attach target, legacy-table presence, fallback
   status, file sizes, and available disk space without creating or attaching a new sidecar file.
+  A missing or mistyped `--db-path` must fail before creating either the core DB file or the
+  sibling sidecar file.
 - After `observability_sidecar_migrate` completes on a large legacy sample, the sibling
   `*-observability.db` exists, `main.request_logs` is gone, `observability.request_logs` preserves
   the original `id` coverage, child `request_log_id` / `source_request_log_id` references remain

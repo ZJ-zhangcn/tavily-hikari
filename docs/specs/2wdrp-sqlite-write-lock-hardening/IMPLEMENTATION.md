@@ -125,6 +125,8 @@
   - always derives the sibling `*-observability.db` path from the core DB path,
   - probes whether normal startup would still be on the large-legacy compatibility path,
   - supports `--dry-run` / `--json` reporting without mutating or creating the sidecar,
+  - rejects missing or mistyped `--db-path` values before creating either the core DB file or the
+    sibling sidecar file,
   - requires the service to be stopped before a real migration by probing `BEGIN EXCLUSIVE`,
   - forces the sibling sidecar attach target instead of reusing the startup fallback,
   - copies only `main.request_logs` into `observability.request_logs` in `id` order with bounded

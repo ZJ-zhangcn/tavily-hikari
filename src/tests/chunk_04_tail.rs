@@ -743,6 +743,49 @@ async fn observability_sidecar_migrate_resumes_copy_from_preseeded_sidecar_gaps(
 }
 
 #[tokio::test]
+async fn observability_sidecar_migrate_rejects_missing_db_path_without_creating_files() {
+    let db_path = temp_db_path("observability-sidecar-explicit-migrate-missing-db");
+    let db_str = db_path.to_string_lossy().to_string();
+    let layout = SqliteDatabaseLayout::from_database_path(&db_str);
+    let observability_path = layout
+        .observability_database_path
+        .clone()
+        .expect("sidecar path");
+
+    assert!(!db_path.exists(), "fixture should start with no core db");
+    assert!(
+        !std::path::Path::new(&observability_path).exists(),
+        "fixture should start with no sidecar db"
+    );
+
+    let dry_run_err = run_observability_sidecar_migrate(&db_str, 2, true)
+        .await
+        .expect_err("dry-run must reject a missing core db path");
+    assert!(
+        dry_run_err.to_string().contains("unable to open database file"),
+        "unexpected dry-run missing-db error: {dry_run_err}"
+    );
+    assert!(!db_path.exists(), "dry-run must not create a core db");
+    assert!(
+        !std::path::Path::new(&observability_path).exists(),
+        "dry-run must not create a sidecar db"
+    );
+
+    let run_err = run_observability_sidecar_migrate(&db_str, 2, false)
+        .await
+        .expect_err("migration must reject a missing core db path");
+    assert!(
+        run_err.to_string().contains("unable to open database file"),
+        "unexpected missing-db migration error: {run_err}"
+    );
+    assert!(!db_path.exists(), "migration must not create a core db");
+    assert!(
+        !std::path::Path::new(&observability_path).exists(),
+        "migration must not create a sidecar db"
+    );
+}
+
+#[tokio::test]
 async fn heal_orphan_auth_tokens_from_logs_creates_soft_deleted_token() {
     let db_path = temp_db_path("heal-orphan");
     let db_str = db_path.to_string_lossy().to_string();
