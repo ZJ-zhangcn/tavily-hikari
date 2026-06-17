@@ -355,13 +355,6 @@ impl KeyStore {
             .observability_database_path
             .clone()
             .ok_or_else(|| ProxyError::Other("observability sidecar path is unavailable".to_string()))?;
-        let attached_default = detect_observability_attach_path(
-            &layout.core_database_path,
-            layout.observability_database_path.as_deref(),
-            false,
-            false,
-        )
-        .await?;
         let offline_probe = probe_observability_offline_state(&layout.core_database_path).await?;
         if !dry_run && !offline_probe.service_lock_held_exclusively {
             return Err(ProxyError::Other(format!(
@@ -376,10 +369,6 @@ impl KeyStore {
         let sidecar_file_bytes_before = std::fs::metadata(&sidecar_path)
             .map(|metadata| metadata.len())
             .unwrap_or(0);
-        let large_legacy_fallback_active = attached_default
-            .as_deref()
-            .map(|path| sqlite_paths_match(path, &layout.core_database_path))
-            .unwrap_or(false);
 
         let core_probe = SqlitePoolOptions::new()
             .min_connections(1)
@@ -400,6 +389,17 @@ impl KeyStore {
             Self::main_table_exists_in_pool(&core_probe, "dashboard_request_rollup_buckets").await?;
         let legacy_request_log_catalog_rollups_exists =
             Self::main_table_exists_in_pool(&core_probe, "request_log_catalog_rollups").await?;
+        let attached_default = planned_observability_attach_path(
+            &layout.core_database_path,
+            layout.observability_database_path.as_deref(),
+            legacy_request_logs_exists,
+            true,
+            false,
+        );
+        let large_legacy_fallback_active = attached_default
+            .as_deref()
+            .map(|path| sqlite_paths_match(path, &layout.core_database_path))
+            .unwrap_or(false);
 
         let (source_min_request_log_id, source_max_request_log_id, source_request_log_rows) =
             if legacy_request_logs_exists {

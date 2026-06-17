@@ -209,6 +209,8 @@ source when a usable persisted runtime already exists.
   status, file sizes, and available disk space without creating or attaching a new sidecar file.
   That startup attach probe must match normal startup semantics for existing DBs; only missing or
   mistyped `--db-path` values are allowed to fail before any file creation.
+  The write-probe field is best-effort only and must not make `--dry-run` fail on a read-only
+  snapshot.
   A missing or mistyped `--db-path` must fail before creating either the core DB file or the
   sibling sidecar file.
 - After `observability_sidecar_migrate` completes on a large legacy sample, the sibling

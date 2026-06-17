@@ -427,52 +427,36 @@ async fn select_observability_attach_path(
     create_if_missing: bool,
     read_only: bool,
 ) -> Result<Option<String>, sqlx::Error> {
-    let sidecar_exists = std::path::Path::new(observability_database_path).exists();
     let legacy_request_logs_exists = connection_main_table_exists(conn, "request_logs").await?;
+    Ok(planned_observability_attach_path(
+        core_database_path,
+        Some(observability_database_path),
+        legacy_request_logs_exists,
+        create_if_missing,
+        read_only,
+    ))
+}
+
+pub(crate) fn planned_observability_attach_path(
+    core_database_path: &str,
+    observability_database_path: Option<&str>,
+    legacy_request_logs_exists: bool,
+    create_if_missing: bool,
+    read_only: bool,
+) -> Option<String> {
+    let observability_database_path = observability_database_path?;
+    let sidecar_exists = std::path::Path::new(observability_database_path).exists();
     if legacy_request_logs_exists
         && (read_only || !legacy_request_logs_inline_sidecar_migration_allowed(core_database_path))
     {
-        return Ok(Some(core_database_path.to_string()));
+        return Some(core_database_path.to_string());
     }
 
     if !read_only || create_if_missing || sidecar_exists {
-        return Ok(Some(observability_database_path.to_string()));
+        return Some(observability_database_path.to_string());
     }
 
-    Ok(None)
-}
-
-pub(crate) async fn detect_observability_attach_path(
-    core_database_path: &str,
-    observability_database_path: Option<&str>,
-    create_if_missing: bool,
-    read_only: bool,
-) -> Result<Option<String>, ProxyError> {
-    let Some(observability_database_path) = observability_database_path else {
-        return Ok(None);
-    };
-
-    let mut options = SqliteConnectOptions::new()
-        .filename(core_database_path)
-        .create_if_missing(create_if_missing)
-        .read_only(read_only)
-        .busy_timeout(Duration::from_secs(5));
-    if !read_only {
-        options = options.journal_mode(SqliteJournalMode::Wal);
-    }
-
-    let mut conn = SqliteConnection::connect_with(&options)
-        .await
-        .map_err(ProxyError::Database)?;
-    select_observability_attach_path(
-        &mut conn,
-        core_database_path,
-        observability_database_path,
-        create_if_missing,
-        read_only,
-    )
-    .await
-    .map_err(ProxyError::Database)
+    None
 }
 
 async fn connection_main_table_exists(
@@ -549,42 +533,16 @@ pub(crate) async fn probe_observability_offline_state(
 ) -> Result<ObservabilityOfflineProbe, ProxyError> {
     let sibling_lock_path = sqlite_lock_sidecar_path(database_path);
     let service_lock_held_exclusively = acquire_observability_offline_guard(database_path).is_ok();
-    let sqlite_write_probe_ok = probe_sqlite_offline_write_lock(database_path).await?;
+    let sqlite_write_probe_ok = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(database_path)
+        .is_ok();
     Ok(ObservabilityOfflineProbe {
         sibling_lock_path,
         service_lock_held_exclusively,
         sqlite_write_probe_ok,
     })
-}
-
-pub(crate) async fn probe_sqlite_offline_write_lock(
-    database_path: &str,
-) -> Result<bool, ProxyError> {
-    let options = SqliteConnectOptions::new()
-        .filename(database_path)
-        .create_if_missing(false)
-        .journal_mode(SqliteJournalMode::Wal)
-        .busy_timeout(Duration::from_millis(250));
-    let mut conn = SqliteConnection::connect_with(&options)
-        .await
-        .map_err(ProxyError::Database)?;
-    match sqlx::query("BEGIN IMMEDIATE").execute(&mut conn).await {
-        Ok(_) => {
-            sqlx::query("ROLLBACK")
-                .execute(&mut conn)
-                .await
-                .map_err(ProxyError::Database)?;
-            Ok(true)
-        }
-        Err(err) => {
-            let err = ProxyError::Database(err);
-            if is_transient_sqlite_write_error(&err) {
-                Ok(false)
-            } else {
-                Err(err)
-            }
-        }
-    }
 }
 
 async fn attach_observability_database(
