@@ -650,6 +650,7 @@ CREATE TABLE auth_token_logs_new (
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct RequestLogDiagnosticMetadata {
     created_at: Option<i64>,
+    request_user_id: Option<String>,
     gateway_mode: Option<String>,
     experiment_variant: Option<String>,
     proxy_session_id: Option<String>,

@@ -1288,10 +1288,13 @@ impl KeyStore {
         let key_effect_summary = key_effect_summary.map(str::to_string);
         let binding_effect_summary = binding_effect_summary.map(str::to_string);
         let selection_effect_summary = selection_effect_summary.map(str::to_string);
-        let request_user_id = self.resolve_request_rollup_user_id(token_id, None).await?;
         let diagnostic_metadata = self
             .resolve_request_log_diagnostic_metadata(request_log_id)
             .await?;
+        let request_user_id = diagnostic_metadata
+            .request_user_id
+            .clone()
+            .or(self.resolve_request_rollup_user_id(token_id, None).await?);
         let request_log_created_at = diagnostic_metadata.created_at;
         let upstream_operation_for_business = diagnostic_metadata.upstream_operation.clone();
         sqlx::query(
@@ -1403,12 +1406,13 @@ impl KeyStore {
         let key_effect_summary = key_effect_summary.map(str::to_string);
         let binding_effect_summary = binding_effect_summary.map(str::to_string);
         let selection_effect_summary = selection_effect_summary.map(str::to_string);
-        let request_user_id = self
-            .resolve_request_rollup_user_id(token_id, Some(billing_subject))
-            .await?;
         let diagnostic_metadata = self
             .resolve_request_log_diagnostic_metadata(request_log_id)
             .await?;
+        let request_user_id = diagnostic_metadata.request_user_id.clone().or(
+            self.resolve_request_rollup_user_id(token_id, Some(billing_subject))
+                .await?,
+        );
         let request_log_created_at = diagnostic_metadata.created_at;
         let upstream_operation_for_business = diagnostic_metadata.upstream_operation.clone();
         let log_id: i64 = sqlx::query_scalar(
@@ -1559,9 +1563,10 @@ impl KeyStore {
             Option<String>,
             Option<String>,
             Option<String>,
+            Option<String>,
         )>(
             r#"
-            SELECT created_at, gateway_mode, experiment_variant, proxy_session_id, routing_subject_hash, upstream_operation, fallback_reason
+            SELECT created_at, request_user_id, gateway_mode, experiment_variant, proxy_session_id, routing_subject_hash, upstream_operation, fallback_reason
             FROM request_logs
             WHERE id = ?
             LIMIT 1
@@ -1575,6 +1580,7 @@ impl KeyStore {
             .map(
                 |(
                     created_at,
+                    request_user_id,
                     gateway_mode,
                     experiment_variant,
                     proxy_session_id,
@@ -1583,6 +1589,7 @@ impl KeyStore {
                     fallback_reason,
                 )| RequestLogDiagnosticMetadata {
                     created_at,
+                    request_user_id,
                     gateway_mode,
                     experiment_variant,
                     proxy_session_id,
