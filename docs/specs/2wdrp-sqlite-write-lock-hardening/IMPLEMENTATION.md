@@ -212,6 +212,11 @@
     missing,
   - preserving the large-legacy startup compatibility path and standalone `request_logs_gc_once`
     behavior until the explicit cutover is run.
+- Explicit sidecar migration completion now requires a fresh normal startup reopen after the
+  offline lock is released. The migration CLI/report surface gained
+  `startup_reopen_verified`, and the final `completed=true` contract now means “offline rebuild
+  succeeded and a normal startup reopen succeeded,” not just “the offline sidecar tables were
+  rebuilt.”
 - Added request-stats coverage proving summary/key-metric reads flush pending coalesced deltas
   before returning.
 - Added request-stats coverage proving auth-token activity reads and admin rate-5m usage-series
