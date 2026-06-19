@@ -3,6 +3,25 @@ import type { Meta, StoryObj } from '@storybook/react-vite'
 import { LanguageProvider, translations } from '../i18n'
 import AdminUserRankingsPage from './AdminUserRankingsPage'
 import type { AdminUserRankingRow, AdminUserRankingsSnapshot } from '../api/adminRankings'
+import { buildRankingMockAvatarDataUrl } from './rankingAvatar'
+
+function withMockAvatars(entries: Array<{ name: string; username: string | null; value: number }>) {
+  return entries.map((entry) => {
+    const userId = `usr_${entry.name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`
+    return {
+      ...entry,
+      avatarUrl: buildRankingMockAvatarDataUrl(
+        {
+          userId,
+          displayName: entry.name,
+          username: entry.username,
+          avatarUrl: null,
+        },
+        'User',
+      ),
+    }
+  })
+}
 
 function buildRows(
   entries: Array<{ name: string; username: string | null; value: number; avatarUrl?: string | null }>,
@@ -19,8 +38,8 @@ function buildRows(
   }))
 }
 
-const last24hPrimary = buildRows([
-  { name: 'Alice Chen', username: 'alice', value: 184, avatarUrl: 'https://cdn.example.com/avatar/alice.png' },
+const last24hPrimary = buildRows(withMockAvatars([
+  { name: 'Alice Chen', username: 'alice', value: 184 },
   { name: 'Bob Lin', username: 'bobby', value: 176 },
   { name: 'Carol Xu', username: 'carol', value: 169 },
   { name: 'Dan Wu', username: 'dan', value: 161 },
@@ -40,10 +59,10 @@ const last24hPrimary = buildRows([
   { name: 'Ryan Ji', username: 'ryan', value: 87 },
   { name: 'Sara Hu', username: 'sara', value: 81 },
   { name: 'Tina Fan', username: 'tina', value: 76 },
-])
+]))
 
-const last24hCredits = buildRows([
-  { name: 'Alice Chen', username: 'alice', value: 628, avatarUrl: 'https://cdn.example.com/avatar/alice.png' },
+const last24hCredits = buildRows(withMockAvatars([
+  { name: 'Alice Chen', username: 'alice', value: 628 },
   { name: 'Dan Wu', username: 'dan', value: 597 },
   { name: 'Erin Zhou', username: 'erin', value: 566 },
   { name: 'Frank He', username: 'frank', value: 542 },
@@ -63,10 +82,10 @@ const last24hCredits = buildRows([
   { name: 'Sara Hu', username: 'sara', value: 321 },
   { name: 'Tina Fan', username: 'tina', value: 308 },
   { name: 'Uma Ren', username: 'uma', value: 294 },
-])
+]))
 
-const last7dPrimary = buildRows([
-  { name: 'Alice Chen', username: 'alice', value: 1182, avatarUrl: 'https://cdn.example.com/avatar/alice.png' },
+const last7dPrimary = buildRows(withMockAvatars([
+  { name: 'Alice Chen', username: 'alice', value: 1182 },
   { name: 'Bob Lin', username: 'bobby', value: 1131 },
   { name: 'Frank He', username: 'frank', value: 1094 },
   { name: 'Dan Wu', username: 'dan', value: 1057 },
@@ -86,10 +105,10 @@ const last7dPrimary = buildRows([
   { name: 'Sara Hu', username: 'sara', value: 667 },
   { name: 'Tina Fan', username: 'tina', value: 645 },
   { name: 'Uma Ren', username: 'uma', value: 621 },
-])
+]))
 
-const last7dCredits = buildRows([
-  { name: 'Alice Chen', username: 'alice', value: 4120, avatarUrl: 'https://cdn.example.com/avatar/alice.png' },
+const last7dCredits = buildRows(withMockAvatars([
+  { name: 'Alice Chen', username: 'alice', value: 4120 },
   { name: 'Dan Wu', username: 'dan', value: 3980 },
   { name: 'Erin Zhou', username: 'erin', value: 3815 },
   { name: 'Frank He', username: 'frank', value: 3662 },
@@ -109,10 +128,10 @@ const last7dCredits = buildRows([
   { name: 'Sara Hu', username: 'sara', value: 1944 },
   { name: 'Tina Fan', username: 'tina', value: 1825 },
   { name: 'Uma Ren', username: 'uma', value: 1708 },
-])
+]))
 
-const last30dPrimary = buildRows([
-  { name: 'Alice Chen', username: 'alice', value: 4850, avatarUrl: 'https://cdn.example.com/avatar/alice.png' },
+const last30dPrimary = buildRows(withMockAvatars([
+  { name: 'Alice Chen', username: 'alice', value: 4850 },
   { name: 'Bob Lin', username: 'bobby', value: 4728 },
   { name: 'Erin Zhou', username: 'erin', value: 4589 },
   { name: 'Dan Wu', username: 'dan', value: 4463 },
@@ -132,10 +151,10 @@ const last30dPrimary = buildRows([
   { name: 'Sara Hu', username: 'sara', value: 2781 },
   { name: 'Tina Fan', username: 'tina', value: 2668 },
   { name: 'Uma Ren', username: 'uma', value: 2550 },
-])
+]))
 
-const last30dCredits = buildRows([
-  { name: 'Alice Chen', username: 'alice', value: 12680, avatarUrl: 'https://cdn.example.com/avatar/alice.png' },
+const last30dCredits = buildRows(withMockAvatars([
+  { name: 'Alice Chen', username: 'alice', value: 12680 },
   { name: 'Dan Wu', username: 'dan', value: 12140 },
   { name: 'Hana Su', username: 'hana', value: 11675 },
   { name: 'Erin Zhou', username: 'erin', value: 11294 },
@@ -155,7 +174,7 @@ const last30dCredits = buildRows([
   { name: 'Sara Hu', username: 'sara', value: 6321 },
   { name: 'Tina Fan', username: 'tina', value: 5982 },
   { name: 'Uma Ren', username: 'uma', value: 5660 },
-])
+]))
 
 const snapshot: AdminUserRankingsSnapshot = {
   generatedAt: 1_781_763_600,
@@ -198,9 +217,12 @@ const meta = {
   ],
   args: {
     strings: translations.zh.admin.rankings,
+    language: 'zh',
     snapshot,
     loading: false,
     error: null,
+    connectionState: 'live',
+    onRetry: () => undefined,
   },
 } satisfies Meta<typeof AdminUserRankingsPage>
 
@@ -227,6 +249,21 @@ export const EmptyState: Story = {
 export const ErrorState: Story = {
   args: {
     error: translations.zh.admin.rankings.error,
+    connectionState: 'degraded',
+  },
+  render: (args) => <AdminUserRankingsPage {...args} />,
+}
+
+export const ConnectingState: Story = {
+  args: {
+    connectionState: 'connecting',
+  },
+  render: (args) => <AdminUserRankingsPage {...args} />,
+}
+
+export const Mobile: Story = {
+  parameters: {
+    viewport: { defaultViewport: '0390-device-iphone-14' },
   },
   render: (args) => <AdminUserRankingsPage {...args} />,
 }

@@ -1684,6 +1684,9 @@ function AdminDashboard(): JSX.Element {
   const [rankingsSnapshot, setRankingsSnapshot] = useState<AdminUserRankingsSnapshot | null>(null)
   const [rankingsLoading, setRankingsLoading] = useState(false)
   const [rankingsError, setRankingsError] = useState<string | null>(null)
+  const [rankingsConnectionState, setRankingsConnectionState] =
+    useState<'connecting' | 'live' | 'degraded'>('connecting')
+  const [rankingsReconnectNonce, setRankingsReconnectNonce] = useState(0)
   const [dashboardMonthSeries, setDashboardMonthSeries] = useState<DashboardMonthSeries>(() => createEmptyDashboardMonthSeries())
   const [dashboardSiteStatusSnapshot, setDashboardSiteStatusSnapshot] = useState<DashboardSiteStatusState | null>(null)
   const [keys, setKeys] = useState<ApiKeyStats[]>([])
@@ -2738,6 +2741,7 @@ function AdminDashboard(): JSX.Element {
       } catch (err) {
         if ((err as Error).name === 'AbortError') return
         setRankingsError(err instanceof Error ? err.message : 'Unexpected error occurred')
+        setRankingsConnectionState('degraded')
       } finally {
         if (!signal?.aborted) {
           setRankingsLoading(false)
@@ -3339,9 +3343,10 @@ function AdminDashboard(): JSX.Element {
     }
 
     const controller = new AbortController()
+    setRankingsConnectionState('connecting')
     void loadUserRankings(controller.signal)
     return () => controller.abort()
-  }, [loadUserRankings, route])
+  }, [loadUserRankings, rankingsReconnectNonce, route])
 
   useLayoutEffect(() => {
     if (!(route.name === 'module' && route.module === 'dashboard')) {
@@ -4198,11 +4203,14 @@ function AdminDashboard(): JSX.Element {
     const connect = () => {
       if (disposed) return
       closeEventSource()
+      setRankingsConnectionState((current) => (current === 'live' ? 'live' : 'connecting'))
       es = new EventSource('/api/users/rankings/events')
       es.onopen = () => {
         setRankingsError(null)
+        setRankingsConnectionState('live')
       }
       es.onerror = () => {
+        setRankingsConnectionState('degraded')
         closeEventSource()
         scheduleReconnect()
       }
@@ -4212,6 +4220,7 @@ function AdminDashboard(): JSX.Element {
             ? event.data
             : adminStrings.rankings.error
         setRankingsError(message)
+        setRankingsConnectionState('degraded')
       })
       es.addEventListener('snapshot', (event) => {
         try {
@@ -4219,8 +4228,10 @@ function AdminDashboard(): JSX.Element {
           setRankingsSnapshot(nextSnapshot)
           setRankingsLoading(false)
           setRankingsError(null)
+          setRankingsConnectionState('live')
         } catch (parseError) {
           console.error('Rankings SSE parse error', parseError)
+          setRankingsConnectionState('degraded')
         }
       })
     }
@@ -4234,7 +4245,7 @@ function AdminDashboard(): JSX.Element {
       }
       closeEventSource()
     }
-  }, [adminStrings.rankings.error, route])
+  }, [adminStrings.rankings.error, rankingsReconnectNonce, route])
 
 
   // Establish SSE connection to receive live dashboard updates
@@ -10457,9 +10468,16 @@ function AdminDashboard(): JSX.Element {
       {showRankings && (
         <AdminUserRankingsPage
           strings={adminStrings.rankings}
+          language={language}
           snapshot={rankingsSnapshot}
           loading={rankingsLoading}
           error={rankingsError}
+          connectionState={rankingsConnectionState}
+          onRetry={() => {
+            setRankingsError(null)
+            setRankingsConnectionState('connecting')
+            setRankingsReconnectNonce((current) => current + 1)
+          }}
         />
       )}
 

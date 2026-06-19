@@ -317,8 +317,14 @@ export interface AdminTranslationsShape {
     primarySuccessDescription: string
     businessCreditsDescription: string
     userFallback: string
-    usernamePrefix: string
     refreshEvery: string
+    lastUpdated: string
+    retry: string
+    windowSelector: string
+    statusLive: string
+    statusConnecting: string
+    statusDegraded: string
+    staleHint: string
   }
   modules: {
     comingSoon: string

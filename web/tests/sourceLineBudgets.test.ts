@@ -18,8 +18,8 @@ const EXCEPTIONS = new Map<string, { max: number; reason: string }>([
   [
     'src/admin/AdminDashboardRuntime.tsx',
     {
-      max: 13394,
-      reason: 'Legacy admin dashboard runtime remains as a compatibility shell while HA source settings, active-user list filtering, and the new admin rankings route finish converging before a larger extraction pass.',
+      max: 13412,
+      reason: 'Legacy admin dashboard runtime remains as a compatibility shell while HA source settings, active-user list filtering, and the admin rankings live-status wiring finish converging before a larger extraction pass.',
     },
   ],
   [
@@ -61,23 +61,23 @@ const EXCEPTIONS = new Map<string, { max: number; reason: string }>([
   [
     'src/i18n/translations/en.ts',
     {
-      max: 1553,
-      reason: 'Admin jobs maintenance copy and admin rankings module strings are still stored in the shared English runtime catalog.',
+      max: 1560,
+      reason: 'Admin jobs maintenance copy and the expanded admin rankings live-status/accessibility strings are still stored in the shared English runtime catalog.',
     },
   ],
   [
     'src/i18n/translations/zh.ts',
     {
-      max: 1552,
-      reason: 'Admin jobs maintenance copy and admin rankings module strings are still stored in the shared Chinese runtime catalog.',
+      max: 1559,
+      reason: 'Admin jobs maintenance copy and the expanded admin rankings live-status/accessibility strings are still stored in the shared Chinese runtime catalog.',
     },
   ],
   [
     'src/i18n/types.ts',
     {
-      max: 1628,
+      max: 1635,
       reason:
-        'HA source settings mode-specific failure copy, admin jobs maintenance strings, and admin rankings translation types remain in the shared catalog contract.',
+        'HA source settings mode-specific failure copy, admin jobs maintenance strings, and the expanded admin rankings translation contract remain in the shared catalog contract.',
     },
   ],
   [
