@@ -148,9 +148,7 @@ use super::upstream_support_and_manual_jobs::*;
 
     #[tokio::test]
     async fn admin_system_settings_reads_auth_token_retention_from_env_until_persisted_override() {
-        unsafe {
-            std::env::set_var("AUTH_TOKEN_LOG_RETENTION_DAYS", "14");
-        }
+        let _env_guard = EnvVarGuard::set("AUTH_TOKEN_LOG_RETENTION_DAYS", "14");
         let db_path = temp_db_path("admin-system-settings-auth-token-retention-env");
         let db_str = db_path.to_string_lossy().to_string();
         let proxy = TavilyProxy::with_endpoint::<Vec<String>, String>(Vec::new(), DEFAULT_UPSTREAM, &db_str)
@@ -173,9 +171,6 @@ use super::upstream_support_and_manual_jobs::*;
         let persisted = proxy.get_system_settings().await.expect("reload persisted settings");
         assert_eq!(persisted.auth_token_log_retention_days, 32);
 
-        unsafe {
-            std::env::remove_var("AUTH_TOKEN_LOG_RETENTION_DAYS");
-        }
         let _ = std::fs::remove_file(db_path);
     }
 

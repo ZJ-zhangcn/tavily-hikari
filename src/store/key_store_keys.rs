@@ -1,10 +1,16 @@
 impl KeyStore {
+    fn admin_active_user_day_bucket_start(&self) -> i64 {
+        let current_local_day_start = local_day_bucket_start_utc_ts(self.backend_time.now_ts());
+        shift_local_day_start_utc_ts(
+            current_local_day_start,
+            -(ADMIN_ACTIVE_USERS_WINDOW_DAYS as i32 - 1),
+        )
+    }
+
     fn admin_user_activity_since(&self, scope: AdminUserActivityScope) -> Option<i64> {
         match scope {
             AdminUserActivityScope::All => None,
-            AdminUserActivityScope::Active90d => {
-                Some(self.backend_time.now_ts() - ADMIN_ACTIVE_USERS_WINDOW_SECS)
-            }
+            AdminUserActivityScope::Active90d => Some(self.admin_active_user_day_bucket_start()),
         }
     }
 
@@ -93,9 +99,11 @@ impl KeyStore {
             .map_err(ProxyError::Database)
     }
 
-    pub(crate) async fn count_active_users_since(&self, since: i64) -> Result<i64, ProxyError> {
+    pub(crate) async fn count_active_users_since_bucket(
+        &self,
+        since_bucket_start: i64,
+    ) -> Result<i64, ProxyError> {
         self.flush_request_stats_writes().await?;
-        let since_bucket_start = local_day_bucket_start_utc_ts(since);
         sqlx::query_scalar::<_, i64>(
             r#"SELECT COUNT(DISTINCT user_id)
                FROM account_usage_rollup_buckets
@@ -116,7 +124,7 @@ impl KeyStore {
         self.flush_request_stats_writes().await?;
         let total_users = self.count_total_users().await?;
         let active_users_90d = self
-            .count_active_users_since(self.backend_time.now_ts() - ADMIN_ACTIVE_USERS_WINDOW_SECS)
+            .count_active_users_since_bucket(self.admin_active_user_day_bucket_start())
             .await?;
         Ok(AdminUserListStats {
             active_users_90d,

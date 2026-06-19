@@ -2319,6 +2319,151 @@ async fn startup_rebuilds_request_day_rollups_when_v1_done_exists_but_day_covera
 }
 
 #[tokio::test]
+async fn account_usage_rollup_active90d_counts_exact_server_local_day_window() {
+    let (backend_time, manual_clock) = crate::BackendTime::manual_from_ts(1_700_000_000);
+    let db_path = temp_db_path("account-usage-rollup-active90d-local-day-window");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_options_and_time(
+        Vec::<String>::new(),
+        DEFAULT_UPSTREAM,
+        &db_str,
+        TavilyProxyOptions::from_database_path(&db_str),
+        backend_time,
+    )
+    .await
+    .expect("proxy created");
+
+    let included_user = proxy
+        .upsert_oauth_account(&OAuthAccountProfile {
+            provider: "github".to_string(),
+            provider_user_id: "active90d-included".to_string(),
+            username: Some("active90d_included".to_string()),
+            name: Some("Active90d Included".to_string()),
+            avatar_template: None,
+            active: true,
+            trust_level: None,
+            raw_payload_json: None,
+        })
+        .await
+        .expect("upsert included user");
+    let excluded_user = proxy
+        .upsert_oauth_account(&OAuthAccountProfile {
+            provider: "github".to_string(),
+            provider_user_id: "active90d-excluded".to_string(),
+            username: Some("active90d_excluded".to_string()),
+            name: Some("Active90d Excluded".to_string()),
+            avatar_template: None,
+            active: true,
+            trust_level: None,
+            raw_payload_json: None,
+        })
+        .await
+        .expect("upsert excluded user");
+    let included_token = proxy
+        .ensure_user_token_binding(&included_user.user_id, Some("active90d-included"))
+        .await
+        .expect("bind included token");
+    let excluded_token = proxy
+        .ensure_user_token_binding(&excluded_user.user_id, Some("active90d-excluded"))
+        .await
+        .expect("bind excluded token");
+
+    let request_kind = TokenRequestKind::new("api:search", "API | search", None);
+    let current_local_day_start = local_day_bucket_start_utc_ts(manual_clock.now_ts());
+    let included_bucket_start = shift_local_day_start_utc_ts(
+        current_local_day_start,
+        -(ADMIN_ACTIVE_USERS_WINDOW_DAYS as i32 - 1),
+    );
+    let excluded_bucket_start = shift_local_day_start_utc_ts(included_bucket_start, -1);
+
+    manual_clock.set_now_ts(included_bucket_start + 60);
+    proxy
+        .record_token_attempt_with_kind_request_log_metadata(
+            &included_token.id,
+            &Method::POST,
+            "/api/tavily/search",
+            Some("q=in-window"),
+            Some(200),
+            Some(200),
+            true,
+            OUTCOME_SUCCESS,
+            None,
+            &request_kind,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("record included request");
+
+    manual_clock.set_now_ts(excluded_bucket_start + 60);
+    proxy
+        .record_token_attempt_with_kind_request_log_metadata(
+            &excluded_token.id,
+            &Method::POST,
+            "/api/tavily/search",
+            Some("q=out-of-window"),
+            Some(200),
+            Some(200),
+            true,
+            OUTCOME_SUCCESS,
+            None,
+            &request_kind,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .await
+        .expect("record excluded request");
+
+    manual_clock.set_now_ts(current_local_day_start + 15 * SECS_PER_HOUR);
+    let active_users = proxy
+        .key_store
+        .count_active_users_since_bucket(included_bucket_start)
+        .await
+        .expect("count active users");
+    assert_eq!(active_users, 1);
+
+    let included_values = proxy
+        .key_store
+        .fetch_account_usage_rollup_values(
+            &included_user.user_id,
+            AccountUsageRollupMetricKind::RequestCount,
+            AccountUsageRollupBucketKind::Day,
+            included_bucket_start,
+            next_local_day_start_utc_ts(included_bucket_start),
+        )
+        .await
+        .expect("load included day bucket");
+    assert_eq!(included_values.get(&included_bucket_start), Some(&1));
+
+    let excluded_values = proxy
+        .key_store
+        .fetch_account_usage_rollup_values(
+            &excluded_user.user_id,
+            AccountUsageRollupMetricKind::RequestCount,
+            AccountUsageRollupBucketKind::Day,
+            excluded_bucket_start,
+            next_local_day_start_utc_ts(excluded_bucket_start),
+        )
+        .await
+        .expect("load excluded day bucket");
+    assert_eq!(excluded_values.get(&excluded_bucket_start), Some(&1));
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
 async fn account_usage_rollup_rebuild_preserves_mcp_batch_successes_when_request_body_is_unavailable()
  {
     let db_path = temp_db_path("account-usage-rollup-mcp-batch-fallback-successes");
