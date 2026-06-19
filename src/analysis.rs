@@ -1972,8 +1972,6 @@ pub(crate) fn request_value_bucket_for_stored_request_log_sql(
                     WHEN COALESCE({counts_business_quota_expr}, 0) <> 0 THEN 'valuable'
                     ELSE 'other'
                 END
-            WHEN {normalized} = 'mcp:batch' AND COALESCE({counts_business_quota_expr}, 0) = 0
-                THEN 'other'
             ELSE ({live_bucket})
         END
         "

@@ -2535,3 +2535,345 @@ async fn account_usage_rollup_rebuild_preserves_mcp_batch_successes_when_request
 
     let _ = std::fs::remove_file(db_path);
 }
+
+#[tokio::test]
+async fn account_usage_rollup_rebuild_uses_request_body_for_non_billable_mcp_batch_when_available()
+{
+    let db_path = temp_db_path("account-usage-rollup-mcp-batch-body-wins");
+    let db_str = db_path.to_string_lossy().to_string();
+
+    let proxy = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
+        .await
+        .expect("proxy created");
+    let user = proxy
+        .upsert_oauth_account(&OAuthAccountProfile {
+            provider: "github".to_string(),
+            provider_user_id: "mcp-batch-body-wins".to_string(),
+            username: Some("mcp_batch_body_wins".to_string()),
+            name: Some("MCP Batch Body Wins".to_string()),
+            avatar_template: None,
+            active: true,
+            trust_level: None,
+            raw_payload_json: None,
+        })
+        .await
+        .expect("upsert user");
+    let token = proxy
+        .ensure_user_token_binding(&user.user_id, Some("mcp-batch-body-wins"))
+        .await
+        .expect("bind token");
+
+    let primary_batch_body = br#"[
+      {"jsonrpc":"2.0","id":1,"method":"initialize"},
+      {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"tavily-search"}}
+    ]"#;
+    let created_at = Utc::now().timestamp();
+    let request_log_id = proxy
+        .record_local_request_log_without_key(
+            Some(&token.id),
+            &Method::POST,
+            "/mcp",
+            None,
+            StatusCode::OK,
+            Some(200),
+            primary_batch_body,
+            b"{}",
+            OUTCOME_SUCCESS,
+            None,
+            &[],
+            &[],
+            None,
+        )
+        .await
+        .expect("record primary batch request log");
+    proxy
+        .record_token_attempt_with_kind_request_log_metadata(
+            &token.id,
+            &Method::POST,
+            "/mcp",
+            None,
+            Some(StatusCode::OK.as_u16() as i64),
+            Some(200),
+            false,
+            OUTCOME_SUCCESS,
+            None,
+            &TokenRequestKind::new("mcp:batch", "MCP | batch", None),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(request_log_id),
+        )
+        .await
+        .expect("record linked non-billable batch token log");
+
+    sqlx::query(
+        "UPDATE auth_token_logs SET created_at = ?, request_user_id = ? WHERE request_log_id = ?",
+    )
+    .bind(created_at)
+    .bind(&user.user_id)
+    .bind(request_log_id)
+    .execute(&proxy.key_store.pool)
+    .await
+    .expect("align token log ownership and time");
+
+    let five_minute_bucket_start = created_at - created_at.rem_euclid(SECS_PER_FIVE_MINUTES);
+    let day_bucket_start = local_day_bucket_start_utc_ts(created_at);
+
+    proxy
+        .key_store
+        .rebuild_account_usage_rollup_buckets_v1()
+        .await
+        .expect("rebuild account usage rollups");
+
+    let five_minute_primary_values = proxy
+        .key_store
+        .fetch_account_usage_rollup_values(
+            &user.user_id,
+            AccountUsageRollupMetricKind::PrimarySuccess,
+            AccountUsageRollupBucketKind::FiveMinute,
+            five_minute_bucket_start,
+            five_minute_bucket_start + SECS_PER_FIVE_MINUTES,
+        )
+        .await
+        .expect("load rebuilt primary five minute bucket");
+    let five_minute_secondary_values = proxy
+        .key_store
+        .fetch_account_usage_rollup_values(
+            &user.user_id,
+            AccountUsageRollupMetricKind::SecondarySuccess,
+            AccountUsageRollupBucketKind::FiveMinute,
+            five_minute_bucket_start,
+            five_minute_bucket_start + SECS_PER_FIVE_MINUTES,
+        )
+        .await
+        .expect("load rebuilt secondary five minute bucket");
+    let day_primary_values = proxy
+        .key_store
+        .fetch_account_usage_rollup_values(
+            &user.user_id,
+            AccountUsageRollupMetricKind::PrimarySuccess,
+            AccountUsageRollupBucketKind::Day,
+            day_bucket_start,
+            next_local_day_start_utc_ts(day_bucket_start),
+        )
+        .await
+        .expect("load rebuilt primary day bucket");
+    let day_secondary_values = proxy
+        .key_store
+        .fetch_account_usage_rollup_values(
+            &user.user_id,
+            AccountUsageRollupMetricKind::SecondarySuccess,
+            AccountUsageRollupBucketKind::Day,
+            day_bucket_start,
+            next_local_day_start_utc_ts(day_bucket_start),
+        )
+        .await
+        .expect("load rebuilt secondary day bucket");
+
+    assert_eq!(
+        five_minute_primary_values.get(&five_minute_bucket_start),
+        Some(&1)
+    );
+    assert!(five_minute_secondary_values.is_empty());
+    assert_eq!(day_primary_values.get(&day_bucket_start), Some(&1));
+    assert!(day_secondary_values.is_empty());
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
+async fn user_rankings_partial_range_counts_non_billable_mcp_batch_by_request_body() {
+    let db_path = temp_db_path("user-rankings-partial-range-mcp-batch-body");
+    let db_str = db_path.to_string_lossy().to_string();
+
+    let proxy = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
+        .await
+        .expect("proxy created");
+    let valuable_user = proxy
+        .upsert_oauth_account(&OAuthAccountProfile {
+            provider: "github".to_string(),
+            provider_user_id: "rankings-partial-valuable".to_string(),
+            username: Some("rankings_partial_valuable".to_string()),
+            name: Some("Rankings Partial Valuable".to_string()),
+            avatar_template: None,
+            active: true,
+            trust_level: None,
+            raw_payload_json: None,
+        })
+        .await
+        .expect("upsert valuable user");
+    let other_user = proxy
+        .upsert_oauth_account(&OAuthAccountProfile {
+            provider: "github".to_string(),
+            provider_user_id: "rankings-partial-other".to_string(),
+            username: Some("rankings_partial_other".to_string()),
+            name: Some("Rankings Partial Other".to_string()),
+            avatar_template: None,
+            active: true,
+            trust_level: None,
+            raw_payload_json: None,
+        })
+        .await
+        .expect("upsert other user");
+
+    let valuable_token = proxy
+        .ensure_user_token_binding(&valuable_user.user_id, Some("rankings-partial-valuable"))
+        .await
+        .expect("bind valuable token");
+    let other_token = proxy
+        .ensure_user_token_binding(&other_user.user_id, Some("rankings-partial-other"))
+        .await
+        .expect("bind other token");
+
+    let generated_at = Utc::now().timestamp();
+    let start_at = generated_at.saturating_sub(SECS_PER_DAY);
+    let partial_created_at = start_at.saturating_add(1);
+
+    let valuable_batch_body = br#"[
+      {"jsonrpc":"2.0","id":1,"method":"initialize"},
+      {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"tavily-search"}}
+    ]"#;
+    let other_batch_body = br#"[
+      {"jsonrpc":"2.0","id":1,"method":"initialize"},
+      {"jsonrpc":"2.0","id":2,"method":"tools/list"}
+    ]"#;
+
+    let valuable_request_log_id = proxy
+        .record_local_request_log_without_key(
+            Some(&valuable_token.id),
+            &Method::POST,
+            "/mcp",
+            None,
+            StatusCode::OK,
+            Some(200),
+            valuable_batch_body,
+            b"{}",
+            OUTCOME_SUCCESS,
+            None,
+            &[],
+            &[],
+            None,
+        )
+        .await
+        .expect("record valuable request log");
+    proxy
+        .record_token_attempt_with_kind_request_log_metadata(
+            &valuable_token.id,
+            &Method::POST,
+            "/mcp",
+            None,
+            Some(StatusCode::OK.as_u16() as i64),
+            Some(200),
+            false,
+            OUTCOME_SUCCESS,
+            None,
+            &TokenRequestKind::new("mcp:batch", "MCP | batch", None),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(valuable_request_log_id),
+        )
+        .await
+        .expect("record valuable token log");
+
+    let other_request_log_id = proxy
+        .record_local_request_log_without_key(
+            Some(&other_token.id),
+            &Method::POST,
+            "/mcp",
+            None,
+            StatusCode::OK,
+            Some(200),
+            other_batch_body,
+            b"{}",
+            OUTCOME_SUCCESS,
+            None,
+            &[],
+            &[],
+            None,
+        )
+        .await
+        .expect("record other request log");
+    proxy
+        .record_token_attempt_with_kind_request_log_metadata(
+            &other_token.id,
+            &Method::POST,
+            "/mcp",
+            None,
+            Some(StatusCode::OK.as_u16() as i64),
+            Some(200),
+            false,
+            OUTCOME_SUCCESS,
+            None,
+            &TokenRequestKind::new("mcp:batch", "MCP | batch", None),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(other_request_log_id),
+        )
+        .await
+        .expect("record other token log");
+
+    sqlx::query(
+        "UPDATE auth_token_logs SET created_at = ?, request_user_id = ? WHERE request_log_id = ?",
+    )
+    .bind(partial_created_at)
+    .bind(&valuable_user.user_id)
+    .bind(valuable_request_log_id)
+    .execute(&proxy.key_store.pool)
+    .await
+    .expect("align valuable token log");
+    sqlx::query(
+        "UPDATE auth_token_logs SET created_at = ?, request_user_id = ? WHERE request_log_id = ?",
+    )
+    .bind(partial_created_at)
+    .bind(&other_user.user_id)
+    .bind(other_request_log_id)
+    .execute(&proxy.key_store.pool)
+    .await
+    .expect("align other token log");
+
+    let snapshot = proxy
+        .key_store
+        .fetch_user_rankings_snapshot(generated_at, 10)
+        .await
+        .expect("load rankings snapshot");
+
+    assert_eq!(
+        snapshot
+            .last24h
+            .primary_success_top
+            .first()
+            .map(|row| row.user.user_id.as_str()),
+        Some(valuable_user.user_id.as_str())
+    );
+    assert_eq!(
+        snapshot
+            .last24h
+            .primary_success_top
+            .first()
+            .map(|row| row.value),
+        Some(1)
+    );
+    assert!(
+        snapshot
+            .last24h
+            .primary_success_top
+            .iter()
+            .all(|row| row.user.user_id != other_user.user_id)
+    );
+
+    let _ = std::fs::remove_file(db_path);
+}

@@ -164,9 +164,24 @@ impl KeyStore {
             return Ok(());
         }
 
+        let request_body_expr = if self.table_exists("request_logs").await?
+            && self
+                .table_column_exists("request_logs", "request_body")
+                .await?
+        {
+            "rl.request_body"
+        } else {
+            "NULL"
+        };
+        let request_value_bucket_sql = request_value_bucket_for_stored_request_log_sql(
+            "atl.request_kind_key",
+            request_body_expr,
+            "atl.counts_business_quota",
+        );
+
         match metric_kind {
             AccountUsageRollupMetricKind::PrimarySuccess => {
-                let rows = sqlx::query_as::<_, (String, i64)>(
+                let rows = sqlx::query_as::<_, (String, i64)>(&format!(
                     r#"
                     SELECT
                         COALESCE(
@@ -180,6 +195,7 @@ impl KeyStore {
                         COUNT(*) AS total
                     FROM auth_token_logs atl
                     LEFT JOIN user_token_bindings b ON b.token_id = atl.token_id
+                    LEFT JOIN request_logs rl ON rl.id = atl.request_log_id
                     WHERE atl.created_at >= ?
                       AND atl.created_at < ?
                       AND atl.result_status = ?
@@ -191,15 +207,11 @@ impl KeyStore {
                             END,
                             b.user_id
                         ) IS NOT NULL
-                      AND (
-                            (atl.request_kind_key LIKE 'api:%')
-                            OR atl.request_kind_key IN ('mcp:search', 'mcp:extract', 'mcp:crawl', 'mcp:map', 'mcp:research')
-                            OR (atl.request_kind_key = 'mcp:batch' AND COALESCE(atl.counts_business_quota, 0) <> 0)
-                      )
+                      AND ({request_value_bucket_sql}) = 'valuable'
                     GROUP BY user_id
                     HAVING total > 0
                     "#,
-                )
+                ))
                 .bind(start_at)
                 .bind(end_at)
                 .bind(OUTCOME_SUCCESS)
@@ -211,7 +223,7 @@ impl KeyStore {
                 }
             }
             AccountUsageRollupMetricKind::SecondarySuccess => {
-                let rows = sqlx::query_as::<_, (String, i64)>(
+                let rows = sqlx::query_as::<_, (String, i64)>(&format!(
                     r#"
                     SELECT
                         COALESCE(
@@ -225,6 +237,7 @@ impl KeyStore {
                         COUNT(*) AS total
                     FROM auth_token_logs atl
                     LEFT JOIN user_token_bindings b ON b.token_id = atl.token_id
+                    LEFT JOIN request_logs rl ON rl.id = atl.request_log_id
                     WHERE atl.created_at >= ?
                       AND atl.created_at < ?
                       AND atl.result_status = ?
@@ -236,17 +249,11 @@ impl KeyStore {
                             END,
                             b.user_id
                         ) IS NOT NULL
-                      AND (
-                            atl.request_kind_key = 'mcp:batch'
-                            OR atl.request_kind_key IN ('api:usage', 'mcp:initialize', 'mcp:ping', 'mcp:tools/list')
-                            OR atl.request_kind_key LIKE 'mcp:resources/%'
-                            OR atl.request_kind_key LIKE 'mcp:prompts/%'
-                            OR atl.request_kind_key LIKE 'mcp:notifications/%'
-                      )
+                      AND ({request_value_bucket_sql}) = 'other'
                     GROUP BY user_id
                     HAVING total > 0
                     "#,
-                )
+                ))
                 .bind(start_at)
                 .bind(end_at)
                 .bind(OUTCOME_SUCCESS)
