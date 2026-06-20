@@ -206,3 +206,108 @@ async fn public_success_breakdown_flushes_when_pending_rollup_is_outside_day_but
 
     let _ = std::fs::remove_file(db_path);
 }
+
+#[tokio::test]
+async fn public_success_breakdown_flushes_pending_rollup_enqueued_during_flush() {
+    let db_path = temp_db_path("public-success-breakdown-concurrent-pending-flush");
+    let db_str = db_path.to_string_lossy().to_string();
+
+    let proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-public-success-concurrent-pending".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("proxy created");
+
+    let key_id = proxy
+        .list_api_key_metrics()
+        .await
+        .expect("list key metrics")
+        .into_iter()
+        .next()
+        .expect("seeded key")
+        .id;
+    let now = Utc::now().timestamp();
+    let first_created_at = now.saturating_sub(60);
+    let second_created_at = now.saturating_sub(10);
+    let window = TimeRangeUtc {
+        start: now.saturating_sub(300),
+        end: now.saturating_add(60),
+    };
+
+    proxy
+        .key_store
+        .enqueue_request_stats_rollup_for_test(Some(&key_id), first_created_at, OUTCOME_SUCCESS)
+        .await;
+
+    let store = proxy.key_store.clone();
+    let pause = store
+        .request_stats_coalescer
+        .install_post_flush_pause()
+        .await;
+    let flush_handle = tokio::spawn(async move { store.flush_request_stats_writes().await });
+
+    tokio::time::timeout(Duration::from_secs(1), pause.arrived.notified())
+        .await
+        .expect("flush reached post-flush pause");
+
+    assert_eq!(
+        proxy
+            .key_store
+            .request_stats_coalescer
+            .pending_oldest_created_at()
+            .await,
+        None
+    );
+
+    proxy
+        .key_store
+        .enqueue_request_stats_rollup_for_test(Some(&key_id), second_created_at, OUTCOME_SUCCESS)
+        .await;
+
+    assert_eq!(
+        proxy
+            .key_store
+            .request_stats_coalescer
+            .pending_oldest_created_at()
+            .await,
+        Some(second_created_at)
+    );
+    assert_eq!(
+        proxy
+            .key_store
+            .request_stats_coalescer
+            .pending_newest_created_at()
+            .await,
+        Some(second_created_at)
+    );
+
+    pause
+        .released
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    pause.release.notify_waiters();
+
+    flush_handle
+        .await
+        .expect("flush join")
+        .expect("flush request stats");
+
+    let public = proxy
+        .success_breakdown(Some(window))
+        .await
+        .expect("public success breakdown");
+
+    assert_eq!(public.monthly_success, 2);
+    assert_eq!(public.daily_success, 2);
+    assert_eq!(
+        proxy
+            .key_store
+            .request_stats_coalescer
+            .pending_oldest_created_at()
+            .await,
+        None
+    );
+
+    let _ = std::fs::remove_file(db_path);
+}

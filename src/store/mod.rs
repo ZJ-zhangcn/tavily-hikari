@@ -2244,6 +2244,16 @@ pub(crate) struct RequestStatsCoalescer {
     pub(crate) state: Arc<Mutex<RequestStatsCoalescerState>>,
     pub(crate) wake: Arc<Notify>,
     pub(crate) flushed: Arc<Notify>,
+    #[cfg(test)]
+    pub(crate) post_flush_pause: Arc<Mutex<Option<RequestStatsPostFlushPause>>>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub(crate) struct RequestStatsPostFlushPause {
+    pub(crate) arrived: Arc<Notify>,
+    pub(crate) release: Arc<Notify>,
+    pub(crate) released: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Default for RequestStatsCoalescer {
@@ -2252,6 +2262,8 @@ impl Default for RequestStatsCoalescer {
             state: Arc::new(Mutex::new(RequestStatsCoalescerState::default())),
             wake: Arc::new(Notify::new()),
             flushed: Arc::new(Notify::new()),
+            #[cfg(test)]
+            post_flush_pause: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -2455,6 +2467,33 @@ impl RequestStatsCoalescer {
             notified.await;
         }
     }
+
+    #[cfg(test)]
+    pub(crate) async fn install_post_flush_pause(&self) -> RequestStatsPostFlushPause {
+        let pause = RequestStatsPostFlushPause {
+            arrived: Arc::new(Notify::new()),
+            release: Arc::new(Notify::new()),
+            released: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        };
+        let mut slot = self.post_flush_pause.lock().await;
+        *slot = Some(pause.clone());
+        pause
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn take_post_flush_pause(&self) -> Option<RequestStatsPostFlushPause> {
+        self.post_flush_pause.lock().await.take()
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn wait_for_post_flush_pause_if_installed(&self) {
+        if let Some(pause) = self.take_post_flush_pause().await {
+            pause.arrived.notify_waiters();
+            while !pause.released.load(std::sync::atomic::Ordering::SeqCst) {
+                pause.release.notified().await;
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -2507,6 +2546,8 @@ include!("key_store_jobs.rs");
 include!("key_store_account_limit_snapshots.rs");
 include!("key_store_account_usage_rollups.rs");
 include!("key_store_ha.rs");
+#[cfg(test)]
+include!("key_store_request_logs_and_dashboard_test_support.rs");
 
 #[cfg(test)]
 mod tests {

@@ -268,6 +268,8 @@ impl KeyStore {
                         std::mem::take(&mut state.pending_auth_token_activity),
                         std::mem::take(&mut state.pending_account_request_rollups),
                         std::mem::take(&mut state.pending_request_log_catalog),
+                        state.oldest_pending_created_at.take(),
+                        state.newest_pending_created_at.take(),
                     ))
                 }
             };
@@ -278,6 +280,8 @@ impl KeyStore {
                 pending_auth_token_activity,
                 pending_account_request_rollups,
                 pending_request_log_catalog,
+                drained_oldest_pending_created_at,
+                drained_newest_pending_created_at,
             )) = pending
             else {
                 self.request_stats_coalescer.wait_until_flushed().await;
@@ -464,75 +468,67 @@ impl KeyStore {
             }
             .await;
 
-            let mut state = self.request_stats_coalescer.state.lock().await;
-            state.flushing = false;
-            state.flush_deadline = None;
-            if let Err(err) = result {
-                for (key, counts) in pending_dashboard_rollups {
-                    state.pending_dashboard_rollups.entry(key).or_default().add(counts);
+            {
+                let mut state = self.request_stats_coalescer.state.lock().await;
+                state.flushing = false;
+                state.flush_deadline = None;
+                if let Err(err) = result {
+                    for (key, counts) in pending_dashboard_rollups {
+                        state.pending_dashboard_rollups.entry(key).or_default().add(counts);
+                    }
+                    for (key, delta) in pending_api_key_usage {
+                        state.pending_api_key_usage.entry(key).or_default().add(delta);
+                    }
+                    for (token_id, delta) in pending_auth_token_activity {
+                        state
+                            .pending_auth_token_activity
+                            .entry(token_id)
+                            .or_default()
+                            .add(delta);
+                    }
+                    for (key, delta) in pending_account_request_rollups {
+                        state
+                            .pending_account_request_rollups
+                            .entry(key)
+                            .or_default()
+                            .add(delta);
+                    }
+                    for (key, delta) in pending_request_log_catalog {
+                        *state.pending_request_log_catalog.entry(key).or_default() += delta;
+                    }
+                    if let Some(created_at) = drained_oldest_pending_created_at {
+                        state.oldest_pending_created_at = Some(
+                            state
+                                .oldest_pending_created_at
+                                .map(|current| current.min(created_at))
+                                .unwrap_or(created_at),
+                        );
+                    }
+                    if let Some(created_at) = drained_newest_pending_created_at {
+                        state.newest_pending_created_at = Some(
+                            state
+                                .newest_pending_created_at
+                                .map(|current| current.max(created_at))
+                                .unwrap_or(created_at),
+                        );
+                    }
+                    RequestStatsCoalescer::mark_flush_deadline_if_pending(&mut state);
+                    self.request_stats_coalescer.flushed.notify_waiters();
+                    return Err(err);
                 }
-                for (key, delta) in pending_api_key_usage {
-                    state.pending_api_key_usage.entry(key).or_default().add(delta);
+                if RequestStatsCoalescer::pending_key_count(&state) == 0 {
+                    state.oldest_pending_created_at = None;
+                    state.newest_pending_created_at = None;
+                } else {
+                    RequestStatsCoalescer::mark_flush_deadline_if_pending(&mut state);
                 }
-                for (token_id, delta) in pending_auth_token_activity {
-                    state
-                        .pending_auth_token_activity
-                        .entry(token_id)
-                        .or_default()
-                        .add(delta);
-                }
-                for (key, delta) in pending_account_request_rollups {
-                    state
-                        .pending_account_request_rollups
-                        .entry(key)
-                        .or_default()
-                        .add(delta);
-                }
-                for (key, delta) in pending_request_log_catalog {
-                    *state.pending_request_log_catalog.entry(key).or_default() += delta;
-                }
-                RequestStatsCoalescer::mark_flush_deadline_if_pending(&mut state);
                 self.request_stats_coalescer.flushed.notify_waiters();
-                return Err(err);
             }
-            state.oldest_pending_created_at = None;
-            state.newest_pending_created_at = None;
-            self.request_stats_coalescer.flushed.notify_waiters();
+            #[cfg(test)]
+            self.request_stats_coalescer
+                .wait_for_post_flush_pause_if_installed()
+                .await;
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn enqueue_request_stats_rollup_for_test(
-        &self,
-        api_key_id: Option<&str>,
-        created_at: i64,
-        outcome: &str,
-    ) {
-        let mut counts = DashboardRequestRollupCounts {
-            total_requests: 1,
-            api_billable: 1,
-            ..DashboardRequestRollupCounts::default()
-        };
-        match outcome {
-            OUTCOME_SUCCESS => {
-                counts.success_count = 1;
-                counts.valuable_success_count = 1;
-            }
-            OUTCOME_ERROR => {
-                counts.error_count = 1;
-                counts.valuable_failure_count = 1;
-            }
-            OUTCOME_QUOTA_EXHAUSTED => {
-                counts.quota_exhausted_count = 1;
-                counts.valuable_failure_count = 1;
-            }
-            _ => {
-                counts.unknown_count = 1;
-            }
-        }
-        self.request_stats_coalescer
-            .enqueue_request_log_rollups(api_key_id, "test-auth-token", None, created_at, counts, None)
-            .await;
     }
 
     async fn migrate_log_effect_buckets(&self) -> Result<(), ProxyError> {
