@@ -97,8 +97,6 @@ import {
 } from '../lib/mcpProbe'
 import { useResponsiveModes } from '../lib/responsive'
 import {
-  defaultRequestRateLabel,
-  formatRequestRateScope,
   formatRequestRateSummary,
   resolveRequestRate,
 } from '../requestRate'
@@ -448,6 +446,15 @@ function formatTimestamp(ts: number): string {
   } catch {
     return String(ts)
   }
+}
+
+function tokenListStatusTone(enabled: boolean): StatusTone {
+  return enabled ? 'success' : 'neutral'
+}
+
+function formatTokenLastUsedLabel(lastUsedAt: number | null, fallback: string): string {
+  if (lastUsedAt == null) return fallback
+  return formatTimestamp(lastUsedAt)
 }
 
 function tokenLabel(tokenId: string): string {
@@ -2698,11 +2705,11 @@ export default function UserConsole(): JSX.Element {
               ) : showEmptyTokens ? (
                 <div className="empty-state alert">{text.tokens.empty}</div>
               ) : (
-                <table className="user-console-tokens-table">
+                <table className="user-console-tokens-table" data-table-density="compact">
                   <thead>
                     <tr>
                       <th>{text.tokens.table.id}</th>
-                      <th>{text.tokens.table.quotas}</th>
+                      <th>{text.tokens.table.status}</th>
                       <th>{text.tokens.table.stats}</th>
                       <th>{text.tokens.table.actions}</th>
                     </tr>
@@ -2713,45 +2720,36 @@ export default function UserConsole(): JSX.Element {
                       return (
                         <tr key={item.tokenId}>
                           <td>
-                            <code>{item.tokenId}</code>
+                            <div className="user-console-token-id-cell">
+                              <code>{item.tokenId}</code>
+                            </div>
                           </td>
                           <td>
-                            <div className="user-console-cell-stack">
-                              <div className="user-console-cell-item">
-                                <span>{formatRequestRateSummary(resolveRequestRate(item, 'token'), language)}</span>
-                                <strong>
-                                  {formatQuotaPair(
-                                    resolveRequestRate(item, 'token').used,
-                                    resolveRequestRate(item, 'token').limit,
-                                  )}
-                                </strong>
-                              </div>
-                              <div className="user-console-cell-item">
-                                <span>{text.tokens.table.hourly}</span>
-                                <strong>{formatQuotaPair(item.quotaHourlyUsed, item.quotaHourlyLimit)}</strong>
-                              </div>
-                              <div className="user-console-cell-item">
-                                <span>{text.tokens.table.daily}</span>
-                                <strong>{formatQuotaPair(item.quotaDailyUsed, item.quotaDailyLimit)}</strong>
-                              </div>
-                              <div className="user-console-cell-item">
-                                <span>{text.tokens.table.monthly}</span>
-                                <strong>{formatQuotaPair(item.quotaMonthlyUsed, item.quotaMonthlyLimit)}</strong>
+                            <div className="user-console-token-status-summary">
+                              <StatusBadge
+                                className="user-console-token-status-badge"
+                                tone={tokenListStatusTone(item.enabled)}
+                              >
+                                {item.enabled ? text.tokens.table.enabled : text.tokens.table.disabled}
+                              </StatusBadge>
+                              <div className="user-console-token-last-used">
+                                <span>{text.tokens.table.lastUsed}</span>
+                                <strong>{formatTokenLastUsedLabel(item.lastUsedAt, text.tokens.table.neverUsed)}</strong>
                               </div>
                             </div>
                           </td>
                           <td>
-                            <div className="user-console-cell-stack">
-                              <div className="user-console-cell-item">
+                            <div className="user-console-token-stats-grid">
+                              <div className="user-console-token-stat">
                                 <span>{text.tokens.table.dailySuccess}</span>
                                 <strong>{formatNumber(item.dailySuccess)}</strong>
                               </div>
-                              <div className="user-console-cell-item">
+                              <div className="user-console-token-stat">
                                 <span>{text.tokens.table.dailyFailure}</span>
                                 <strong>{formatNumber(item.dailyFailure)}</strong>
                               </div>
-                              <div className="user-console-cell-item">
-                                <span>{text.dashboard.monthlySuccess}</span>
+                              <div className="user-console-token-stat">
+                                <span>{text.tokens.table.monthlySuccess}</span>
                                 <strong>{formatNumber(item.monthlySuccess)}</strong>
                               </div>
                             </div>
@@ -2769,6 +2767,7 @@ export default function UserConsole(): JSX.Element {
                               onReset={openResetTokenDialog}
                               isCopyIntentKey={isCopyIntentKey}
                               canReset={item.enabled}
+                              className="user-console-token-actions-desktop"
                             />
                           </td>
                         </tr>
@@ -2793,25 +2792,16 @@ export default function UserConsole(): JSX.Element {
                         <code>{item.tokenId}</code>
                       </header>
                       <div className="user-console-mobile-kv">
-                        <span>{formatRequestRateSummary(resolveRequestRate(item, 'token'), language)}</span>
+                        <span>{text.tokens.table.status}</span>
                         <strong>
-                          {formatQuotaPair(
-                            resolveRequestRate(item, 'token').used,
-                            resolveRequestRate(item, 'token').limit,
-                          )}
+                          <StatusBadge tone={tokenListStatusTone(item.enabled)}>
+                            {item.enabled ? text.tokens.table.enabled : text.tokens.table.disabled}
+                          </StatusBadge>
                         </strong>
                       </div>
                       <div className="user-console-mobile-kv">
-                        <span>{text.tokens.table.hourly}</span>
-                        <strong>{formatQuotaPair(item.quotaHourlyUsed, item.quotaHourlyLimit)}</strong>
-                      </div>
-                      <div className="user-console-mobile-kv">
-                        <span>{text.tokens.table.daily}</span>
-                        <strong>{formatQuotaPair(item.quotaDailyUsed, item.quotaDailyLimit)}</strong>
-                      </div>
-                      <div className="user-console-mobile-kv">
-                        <span>{text.tokens.table.monthly}</span>
-                        <strong>{formatQuotaPair(item.quotaMonthlyUsed, item.quotaMonthlyLimit)}</strong>
+                        <span>{text.tokens.table.lastUsed}</span>
+                        <strong>{formatTokenLastUsedLabel(item.lastUsedAt, text.tokens.table.neverUsed)}</strong>
                       </div>
                       <div className="user-console-mobile-kv">
                         <span>{text.tokens.table.dailySuccess}</span>
@@ -2822,7 +2812,7 @@ export default function UserConsole(): JSX.Element {
                         <strong>{formatNumber(item.dailyFailure)}</strong>
                       </div>
                       <div className="user-console-mobile-kv">
-                        <span>{text.dashboard.monthlySuccess}</span>
+                        <span>{text.tokens.table.monthlySuccess}</span>
                         <strong>{formatNumber(item.monthlySuccess)}</strong>
                       </div>
                       <TokenListActions
