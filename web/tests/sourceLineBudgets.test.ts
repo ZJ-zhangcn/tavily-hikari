@@ -81,9 +81,9 @@ const EXCEPTIONS = new Map<string, { max: number; reason: string }>([
   [
     'src/i18n/types.ts',
     {
-      max: 1635,
+      max: 1636,
       reason:
-        'HA source settings mode-specific failure copy, admin jobs maintenance strings, and the expanded admin rankings translation contract remain in the shared catalog contract.',
+        'HA source settings mode-specific failure copy, admin jobs maintenance strings, the expanded admin rankings contract, and auth-token retention settings copy remain in the shared catalog contract.',
     },
   ],
   [
