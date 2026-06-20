@@ -229,8 +229,14 @@ async fn replace_account_usage_rollup_records(
 impl KeyStore {
     pub(crate) async fn account_usage_rollup_request_day_rebuild_needed(&self) -> Result<bool, ProxyError> {
         let now_ts = self.backend_time.now_ts();
-        let required_coverage_start =
+        let request_day_backfill_start =
             local_day_bucket_start_utc_ts(now_ts.saturating_sub(ACCOUNT_USAGE_ROLLUP_REQUEST_DAY_BACKFILL_SECS));
+        let effective_auth_token_log_retention_days =
+            self.effective_auth_token_log_retention_days().await?;
+        let request_source_coverage_start = local_day_bucket_start_utc_ts(
+            now_ts.saturating_sub(effective_auth_token_log_retention_days.saturating_mul(SECS_PER_DAY)),
+        );
+        let required_coverage_start = request_day_backfill_start.max(request_source_coverage_start);
         let existing_coverage = self
             .get_meta_i64(META_KEY_ACCOUNT_USAGE_ROLLUP_REQUEST_DAY_COVERAGE_START)
             .await?;
@@ -786,8 +792,8 @@ impl KeyStore {
 
         let rate5m_coverage = request_backfill_start;
         let request_day_coverage = existing_request_day_coverage
-            .map(|value| value.min(request_day_rebuild_start))
-            .unwrap_or(request_day_rebuild_start);
+            .map(|value| value.min(request_source_coverage_start))
+            .unwrap_or(request_source_coverage_start);
         let quota1h_coverage = existing_quota1h_coverage
             .map(|value| value.min(business_backfill_start))
             .unwrap_or(business_backfill_start);

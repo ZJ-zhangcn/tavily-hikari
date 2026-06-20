@@ -1,5 +1,42 @@
 use super::*;
 
+struct AuthTokenLogRetentionEnvGuard {
+    previous: Option<String>,
+    _guard: tokio::sync::OwnedMutexGuard<()>,
+}
+
+impl AuthTokenLogRetentionEnvGuard {
+    async fn set(value: &str) -> Self {
+        let guard = env_lock().lock_owned().await;
+        let previous = std::env::var("AUTH_TOKEN_LOG_RETENTION_DAYS").ok();
+        unsafe {
+            std::env::set_var("AUTH_TOKEN_LOG_RETENTION_DAYS", value);
+        }
+        Self {
+            previous,
+            _guard: guard,
+        }
+    }
+
+    fn update(&self, value: &str) {
+        unsafe {
+            std::env::set_var("AUTH_TOKEN_LOG_RETENTION_DAYS", value);
+        }
+    }
+}
+
+impl Drop for AuthTokenLogRetentionEnvGuard {
+    fn drop(&mut self) {
+        unsafe {
+            if let Some(previous) = self.previous.as_deref() {
+                std::env::set_var("AUTH_TOKEN_LOG_RETENTION_DAYS", previous);
+            } else {
+                std::env::remove_var("AUTH_TOKEN_LOG_RETENTION_DAYS");
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn account_usage_rollup_rebuild_writes_request_day_and_secondary_success_buckets() {
     let db_path = temp_db_path("account-usage-rollup-request-day-secondary-success");
@@ -562,6 +599,147 @@ async fn account_usage_rollup_rebuild_preserves_existing_request_day_buckets_bey
         .expect("load request day coverage start")
         .expect("request day coverage start");
     assert_eq!(coverage_start, previous_coverage_start);
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
+async fn startup_request_day_rebuild_expands_when_auth_token_retention_is_widened() {
+    let (backend_time, manual_clock) = crate::BackendTime::manual_from_ts(1_700_000_000);
+    let db_path = temp_db_path("startup-request-day-rebuild-expands-retention");
+    let db_str = db_path.to_string_lossy().to_string();
+    let current_local_day_start = local_day_bucket_start_utc_ts(manual_clock.now_ts());
+    let narrow_days = 14_i64;
+    let widened_days = 92_i64;
+    let historical_day_bucket_start =
+        shift_local_day_start_utc_ts(current_local_day_start, -(widened_days as i32 - 1));
+    let historical_created_at = historical_day_bucket_start + 60;
+    let env_guard = AuthTokenLogRetentionEnvGuard::set(&narrow_days.to_string()).await;
+
+    let proxy = TavilyProxy::with_options_and_time(
+        Vec::<String>::new(),
+        DEFAULT_UPSTREAM,
+        &db_str,
+        TavilyProxyOptions::from_database_path(&db_str),
+        backend_time.clone(),
+    )
+    .await
+    .expect("create proxy with narrow retention");
+
+    let user = proxy
+        .upsert_oauth_account(&OAuthAccountProfile {
+            provider: "github".to_string(),
+            provider_user_id: "startup-request-day-rebuild-expands".to_string(),
+            username: Some("startup_request_day_rebuild_expands".to_string()),
+            name: Some("Startup Request Day Rebuild Expands".to_string()),
+            avatar_template: None,
+            active: true,
+            trust_level: None,
+            raw_payload_json: None,
+        })
+        .await
+        .expect("upsert user");
+    let token = proxy
+        .ensure_user_token_binding(&user.user_id, Some("startup-request-day-rebuild-expands"))
+        .await
+        .expect("bind token");
+
+    sqlx::query(
+        r#"
+        INSERT INTO auth_token_logs (
+            token_id,
+            method,
+            path,
+            query,
+            http_status,
+            mcp_status,
+            request_kind_key,
+            request_kind_label,
+            result_status,
+            key_effect_code,
+            binding_effect_code,
+            selection_effect_code,
+            counts_business_quota,
+            billing_state,
+            request_user_id,
+            created_at
+        ) VALUES (?, 'POST', '/api/tavily/search', NULL, 200, 200, 'api:search', 'API | search', 'success', 'none', 'none', 'none', 1, 'none', ?, ?)
+        "#,
+    )
+    .bind(&token.id)
+    .bind(&user.user_id)
+    .bind(historical_created_at)
+    .execute(&proxy.key_store.pool)
+    .await
+    .expect("insert historical auth token log");
+
+    proxy
+        .key_store
+        .rebuild_account_usage_rollup_buckets_v1()
+        .await
+        .expect("rebuild with narrow retention");
+
+    let narrow_coverage_start = proxy
+        .key_store
+        .get_meta_i64(META_KEY_ACCOUNT_USAGE_ROLLUP_REQUEST_DAY_COVERAGE_START)
+        .await
+        .expect("load narrow request day coverage start")
+        .expect("narrow request day coverage start");
+    let expected_narrow_coverage_start =
+        shift_local_day_start_utc_ts(current_local_day_start, -(narrow_days as i32));
+    assert_eq!(narrow_coverage_start, expected_narrow_coverage_start);
+
+    let narrow_day_values = proxy
+        .key_store
+        .fetch_account_usage_rollup_values(
+            &user.user_id,
+            AccountUsageRollupMetricKind::RequestCount,
+            AccountUsageRollupBucketKind::Day,
+            historical_day_bucket_start,
+            historical_day_bucket_start + SECS_PER_DAY,
+        )
+        .await
+        .expect("load day rollup after narrow rebuild");
+    assert!(narrow_day_values.is_empty());
+
+    env_guard.update(&widened_days.to_string());
+    drop(proxy);
+
+    let reopened = TavilyProxy::with_options_and_time(
+        Vec::<String>::new(),
+        DEFAULT_UPSTREAM,
+        &db_str,
+        TavilyProxyOptions::from_database_path(&db_str),
+        backend_time,
+    )
+    .await
+    .expect("reopen proxy with widened retention");
+
+    let widened_coverage_start = reopened
+        .key_store
+        .get_meta_i64(META_KEY_ACCOUNT_USAGE_ROLLUP_REQUEST_DAY_COVERAGE_START)
+        .await
+        .expect("load widened request day coverage start")
+        .expect("widened request day coverage start");
+    let expected_widened_coverage_start =
+        shift_local_day_start_utc_ts(current_local_day_start, -(widened_days as i32));
+    assert_eq!(widened_coverage_start, expected_widened_coverage_start);
+
+    let widened_day_values = reopened
+        .key_store
+        .fetch_account_usage_rollup_values(
+            &user.user_id,
+            AccountUsageRollupMetricKind::RequestCount,
+            AccountUsageRollupBucketKind::Day,
+            historical_day_bucket_start,
+            historical_day_bucket_start + SECS_PER_DAY,
+        )
+        .await
+        .expect("load day rollup after widened rebuild");
+    assert_eq!(
+        widened_day_values.get(&historical_day_bucket_start),
+        Some(&1)
+    );
 
     let _ = std::fs::remove_file(db_path);
 }
