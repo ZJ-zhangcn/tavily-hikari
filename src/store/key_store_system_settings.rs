@@ -188,6 +188,7 @@ impl KeyStore {
         &self,
         settings: &SystemSettings,
     ) -> Result<SystemSettings, ProxyError> {
+        let current_settings = self.get_system_settings().await?;
         if settings.request_rate_limit < REQUEST_RATE_LIMIT_MIN {
             return Err(ProxyError::Other(format!(
                 "request_rate_limit must be at least {}",
@@ -233,10 +234,12 @@ impl KeyStore {
             trusted_proxy_cidrs: settings.trusted_proxy_cidrs.clone(),
             trusted_client_ip_headers: settings.trusted_client_ip_headers.clone(),
         })?;
-        let previous_request_log_retention =
-            self.get_system_settings().await?.request_log_retention;
+        let previous_request_log_retention = current_settings.request_log_retention;
         let request_log_retention =
             normalize_request_log_retention_settings(&settings.request_log_retention)?;
+        if settings.auth_token_log_retention_days < current_settings.auth_token_log_retention_days {
+            self.rebuild_account_usage_rollup_buckets_v1().await?;
+        }
         self.set_meta_i64(META_KEY_REQUEST_RATE_LIMIT_V1, settings.request_rate_limit)
             .await?;
         self.set_meta_i64(

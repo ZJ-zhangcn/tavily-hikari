@@ -743,3 +743,121 @@ async fn startup_request_day_rebuild_expands_when_auth_token_retention_is_widene
 
     let _ = std::fs::remove_file(db_path);
 }
+
+#[tokio::test]
+async fn lowering_auth_token_retention_preserves_active90d_request_day_rollups_after_gc() {
+    let (backend_time, manual_clock) = crate::BackendTime::manual_from_ts(1_700_000_000);
+    let db_path = temp_db_path("lower-auth-token-retention-preserves-active90d-rollups");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_options_and_time(
+        Vec::<String>::new(),
+        DEFAULT_UPSTREAM,
+        &db_str,
+        TavilyProxyOptions::from_database_path(&db_str),
+        backend_time.clone(),
+    )
+    .await
+    .expect("proxy created");
+
+    let user = proxy
+        .upsert_oauth_account(&OAuthAccountProfile {
+            provider: "github".to_string(),
+            provider_user_id: "lower-retention-preserves-active90d".to_string(),
+            username: Some("lower_retention_preserves_active90d".to_string()),
+            name: Some("Lower Retention Preserves Active90d".to_string()),
+            avatar_template: None,
+            active: true,
+            trust_level: None,
+            raw_payload_json: None,
+        })
+        .await
+        .expect("upsert user");
+    let token = proxy
+        .ensure_user_token_binding(&user.user_id, Some("lower-retention-preserves-active90d"))
+        .await
+        .expect("bind token");
+
+    let current_local_day_start = local_day_bucket_start_utc_ts(manual_clock.now_ts());
+    let in_window_day_start = shift_local_day_start_utc_ts(
+        current_local_day_start,
+        -(ADMIN_ACTIVE_USERS_WINDOW_DAYS as i32 - 1),
+    );
+    let in_window_created_at = in_window_day_start + 60;
+
+    sqlx::query(
+        r#"
+        INSERT INTO auth_token_logs (
+            token_id,
+            method,
+            path,
+            query,
+            http_status,
+            mcp_status,
+            request_kind_key,
+            request_kind_label,
+            result_status,
+            key_effect_code,
+            binding_effect_code,
+            selection_effect_code,
+            counts_business_quota,
+            billing_state,
+            request_user_id,
+            created_at
+        ) VALUES (?, 'POST', '/api/tavily/search', NULL, 200, 200, 'api:search', 'API | search', 'success', 'none', 'none', 'none', 1, 'none', ?, ?)
+        "#,
+    )
+    .bind(&token.id)
+    .bind(&user.user_id)
+    .bind(in_window_created_at)
+    .execute(&proxy.key_store.pool)
+    .await
+    .expect("insert in-window auth token log");
+
+    proxy
+        .key_store
+        .rebuild_account_usage_rollup_buckets_v1()
+        .await
+        .expect("initial request day rebuild");
+
+    let mut settings = proxy.get_system_settings().await.expect("load settings");
+    settings.auth_token_log_retention_days = 14;
+    proxy
+        .set_system_settings(&settings)
+        .await
+        .expect("lower auth token retention");
+
+    manual_clock.set_now_ts(current_local_day_start + 15 * SECS_PER_HOUR);
+    let deleted = proxy
+        .gc_auth_token_logs()
+        .await
+        .expect("run auth token logs gc");
+    assert_eq!(deleted, 1);
+
+    let remaining_logs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM auth_token_logs")
+        .fetch_one(&proxy.key_store.pool)
+        .await
+        .expect("count remaining auth token logs");
+    assert_eq!(remaining_logs, 0);
+
+    let active_users = proxy
+        .key_store
+        .count_active_users_since_bucket(in_window_day_start)
+        .await
+        .expect("count active users after gc");
+    assert_eq!(active_users, 1);
+
+    let day_values = proxy
+        .key_store
+        .fetch_account_usage_rollup_values(
+            &user.user_id,
+            AccountUsageRollupMetricKind::RequestCount,
+            AccountUsageRollupBucketKind::Day,
+            in_window_day_start,
+            in_window_day_start + SECS_PER_DAY,
+        )
+        .await
+        .expect("load preserved active90d day bucket");
+    assert_eq!(day_values.get(&in_window_day_start), Some(&1));
+
+    let _ = std::fs::remove_file(db_path);
+}
