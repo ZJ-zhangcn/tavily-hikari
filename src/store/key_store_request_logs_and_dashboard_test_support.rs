@@ -29,7 +29,14 @@ impl KeyStore {
             }
         }
         self.request_stats_coalescer
-            .enqueue_request_log_rollups(api_key_id, "test-auth-token", None, created_at, counts, None)
+            .enqueue_request_log_rollups(
+                api_key_id,
+                "test-auth-token",
+                None,
+                created_at,
+                counts,
+                None,
+            )
             .await;
     }
 }

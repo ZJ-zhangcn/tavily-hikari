@@ -2234,6 +2234,8 @@ pub(crate) struct RequestStatsCoalescerState {
     pub(crate) pending_request_log_catalog: HashMap<RequestLogCatalogRollupKey, i64>,
     pub(crate) oldest_pending_created_at: Option<i64>,
     pub(crate) newest_pending_created_at: Option<i64>,
+    pub(crate) flushing_oldest_created_at: Option<i64>,
+    pub(crate) flushing_newest_created_at: Option<i64>,
     pub(crate) flush_deadline: Option<Instant>,
     pub(crate) flushing: bool,
     pub(crate) shutdown: bool,
@@ -2438,14 +2440,38 @@ impl RequestStatsCoalescer {
         self.wake.notify_one();
     }
 
+    #[cfg(test)]
     pub(crate) async fn pending_oldest_created_at(&self) -> Option<i64> {
         let state = self.state.lock().await;
         state.oldest_pending_created_at
     }
 
+    #[cfg(test)]
     pub(crate) async fn pending_newest_created_at(&self) -> Option<i64> {
         let state = self.state.lock().await;
         state.newest_pending_created_at
+    }
+
+    pub(crate) async fn freshness_created_at_bounds(&self) -> Option<(i64, i64)> {
+        let state = self.state.lock().await;
+        let oldest_created_at = match (
+            state.oldest_pending_created_at,
+            state.flushing_oldest_created_at,
+        ) {
+            (Some(left), Some(right)) => Some(left.min(right)),
+            (Some(value), None) | (None, Some(value)) => Some(value),
+            (None, None) => None,
+        }?;
+        let newest_created_at = match (
+            state.newest_pending_created_at,
+            state.flushing_newest_created_at,
+        ) {
+            (Some(left), Some(right)) => Some(left.max(right)),
+            (Some(value), None) | (None, Some(value)) => Some(value),
+            (None, None) => None,
+        }
+        .unwrap_or(oldest_created_at);
+        Some((oldest_created_at, newest_created_at))
     }
 
     pub(crate) async fn wait_until_flushed(&self) {

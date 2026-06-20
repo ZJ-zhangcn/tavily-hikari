@@ -5,16 +5,13 @@ impl KeyStore {
         day_start: i64,
         day_end: i64,
     ) -> Result<(), ProxyError> {
-        let Some(oldest_pending_created_at) =
-            self.request_stats_coalescer.pending_oldest_created_at().await
+        let Some((oldest_pending_created_at, newest_pending_created_at)) = self
+            .request_stats_coalescer
+            .freshness_created_at_bounds()
+            .await
         else {
             return Ok(());
         };
-        let newest_pending_created_at = self
-            .request_stats_coalescer
-            .pending_newest_created_at()
-            .await
-            .unwrap_or(oldest_pending_created_at);
 
         let pending_overlaps_day =
             oldest_pending_created_at < day_end && newest_pending_created_at >= day_start;

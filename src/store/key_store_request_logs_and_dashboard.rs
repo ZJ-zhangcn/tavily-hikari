@@ -262,18 +262,19 @@ impl KeyStore {
                     return Ok(());
                 } else {
                     state.flushing = true;
+                    state.flushing_oldest_created_at = state.oldest_pending_created_at.take();
+                    state.flushing_newest_created_at = state.newest_pending_created_at.take();
                     Some((
                         std::mem::take(&mut state.pending_dashboard_rollups),
                         std::mem::take(&mut state.pending_api_key_usage),
                         std::mem::take(&mut state.pending_auth_token_activity),
                         std::mem::take(&mut state.pending_account_request_rollups),
                         std::mem::take(&mut state.pending_request_log_catalog),
-                        state.oldest_pending_created_at.take(),
-                        state.newest_pending_created_at.take(),
+                        state.flushing_oldest_created_at,
+                        state.flushing_newest_created_at,
                     ))
                 }
             };
-
             let Some((
                 pending_dashboard_rollups,
                 pending_api_key_usage,
@@ -296,7 +297,6 @@ impl KeyStore {
             let updated_at = Utc::now().timestamp();
             let result = async {
                 let mut tx = self.pool.begin().await?;
-
                 let mut dashboard_entries = pending_dashboard_rollups
                     .drain()
                     .collect::<Vec<_>>();
@@ -473,6 +473,8 @@ impl KeyStore {
                 state.flushing = false;
                 state.flush_deadline = None;
                 if let Err(err) = result {
+                    state.flushing_oldest_created_at = None;
+                    state.flushing_newest_created_at = None;
                     for (key, counts) in pending_dashboard_rollups {
                         state.pending_dashboard_rollups.entry(key).or_default().add(counts);
                     }
@@ -516,6 +518,8 @@ impl KeyStore {
                     self.request_stats_coalescer.flushed.notify_waiters();
                     return Err(err);
                 }
+                state.flushing_oldest_created_at = None;
+                state.flushing_newest_created_at = None;
                 if RequestStatsCoalescer::pending_key_count(&state) == 0 {
                     state.oldest_pending_created_at = None;
                     state.newest_pending_created_at = None;
