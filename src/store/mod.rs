@@ -2232,6 +2232,7 @@ pub(crate) struct RequestStatsCoalescerState {
     pub(crate) pending_account_request_rollups:
         HashMap<AccountRequestRollupKey, AccountUsageRollupDelta>,
     pub(crate) pending_request_log_catalog: HashMap<RequestLogCatalogRollupKey, i64>,
+    pub(crate) oldest_pending_created_at: Option<i64>,
     pub(crate) flush_deadline: Option<Instant>,
     pub(crate) flushing: bool,
     pub(crate) shutdown: bool,
@@ -2270,6 +2271,15 @@ impl RequestStatsCoalescer {
         if Self::pending_key_count(state) > 0 && state.flush_deadline.is_none() {
             state.flush_deadline = Some(Instant::now() + Self::FLUSH_INTERVAL);
         }
+    }
+
+    fn note_pending_created_at(state: &mut RequestStatsCoalescerState, created_at: i64) {
+        state.oldest_pending_created_at = Some(
+            state
+                .oldest_pending_created_at
+                .map(|current| current.min(created_at))
+                .unwrap_or(created_at),
+        );
     }
 
     pub(crate) async fn enqueue_request_log_rollups(
@@ -2326,6 +2336,7 @@ impl RequestStatsCoalescer {
                     .entry(request_log_catalog_key)
                     .or_default() += 1;
             }
+            Self::note_pending_created_at(&mut state, created_at);
             Self::mark_flush_deadline_if_pending(&mut state);
         }
         self.wake.notify_one();
@@ -2347,6 +2358,7 @@ impl RequestStatsCoalescer {
                 0,
                 0,
             );
+            Self::note_pending_created_at(&mut state, created_at);
             Self::mark_flush_deadline_if_pending(&mut state);
         }
         self.wake.notify_one();
@@ -2401,9 +2413,15 @@ impl RequestStatsCoalescer {
                     .or_default()
                     .local_estimated_credits += credits;
             }
+            Self::note_pending_created_at(&mut state, created_at);
             Self::mark_flush_deadline_if_pending(&mut state);
         }
         self.wake.notify_one();
+    }
+
+    pub(crate) async fn pending_oldest_created_at(&self) -> Option<i64> {
+        let state = self.state.lock().await;
+        state.oldest_pending_created_at
     }
 
     pub(crate) async fn wait_until_flushed(&self) {
@@ -2451,6 +2469,7 @@ pub(crate) struct KeyStore {
 
 include!("key_store_bootstrap.rs");
 include!("key_store_observability_sidecar.rs");
+include!("key_store_public_metrics_freshness.rs");
 include!("key_store_request_logs_gc.rs");
 include!("key_store_migrations_a.rs");
 include!("key_store_migrations_b.rs");

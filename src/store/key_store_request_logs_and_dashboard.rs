@@ -447,6 +447,18 @@ impl KeyStore {
                     .await?;
                 }
 
+                sqlx::query(
+                    r#"
+                    INSERT INTO meta (key, value)
+                    VALUES (?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                    "#,
+                )
+                .bind(META_KEY_REQUEST_STATS_LAST_FLUSHED_AT_V1)
+                .bind(updated_at.to_string())
+                .execute(&mut *tx)
+                .await?;
+
                 tx.commit().await?;
                 Ok::<_, ProxyError>(())
             }
@@ -483,6 +495,7 @@ impl KeyStore {
                 self.request_stats_coalescer.flushed.notify_waiters();
                 return Err(err);
             }
+            state.oldest_pending_created_at = None;
             self.request_stats_coalescer.flushed.notify_waiters();
         }
     }
@@ -3002,7 +3015,8 @@ impl KeyStore {
         day_start: i64,
         day_end: i64,
     ) -> Result<SuccessBreakdown, ProxyError> {
-        self.flush_request_stats_writes().await?;
+        self.flush_request_stats_writes_if_public_metrics_stale(day_start, day_end)
+            .await?;
         let now = self.backend_time.now_ts();
         let month_request_log_floor = self
             .fetch_visible_request_log_floor_since(month_start)
