@@ -13,14 +13,23 @@ impl KeyStore {
         else {
             return Ok(());
         };
+        let newest_pending_created_at = self
+            .request_stats_coalescer
+            .pending_newest_created_at()
+            .await
+            .unwrap_or(oldest_pending_created_at);
 
-        if oldest_pending_created_at >= day_end {
+        if newest_pending_created_at >= day_end {
             return Ok(());
         }
 
         let last_flushed_at = self.request_stats_last_flushed_at().await?.unwrap_or_default();
-        let needs_flush =
-            !(last_flushed_at >= oldest_pending_created_at && last_flushed_at >= day_start);
+        let has_window_pending = newest_pending_created_at >= day_start;
+        let needs_flush = if has_window_pending {
+            last_flushed_at < newest_pending_created_at
+        } else {
+            !(last_flushed_at >= oldest_pending_created_at && last_flushed_at >= day_start)
+        };
         if needs_flush {
             self.flush_request_stats_writes().await?;
         }

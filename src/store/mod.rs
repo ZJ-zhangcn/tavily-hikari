@@ -2233,6 +2233,7 @@ pub(crate) struct RequestStatsCoalescerState {
         HashMap<AccountRequestRollupKey, AccountUsageRollupDelta>,
     pub(crate) pending_request_log_catalog: HashMap<RequestLogCatalogRollupKey, i64>,
     pub(crate) oldest_pending_created_at: Option<i64>,
+    pub(crate) newest_pending_created_at: Option<i64>,
     pub(crate) flush_deadline: Option<Instant>,
     pub(crate) flushing: bool,
     pub(crate) shutdown: bool,
@@ -2278,6 +2279,12 @@ impl RequestStatsCoalescer {
             state
                 .oldest_pending_created_at
                 .map(|current| current.min(created_at))
+                .unwrap_or(created_at),
+        );
+        state.newest_pending_created_at = Some(
+            state
+                .newest_pending_created_at
+                .map(|current| current.max(created_at))
                 .unwrap_or(created_at),
         );
     }
@@ -2422,6 +2429,11 @@ impl RequestStatsCoalescer {
     pub(crate) async fn pending_oldest_created_at(&self) -> Option<i64> {
         let state = self.state.lock().await;
         state.oldest_pending_created_at
+    }
+
+    pub(crate) async fn pending_newest_created_at(&self) -> Option<i64> {
+        let state = self.state.lock().await;
+        state.newest_pending_created_at
     }
 
     pub(crate) async fn wait_until_flushed(&self) {

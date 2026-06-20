@@ -496,6 +496,7 @@ impl KeyStore {
                 return Err(err);
             }
             state.oldest_pending_created_at = None;
+            state.newest_pending_created_at = None;
             self.request_stats_coalescer.flushed.notify_waiters();
         }
     }
