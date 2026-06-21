@@ -17,6 +17,7 @@ interface SegmentedTabsProps<T extends string = string> {
   ariaLabel: string
   className?: string
   disabled?: boolean
+  smallViewportBehavior?: 'select' | 'buttons'
 }
 
 function labelToPlainText(node: React.ReactNode): string {
@@ -35,6 +36,7 @@ export default function SegmentedTabs<T extends string = string>({
   ariaLabel,
   className,
   disabled = false,
+  smallViewportBehavior = 'select',
 }: SegmentedTabsProps<T>): JSX.Element {
   const viewportMode = useViewportMode()
   const buttonRefs = React.useRef<Array<HTMLButtonElement | null>>([])
@@ -55,7 +57,7 @@ export default function SegmentedTabs<T extends string = string>({
     return options.findIndex((option) => option.value === match.value)
   }
 
-  if (viewportMode === 'small') {
+  if (viewportMode === 'small' && smallViewportBehavior === 'select') {
     const selectedOption = options.find((option) => option.value === value)
     const selectedLabel = selectedOption ? labelToPlainText(selectedOption.label) : ''
 
@@ -78,7 +80,15 @@ export default function SegmentedTabs<T extends string = string>({
   }
 
   return (
-    <div className={cn('segmented-tabs', className)} role="radiogroup" aria-label={ariaLabel}>
+    <div
+      className={cn(
+        'segmented-tabs',
+        viewportMode === 'small' && smallViewportBehavior === 'buttons' && 'segmented-tabs-mobile-buttons',
+        className,
+      )}
+      role="radiogroup"
+      aria-label={ariaLabel}
+    >
       {options.map((option) => {
         const active = option.value === value
         const activeIndex = options.findIndex((candidate) => candidate.value === value)

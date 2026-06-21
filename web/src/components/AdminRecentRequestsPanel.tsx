@@ -6,18 +6,13 @@ import type { AdminTranslations } from '../i18n'
 import { cleanedRequestLogBodySummary } from '../requestLogBodySummary'
 import { Icon } from '../lib/icons'
 import {
-  buildRequestKindQuickFilterSelection,
-  buildVisibleRequestKindOptions,
-  hasActiveRequestKindQuickFilters,
-  mergeRequestKindCatalog,
-  summarizeRequestKindQuickFilters,
-  summarizeSelectedRequestKinds,
   type TokenLogRequestKindOption,
   type TokenLogRequestKindQuickBilling,
   type TokenLogRequestKindQuickProtocol,
 } from '../tokenLogRequestKinds'
 import RequestKindBadge from './RequestKindBadge'
 import RequestIpDiagnostics from './RequestIpDiagnostics'
+import AdminRecentRequestsRequestKindFilter from './AdminRecentRequestsRequestKindFilter'
 import AdminLoadingRegion from './AdminLoadingRegion'
 import AdminTablePagination from './AdminTablePagination'
 import AdminTableShell from './AdminTableShell'
@@ -38,15 +33,6 @@ import SearchableFacetSelect from './SearchableFacetSelect'
 import { StatusBadge, type StatusTone } from './StatusBadge'
 import { Button } from './ui/button'
 import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from './ui/dropdown-menu'
-import {
   Select,
   SelectContent,
   SelectGroup,
@@ -55,9 +41,9 @@ import {
   SelectSeparator,
   SelectTrigger,
 } from './ui/select'
-import SegmentedTabs from './ui/SegmentedTabs'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
+import { useViewportMode } from '../lib/responsive'
 type Language = 'en' | 'zh'
 type RecentRequestsVariant = 'admin' | 'token'
 type RecentRequestsOutcomeFilterKind = 'result' | 'keyEffect' | 'bindingEffect' | 'selectionEffect'
@@ -117,16 +103,6 @@ type LogBodiesLoadState =
   | { status: 'loading' }
   | { status: 'ready'; value: RequestLogBodies }
   | { status: 'error'; message: string }
-const requestKindBillingQuickFilterOptions = [
-  { value: 'all', label: 'Any' },
-  { value: 'billable', label: 'Paid' },
-  { value: 'non_billable', label: 'Free' },
-] as const
-const requestKindProtocolQuickFilterOptions = [
-  { value: 'all', label: 'Any' },
-  { value: 'mcp', label: 'MCP' },
-  { value: 'api', label: 'API' },
-] as const
 const recentRequestsAllFilterValue = '__all__'
 const recentRequestsCompactAllLabel = 'All'
 function statusTone(status: string): StatusTone {
@@ -570,19 +546,6 @@ function renderOutcomeFacetLabel(
           : selectionEffectLabel(value, strings)
   return <StatusBadge tone={tone}>{label}</StatusBadge>
 }
-function summarizeRequestKindTrigger(
-  effectiveSelectedRequestKinds: string[],
-  hasActiveQuickRequestKindFilters: boolean,
-  requestKindQuickSummary: string,
-  requestKindSummary: string,
-  language: Language,
-  allLabel: string,
-): string {
-  if (hasActiveQuickRequestKindFilters) return requestKindQuickSummary
-  if (effectiveSelectedRequestKinds.length === 0) return allLabel
-  if (effectiveSelectedRequestKinds.length <= 2) return requestKindSummary
-  return language === 'zh' ? `已选 ${effectiveSelectedRequestKinds.length} 项` : `${effectiveSelectedRequestKinds.length} selected`
-}
 function RecentRequestDetails({
   log,
   logBodiesState,
@@ -824,6 +787,8 @@ export default function AdminRecentRequestsPanel({
   const [logBodiesById, setLogBodiesById] = useState<Record<number, LogBodiesLoadState>>({})
   const [headerFiltersTarget, setHeaderFiltersTarget] = useState<HTMLElement | null>(null)
   const logBodyControllersRef = useRef<Map<number, AbortController>>(new Map())
+  const viewportMode = useViewportMode()
+  const isSmallViewport = viewportMode === 'small'
   useEffect(() => {
     if (!headerFiltersTargetId) {
       setHeaderFiltersTarget(null)
@@ -902,71 +867,6 @@ export default function AdminRecentRequestsPanel({
     },
     [triggerLoadLogBodies],
   )
-  const normalizedSelectedRequestKinds = useMemo(
-    () => Array.from(new Set(selectedRequestKinds.map((value) => value.trim()).filter(Boolean))),
-    [selectedRequestKinds],
-  )
-  const requestKindCatalog = useMemo(
-    () => mergeRequestKindCatalog(requestKindOptions),
-    [requestKindOptions],
-  )
-  const requestKindQuickFilters = useMemo(
-    () => ({
-      billing: requestKindQuickBilling,
-      protocol: requestKindQuickProtocol,
-    }),
-    [requestKindQuickBilling, requestKindQuickProtocol],
-  )
-  const hasActiveQuickRequestKindFilters = useMemo(
-    () => hasActiveRequestKindQuickFilters(requestKindQuickFilters),
-    [requestKindQuickFilters],
-  )
-  const quickSelection = useMemo(
-    () => buildRequestKindQuickFilterSelection(requestKindOptions, requestKindQuickFilters),
-    [requestKindOptions, requestKindQuickFilters],
-  )
-  const effectiveSelectedRequestKinds = useMemo(
-    () => (hasActiveQuickRequestKindFilters ? quickSelection : normalizedSelectedRequestKinds),
-    [hasActiveQuickRequestKindFilters, normalizedSelectedRequestKinds, quickSelection],
-  )
-  const visibleRequestKindOptions = useMemo(
-    () =>
-      buildVisibleRequestKindOptions(
-        effectiveSelectedRequestKinds,
-        requestKindCatalog,
-        Object.fromEntries(requestKindCatalog.map((option) => [option.key, option])),
-      ),
-    [effectiveSelectedRequestKinds, requestKindCatalog],
-  )
-  const requestKindSummary = useMemo(
-    () =>
-      summarizeSelectedRequestKinds(
-        effectiveSelectedRequestKinds,
-        visibleRequestKindOptions,
-        strings.logs.filters.requestTypeAll,
-      ),
-    [effectiveSelectedRequestKinds, strings.logs.filters.requestTypeAll, visibleRequestKindOptions],
-  )
-  const requestKindQuickSummary = useMemo(
-    () => summarizeRequestKindQuickFilters(requestKindQuickFilters),
-    [requestKindQuickFilters],
-  )
-  const requestKindTriggerSummary = useMemo(() => {
-    return summarizeRequestKindTrigger(
-      effectiveSelectedRequestKinds,
-      hasActiveQuickRequestKindFilters,
-      requestKindQuickSummary,
-      requestKindSummary,
-      language,
-      recentRequestsCompactAllLabel,
-    )
-  }, [
-    effectiveSelectedRequestKinds.length,
-    hasActiveQuickRequestKindFilters,
-    language,
-    requestKindQuickSummary,
-    requestKindSummary,
-  ])
   const outcomeValue = outcomeFilter
     ? `${outcomeFilter.kind}:${outcomeFilter.value}`
     : recentRequestsAllFilterValue
@@ -997,81 +897,18 @@ export default function AdminRecentRequestsPanel({
   const headerCopyVisible = showHeaderCopy && (title.trim().length > 0 || description.trim().length > 0)
   const renderFilters = (className?: string) => (
     <div className={['panel-actions recent-requests-filters', className].filter(Boolean).join(' ')}>
-      <div className="recent-requests-filter-field recent-requests-filter-field--request-kind">
-        <span className="recent-requests-filter-label">{strings.logs.filters.requestType}</span>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button
-              type="button"
-              className="recent-requests-filter-select-trigger recent-requests-filter-select-trigger--menu"
-              aria-label={`${strings.logs.filters.requestType}: ${requestKindTriggerSummary}`}
-            >
-              <span className="recent-requests-filter-select-text">{requestKindTriggerSummary}</span>
-              <Icon icon="mdi:chevron-down" width={16} height={16} aria-hidden="true" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="end"
-            className="token-request-kind-menu recent-requests-filter-menu recent-requests-filter-menu--request-kind"
-          >
-            <DropdownMenuLabel>{strings.logs.filters.requestType}</DropdownMenuLabel>
-            <div className="token-request-quick-filters">
-              <div className="token-request-quick-filter-row">
-                <span className="token-request-quick-filter-label">{strings.logs.filters.billingGroup}</span>
-                <SegmentedTabs<TokenLogRequestKindQuickBilling>
-                  value={requestKindQuickBilling}
-                  onChange={(next) => onRequestKindQuickFiltersChange(next, requestKindQuickProtocol)}
-                  options={requestKindBillingQuickFilterOptions}
-                  ariaLabel={strings.logs.filters.billingGroup}
-                  className="token-request-quick-segmented"
-                />
-              </div>
-              <div className="token-request-quick-filter-row">
-                <span className="token-request-quick-filter-label">{strings.logs.filters.protocolGroup}</span>
-                <SegmentedTabs<TokenLogRequestKindQuickProtocol>
-                  value={requestKindQuickProtocol}
-                  onChange={(next) => onRequestKindQuickFiltersChange(requestKindQuickBilling, next)}
-                  options={requestKindProtocolQuickFilterOptions}
-                  ariaLabel={strings.logs.filters.protocolGroup}
-                  className="token-request-quick-segmented"
-                />
-              </div>
-            </div>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="cursor-pointer"
-              disabled={effectiveSelectedRequestKinds.length === 0 && !hasActiveQuickRequestKindFilters}
-              onSelect={(event) => {
-                event.preventDefault()
-                onClearRequestKinds()
-              }}
-            >
-              {strings.logs.filters.requestTypeAll}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            {visibleRequestKindOptions.length === 0 ? (
-              <DropdownMenuItem disabled>{strings.logs.filters.requestTypeEmpty}</DropdownMenuItem>
-            ) : (
-              visibleRequestKindOptions.map((option) => (
-                <DropdownMenuCheckboxItem
-                  key={option.key}
-                  className="cursor-pointer"
-                  checked={effectiveSelectedRequestKinds.includes(option.key)}
-                  onSelect={(event) => event.preventDefault()}
-                  onCheckedChange={() => onToggleRequestKind(option.key)}
-                >
-                  <span className="recent-requests-request-kind-option">
-                    <RequestKindBadge requestKindKey={option.key} requestKindLabel={option.label} size="sm" />
-                    <span className="recent-requests-request-kind-count">
-                      {`x${option.count ?? 0}`}
-                    </span>
-                  </span>
-                </DropdownMenuCheckboxItem>
-              ))
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+      <AdminRecentRequestsRequestKindFilter
+        language={language}
+        isSmallViewport={isSmallViewport}
+        strings={strings}
+        requestKindOptions={requestKindOptions}
+        requestKindQuickBilling={requestKindQuickBilling}
+        requestKindQuickProtocol={requestKindQuickProtocol}
+        selectedRequestKinds={selectedRequestKinds}
+        onRequestKindQuickFiltersChange={onRequestKindQuickFiltersChange}
+        onToggleRequestKind={onToggleRequestKind}
+        onClearRequestKinds={onClearRequestKinds}
+      />
       <div className="recent-requests-filter-field">
         <span className="recent-requests-filter-label">{strings.logs.filters.resultOrEffect}</span>
         <Select
