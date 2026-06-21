@@ -2,11 +2,13 @@
 @import './styles/base.css';
 @import './styles/base-public.css';
 @import './styles/public.css';
+@import './styles/request-kind-badges.css';
 @import './styles/alerts.css';
 @import './styles/markdown-content.css';
 @import '@milkdown/crepe/theme/common/style.css';
 @import '@milkdown/crepe/theme/frame.css';
 @import './styles/user-console.css';
+@import './styles/admin-recent-requests-request-kind-filter.css';
 @import './styles/user-console-overview.css';
 @import './styles/user-console-announcements.css';
 @import './styles/user-console-recharge.css';
