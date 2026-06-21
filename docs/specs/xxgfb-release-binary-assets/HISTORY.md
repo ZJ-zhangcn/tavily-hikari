@@ -9,6 +9,8 @@
 - portable Linux binary 采用“并行新增”策略，而不是替换现有 native binary 资产，避免破坏既有下载脚本与回滚路径。
 - portable 资产固定走 musl/Zig 构建，目标是 old-Linux 风格单文件分发；验收点不是“更小”，而是“不再依赖宿主机 glibc/OpenSSL/libsqlite3 运行时”。
 - 为避免引入发布语义回归，native Linux binary 继续保留现有 TLS backend；只有 portable musl 构建切到 `rustls` 静态链路。
+- portable musl 构建的 trust roots 也必须随产物一起分发，不能继续依赖宿主机 CA bundle；否则 old-Linux / minimal host 上会出现“程序可启动但所有 HTTPS 上游都失败”的伪 portable 资产。
+- portable musl 构建不得单独开启 `gzip` / `brotli` / `deflate` 透明解码；release binary 的上游 HTTP 行为必须与 native Linux 资产保持一致，避免同 tag 的不同资产对同一压缩响应走出不同日志与失败分类路径。
 - `xray` 不随主程序 binary 打包，继续由宿主环境单独安装或配置。
 - GitHub Release job 不 checkout 仓库时，`gh` CLI 必须显式指定 repository，不能依赖本地 `.git` 上下文。
 - release workflow 内部的 `web/dist` 只构建一次，再通过 release-local artifact 复用给 Docker 与 binary 矩阵，避免在发布链里重复 Bun 安装与前端构建。
