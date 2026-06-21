@@ -453,6 +453,7 @@
         "server::tests::admin_token_filters_and_maintenance::maintenance_",
         "server::tests::admin_logs_and_summary::summary_",
         "server::tests::system_settings_and_forward_proxy::health_",
+        "server::tests::system_settings_and_forward_proxy::standby_",
         "server::tests::log_catalog_and_dashboard_sse::key_",
         "server::tests::research_result_and_mcp_subpath::db_",
         "server::tests::mcp_rebalance_and_follow_up::observed_",
