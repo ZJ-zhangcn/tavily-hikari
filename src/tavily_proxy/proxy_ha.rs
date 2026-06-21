@@ -208,6 +208,13 @@ impl TavilyProxy {
         self.key_store.get_ha_sync_watermark(name).await
     }
 
+    pub async fn ha_channel_high_watermark(
+        &self,
+        channel: HaSyncChannel,
+    ) -> Result<i64, ProxyError> {
+        self.key_store.ha_channel_high_watermark(channel).await
+    }
+
     pub async fn flush_ha_state_writes(&self) -> Result<(), ProxyError> {
         self.ha_state_coalescer.wake.notify_one();
         self.ha_state_coalescer.wait_until_flushed().await;
@@ -220,6 +227,41 @@ impl TavilyProxy {
         node_id: &str,
     ) -> Result<HaBaselineExport, ProxyError> {
         self.key_store.export_ha_baseline_ndjson(channel, node_id).await
+    }
+
+    pub async fn write_ha_baseline_ndjson<W>(
+        &self,
+        channel: HaSyncChannel,
+        node_id: &str,
+        writer: &mut W,
+    ) -> Result<HaApplyResult, ProxyError>
+    where
+        W: tokio::io::AsyncWrite + Unpin + Send,
+    {
+        self.key_store
+            .write_ha_baseline_ndjson(channel, node_id, writer)
+            .await
+    }
+
+    pub async fn count_ha_baseline_rows(
+        &self,
+        channel: HaSyncChannel,
+    ) -> Result<usize, ProxyError> {
+        self.key_store.count_ha_baseline_rows(channel).await
+    }
+
+    pub async fn begin_ha_baseline_apply(
+        &self,
+        channel: HaSyncChannel,
+    ) -> Result<crate::store::HaBaselineApplySession, ProxyError> {
+        self.key_store.begin_ha_baseline_apply(channel).await
+    }
+
+    pub async fn begin_ha_events_apply(
+        &self,
+        channel: HaSyncChannel,
+    ) -> Result<crate::store::HaEventsApplySession, ProxyError> {
+        self.key_store.begin_ha_events_apply(channel).await
     }
 
     pub async fn apply_ha_baseline_ndjson(

@@ -542,7 +542,7 @@ impl TavilyProxy {
         token_request_limit.set_request_limit(system_settings.request_rate_limit);
         let forward_proxy_clients = forward_proxy::ForwardProxyClientPool::new()?;
         let ha_state_coalescer = HaStateCoalescer::default();
-        let mut proxy = Self {
+        let proxy = Self {
             client: forward_proxy_clients.direct_client(),
             forward_proxy_clients,
             forward_proxy,
@@ -582,6 +582,7 @@ impl TavilyProxy {
             mcp_session_init_locks: Arc::new(Mutex::new(HashMap::new())),
             mcp_session_request_locks: Arc::new(Mutex::new(HashMap::new())),
             low_quota_depletion_threshold: options.low_quota_depletion_threshold,
+            forward_proxy_runtime_started: Arc::new(AtomicBool::new(false)),
             health_readiness_grace_until: backend_time
                 .deadline_after(options.health_readiness_grace_period),
             backend_time,
@@ -591,22 +592,38 @@ impl TavilyProxy {
         proxy.user_business_calls_1h_window.backfill_recent().await?;
         info!(
             component = "forward_proxy",
-            event = "startup_runtime_graph_init",
-            "forward-proxy startup: initializing runtime graph"
-        );
-        let runtime_init_started = Instant::now();
-        proxy.initialize_forward_proxy_runtime().await?;
-        info!(
-            component = "forward_proxy",
-            event = "startup_runtime_graph_ready",
-            phase_elapsed_ms = runtime_init_started.elapsed().as_millis() as u64,
+            event = "startup_runtime_graph_deferred",
             total_elapsed_ms = startup_started.elapsed().as_millis() as u64,
-            "forward-proxy startup: runtime graph ready"
+            "forward-proxy startup deferred runtime graph initialization until HA role allows business traffic"
         );
+        if ha_mode == HaMode::Single {
+            let mut proxy = proxy;
+            info!(
+                component = "forward_proxy",
+                event = "startup_runtime_graph_init",
+                "forward-proxy startup: initializing runtime graph"
+            );
+            let runtime_init_started = Instant::now();
+            proxy.initialize_forward_proxy_runtime().await?;
+            info!(
+                component = "forward_proxy",
+                event = "startup_runtime_graph_ready",
+                phase_elapsed_ms = runtime_init_started.elapsed().as_millis() as u64,
+                total_elapsed_ms = startup_started.elapsed().as_millis() as u64,
+                "forward-proxy startup: runtime graph ready"
+            );
+            return Ok(proxy);
+        }
         Ok(proxy)
     }
 
     pub(crate) async fn initialize_forward_proxy_runtime(&mut self) -> Result<(), ProxyError> {
+        if self
+            .forward_proxy_runtime_started
+            .swap(true, Ordering::SeqCst)
+        {
+            return Ok(());
+        }
         let startup_started = Instant::now();
         let restored_subscription_endpoints = {
             let manager = self.forward_proxy.lock().await;
@@ -688,7 +705,47 @@ impl TavilyProxy {
         Ok(())
     }
 
+    pub async fn shutdown_forward_proxy_runtime(&self) -> Result<(), ProxyError> {
+        if !self
+            .forward_proxy_runtime_started
+            .swap(false, Ordering::SeqCst)
+        {
+            return Ok(());
+        }
+        {
+            let mut xray = self.xray_supervisor.lock().await;
+            xray.shutdown_all().await;
+        }
+        let mut manager = self.forward_proxy.lock().await;
+        let egress_socks5_url = manager.settings.effective_egress_socks5_url();
+        for endpoint in &mut manager.endpoints {
+            if endpoint.needs_local_relay(egress_socks5_url.as_ref()) {
+                endpoint.endpoint_url = None;
+                endpoint.uses_local_relay = true;
+            }
+        }
+        self.sync_forward_proxy_runtime_state(&mut manager).await?;
+        Ok(())
+    }
+
+    pub async fn ensure_forward_proxy_runtime_started(&self) -> Result<(), ProxyError> {
+        if self
+            .forward_proxy_runtime_started
+            .load(Ordering::SeqCst)
+        {
+            return Ok(());
+        }
+        let mut clone = self.clone();
+        clone.initialize_forward_proxy_runtime().await
+    }
+
     pub async fn is_forward_proxy_xray_ready(&self) -> bool {
+        if !self
+            .forward_proxy_runtime_started
+            .load(Ordering::SeqCst)
+        {
+            return true;
+        }
         if self.backend_time.instant_now() < self.health_readiness_grace_until {
             return true;
         }

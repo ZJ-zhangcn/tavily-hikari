@@ -27,6 +27,24 @@ pub struct HaApplyResult {
     pub row_count: usize,
 }
 
+#[derive(Debug)]
+pub struct HaBaselineApplySession {
+    channel: HaSyncChannel,
+    conn: sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    high_watermark: i64,
+    row_count: usize,
+    saw_start: bool,
+    saw_end: bool,
+}
+
+#[derive(Debug)]
+pub struct HaEventsApplySession {
+    channel: HaSyncChannel,
+    conn: sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    high_watermark: i64,
+    row_count: usize,
+}
+
 const HA_SCHEMA_VERSION: i64 = 2;
 const HA_CONTROL_OUTBOX_RETENTION_SECS: i64 = 72 * 60 * 60;
 const HA_CHANNEL_EXPORT_RETENTION_SECS: i64 = 92 * 24 * 60 * 60;
@@ -387,6 +405,147 @@ impl KeyStore {
         })
     }
 
+    pub(crate) async fn write_ha_baseline_ndjson<W>(
+        &self,
+        channel: HaSyncChannel,
+        node_id: &str,
+        writer: &mut W,
+    ) -> Result<HaApplyResult, ProxyError>
+    where
+        W: AsyncWrite + Unpin + Send,
+    {
+        let high_watermark = self.ha_channel_high_watermark(channel).await?;
+        let mut row_count = 0_usize;
+        let start_line = serde_json::to_string(&serde_json::json!({
+            "schemaVersion": HA_SCHEMA_VERSION,
+            "kind": "baseline_start",
+            "channel": channel,
+            "nodeId": node_id,
+            "generatedAt": self.backend_time.now_ts(),
+            "highWatermark": high_watermark,
+            "encoding": "zstd-ndjson"
+        }))
+        .map_err(|err| ProxyError::Other(err.to_string()))?;
+        writer
+            .write_all(start_line.as_bytes())
+            .await
+            .map_err(|err| ProxyError::Other(err.to_string()))?;
+        writer
+            .write_all(b"\n")
+            .await
+            .map_err(|err| ProxyError::Other(err.to_string()))?;
+
+        for table in ha_baseline_tables(channel) {
+            if !self.table_exists(table).await? {
+                continue;
+            }
+            let columns = self.table_columns(table).await?;
+            if columns.is_empty() {
+                continue;
+            }
+            let json_args = columns
+                .iter()
+                .map(|column| {
+                    format!(
+                        "{}, {}",
+                        quote_sqlite_string(column),
+                        quote_sqlite_identifier(column)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = if *table == "meta" {
+                format!(
+                    "SELECT json_object({json_args}) AS row_json FROM {} WHERE key IN ({}) ORDER BY key ASC",
+                    quote_sqlite_identifier(table),
+                    ha_meta_key_list_sql()
+                )
+            } else {
+                format!(
+                    "SELECT json_object({json_args}) AS row_json FROM {} ORDER BY rowid ASC",
+                    quote_sqlite_identifier(table)
+                )
+            };
+            let mut rows = sqlx::query_scalar::<_, String>(&sql).fetch(&self.pool);
+            while let Some(raw_row) = rows.try_next().await? {
+                let row: serde_json::Value = serde_json::from_str(&raw_row).map_err(|err| {
+                    ProxyError::Other(format!("invalid HA baseline row: {err}"))
+                })?;
+                let row = sanitize_ha_resource_payload(table, row);
+                let line = serde_json::to_string(&serde_json::json!({
+                    "schemaVersion": HA_SCHEMA_VERSION,
+                    "kind": "resource",
+                    "channel": channel,
+                    "resource": table,
+                    "op": "upsert",
+                    "data": row
+                }))
+                .map_err(|err| ProxyError::Other(err.to_string()))?;
+                writer
+                    .write_all(line.as_bytes())
+                    .await
+                    .map_err(|err| ProxyError::Other(err.to_string()))?;
+                writer
+                    .write_all(b"\n")
+                    .await
+                    .map_err(|err| ProxyError::Other(err.to_string()))?;
+                row_count += 1;
+            }
+        }
+
+        let end_line = serde_json::to_string(&serde_json::json!({
+            "schemaVersion": HA_SCHEMA_VERSION,
+            "kind": "baseline_end",
+            "channel": channel,
+            "nodeId": node_id,
+            "highWatermark": high_watermark,
+            "rowCount": row_count
+        }))
+        .map_err(|err| ProxyError::Other(err.to_string()))?;
+        writer
+            .write_all(end_line.as_bytes())
+            .await
+            .map_err(|err| ProxyError::Other(err.to_string()))?;
+        writer
+            .write_all(b"\n")
+            .await
+            .map_err(|err| ProxyError::Other(err.to_string()))?;
+        writer
+            .flush()
+            .await
+            .map_err(|err| ProxyError::Other(err.to_string()))?;
+        Ok(HaApplyResult {
+            channel,
+            high_watermark,
+            row_count,
+        })
+    }
+
+    pub(crate) async fn count_ha_baseline_rows(
+        &self,
+        channel: HaSyncChannel,
+    ) -> Result<usize, ProxyError> {
+        let mut total = 0_i64;
+        for table in ha_baseline_tables(channel) {
+            if !self.table_exists(table).await? {
+                continue;
+            }
+            let sql = if *table == "meta" {
+                format!(
+                    "SELECT COUNT(*) FROM {} WHERE key IN ({})",
+                    quote_sqlite_identifier(table),
+                    ha_meta_key_list_sql()
+                )
+            } else {
+                format!("SELECT COUNT(*) FROM {}", quote_sqlite_identifier(table))
+            };
+            total += sqlx::query_scalar::<_, i64>(&sql)
+                .fetch_one(&self.pool)
+                .await?;
+        }
+        Ok(total.max(0) as usize)
+    }
+
     pub(crate) async fn ha_channel_high_watermark(
         &self,
         channel: HaSyncChannel,
@@ -419,109 +578,11 @@ impl KeyStore {
         channel: HaSyncChannel,
         ndjson: &str,
     ) -> Result<HaApplyResult, ProxyError> {
-        let mut high_watermark = 0_i64;
-        let mut row_count = 0_usize;
-        let mut saw_start = false;
-        let mut saw_end = false;
-        let mut resources = Vec::new();
-
+        let mut session = self.begin_ha_baseline_apply(channel).await?;
         for line in ndjson.lines().filter(|line| !line.trim().is_empty()) {
-            let value: serde_json::Value = serde_json::from_str(line)
-                .map_err(|err| ProxyError::Other(format!("invalid HA baseline NDJSON: {err}")))?;
-            let kind = value.get("kind").and_then(serde_json::Value::as_str);
-            match kind {
-                Some("baseline_start") => {
-                    saw_start = true;
-                    high_watermark = value
-                        .get("highWatermark")
-                        .and_then(serde_json::Value::as_i64)
-                        .unwrap_or(0)
-                        .max(0);
-                }
-                Some("resource") => {
-                    let resource = value
-                        .get("resource")
-                        .and_then(serde_json::Value::as_str)
-                        .ok_or_else(|| {
-                            ProxyError::Other("HA baseline resource is missing".to_string())
-                        })?;
-                    ensure_ha_resource_whitelisted(channel, resource)?;
-                    let data = value.get("data").cloned().ok_or_else(|| {
-                        ProxyError::Other("HA baseline resource data is missing".to_string())
-                    })?;
-                    let data = sanitize_ha_resource_payload(resource, data);
-                    resources.push((resource.to_string(), data));
-                }
-                Some("baseline_end") => {
-                    saw_end = true;
-                    high_watermark = value
-                        .get("highWatermark")
-                        .and_then(serde_json::Value::as_i64)
-                        .unwrap_or(high_watermark)
-                        .max(high_watermark);
-                }
-                other => {
-                    return Err(ProxyError::Other(format!(
-                        "unsupported HA baseline record kind: {other:?}"
-                    )));
-                }
-            }
+            session.apply_line(line).await?;
         }
-        if !saw_start || !saw_end {
-            return Err(ProxyError::Other(
-                "HA baseline must include baseline_start and baseline_end".to_string(),
-            ));
-        }
-
-        let mut conn = self.pool.acquire().await?;
-        sqlx::query("PRAGMA foreign_keys = OFF")
-            .execute(&mut *conn)
-            .await?;
-        sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
-        let result = async {
-            insert_ha_outbox_suppression_on_conn(&mut conn).await?;
-            for table in ha_baseline_tables(channel) {
-                if self.table_exists(table).await? {
-                    let sql = if *table == "meta" {
-                        format!(
-                            "DELETE FROM {} WHERE key IN ({})",
-                            quote_sqlite_identifier(table),
-                            ha_meta_key_list_sql()
-                        )
-                    } else {
-                        format!("DELETE FROM {}", quote_sqlite_identifier(table))
-                    };
-                    sqlx::query(&sql).execute(&mut *conn).await?;
-                }
-            }
-            for (resource, data) in &resources {
-                insert_json_row_on_conn(&mut conn, channel, resource, data).await?;
-                row_count += 1;
-            }
-            clear_ha_outbox_suppression_on_conn(&mut conn).await?;
-            Ok::<(), ProxyError>(())
-        }
-        .await;
-        match result {
-            Ok(()) => {
-                sqlx::query("COMMIT").execute(&mut *conn).await?;
-                sqlx::query("PRAGMA foreign_keys = ON")
-                    .execute(&mut *conn)
-                    .await?;
-                Ok(HaApplyResult {
-                    channel,
-                    high_watermark,
-                    row_count,
-                })
-            }
-            Err(err) => {
-                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-                let _ = sqlx::query("PRAGMA foreign_keys = ON")
-                    .execute(&mut *conn)
-                    .await;
-                Err(err)
-            }
-        }
+        session.finish().await
     }
 
     pub(crate) async fn apply_ha_events_ndjson(
@@ -529,92 +590,11 @@ impl KeyStore {
         channel: HaSyncChannel,
         ndjson: &str,
     ) -> Result<HaApplyResult, ProxyError> {
-        let mut last_seq = 0_i64;
-        let mut row_count = 0_usize;
-        let mut events = Vec::new();
+        let mut session = self.begin_ha_events_apply(channel).await?;
         for line in ndjson.lines().filter(|line| !line.trim().is_empty()) {
-            let value: serde_json::Value = serde_json::from_str(line)
-                .map_err(|err| ProxyError::Other(format!("invalid HA events NDJSON: {err}")))?;
-            match value.get("kind").and_then(serde_json::Value::as_str) {
-                Some("events_start") => {}
-                Some("event") => {
-                    let event = value.get("event").ok_or_else(|| {
-                        ProxyError::Other("HA event wrapper is missing event".to_string())
-                    })?;
-                    let resource = event
-                        .get("resource")
-                        .and_then(serde_json::Value::as_str)
-                        .ok_or_else(|| ProxyError::Other("HA event resource is missing".to_string()))?;
-                    ensure_ha_resource_whitelisted(channel, resource)?;
-                    let op = event.get("op").and_then(serde_json::Value::as_str).unwrap_or("upsert");
-                    let resource_id = event
-                        .get("resourceId")
-                        .and_then(serde_json::Value::as_str)
-                        .unwrap_or_default()
-                        .to_string();
-                    let payload = event.get("payload").cloned().unwrap_or(serde_json::Value::Null);
-                    let payload = sanitize_ha_resource_payload(resource, payload);
-                    last_seq = event
-                        .get("seq")
-                        .and_then(serde_json::Value::as_i64)
-                        .unwrap_or(last_seq)
-                        .max(last_seq);
-                    events.push((resource.to_string(), resource_id, op.to_string(), payload));
-                }
-                Some("events_end") => {
-                    last_seq = value
-                        .get("lastSeq")
-                        .and_then(serde_json::Value::as_i64)
-                        .unwrap_or(last_seq)
-                        .max(last_seq);
-                }
-                other => {
-                    return Err(ProxyError::Other(format!(
-                        "unsupported HA events record kind: {other:?}"
-                    )));
-                }
-            }
+            session.apply_line(line).await?;
         }
-
-        let mut conn = self.pool.acquire().await?;
-        sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
-        let result = async {
-            insert_ha_outbox_suppression_on_conn(&mut conn).await?;
-            for (resource, resource_id, op, payload) in &events {
-                match op.as_str() {
-                    "delete" => {
-                        delete_json_row_on_conn(&mut conn, channel, resource, resource_id, payload)
-                            .await?
-                    }
-                    "upsert" => {
-                        insert_json_row_on_conn(&mut conn, channel, resource, payload).await?
-                    }
-                    other => {
-                        return Err(ProxyError::Other(format!(
-                            "unsupported HA event operation: {other}"
-                        )));
-                    }
-                }
-                row_count += 1;
-            }
-            clear_ha_outbox_suppression_on_conn(&mut conn).await?;
-            Ok::<(), ProxyError>(())
-        }
-        .await;
-        match result {
-            Ok(()) => {
-                sqlx::query("COMMIT").execute(&mut *conn).await?;
-                Ok(HaApplyResult {
-                    channel,
-                    high_watermark: last_seq,
-                    row_count,
-                })
-            }
-            Err(err) => {
-                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
-                Err(err)
-            }
-        }
+        session.finish().await
     }
 
     pub(crate) async fn list_ha_events_after(
@@ -946,6 +926,69 @@ impl KeyStore {
 
     pub(crate) async fn configure_ha_event_writes(&self, mode: HaMode) -> Result<(), ProxyError> {
         self.repair_ha_triggers(mode).await.map(|_| ())
+    }
+
+    pub(crate) async fn begin_ha_baseline_apply(
+        &self,
+        channel: HaSyncChannel,
+    ) -> Result<HaBaselineApplySession, ProxyError> {
+        let mut conn = self.pool.acquire().await?;
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
+        let init_result = async {
+            insert_ha_outbox_suppression_on_conn(&mut conn).await?;
+            for table in ha_baseline_tables(channel) {
+                if self.table_exists(table).await? {
+                    let sql = if *table == "meta" {
+                        format!(
+                            "DELETE FROM {} WHERE key IN ({})",
+                            quote_sqlite_identifier(table),
+                            ha_meta_key_list_sql()
+                        )
+                    } else {
+                        format!("DELETE FROM {}", quote_sqlite_identifier(table))
+                    };
+                    sqlx::query(&sql).execute(&mut *conn).await?;
+                }
+            }
+            Ok::<(), ProxyError>(())
+        }
+        .await;
+        if let Err(err) = init_result {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            let _ = sqlx::query("PRAGMA foreign_keys = ON")
+                .execute(&mut *conn)
+                .await;
+            return Err(err);
+        }
+        Ok(HaBaselineApplySession {
+            channel,
+            conn,
+            high_watermark: 0,
+            row_count: 0,
+            saw_start: false,
+            saw_end: false,
+        })
+    }
+
+    pub(crate) async fn begin_ha_events_apply(
+        &self,
+        channel: HaSyncChannel,
+    ) -> Result<HaEventsApplySession, ProxyError> {
+        let mut conn = self.pool.acquire().await?;
+        sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
+        if let Err(err) = insert_ha_outbox_suppression_on_conn(&mut conn).await {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+            return Err(err);
+        }
+        Ok(HaEventsApplySession {
+            channel,
+            conn,
+            high_watermark: 0,
+            row_count: 0,
+        })
     }
 
     pub(crate) async fn repair_ha_triggers(
@@ -1408,6 +1451,167 @@ fn parse_ha_node_role(value: &str) -> Option<HaNodeRole> {
         "standby" => Some(HaNodeRole::Standby),
         "recovery" => Some(HaNodeRole::Recovery),
         _ => None,
+    }
+}
+
+impl HaBaselineApplySession {
+    pub async fn apply_line(&mut self, line: &str) -> Result<(), ProxyError> {
+        let value: serde_json::Value = serde_json::from_str(line)
+            .map_err(|err| ProxyError::Other(format!("invalid HA baseline NDJSON: {err}")))?;
+        match value.get("kind").and_then(serde_json::Value::as_str) {
+            Some("baseline_start") => {
+                self.saw_start = true;
+                self.high_watermark = value
+                    .get("highWatermark")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(0)
+                    .max(0);
+            }
+            Some("resource") => {
+                let resource = value
+                    .get("resource")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| ProxyError::Other("HA baseline resource is missing".to_string()))?;
+                ensure_ha_resource_whitelisted(self.channel, resource)?;
+                let data = value
+                    .get("data")
+                    .cloned()
+                    .ok_or_else(|| ProxyError::Other("HA baseline resource data is missing".to_string()))?;
+                let data = sanitize_ha_resource_payload(resource, data);
+                insert_json_row_on_conn(&mut self.conn, self.channel, resource, &data).await?;
+                self.row_count += 1;
+            }
+            Some("baseline_end") => {
+                self.saw_end = true;
+                self.high_watermark = value
+                    .get("highWatermark")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(self.high_watermark)
+                    .max(self.high_watermark);
+            }
+            other => {
+                return Err(ProxyError::Other(format!(
+                    "unsupported HA baseline record kind: {other:?}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn finish(mut self) -> Result<HaApplyResult, ProxyError> {
+        if !self.saw_start || !self.saw_end {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *self.conn).await;
+            let _ = sqlx::query("PRAGMA foreign_keys = ON")
+                .execute(&mut *self.conn)
+                .await;
+            return Err(ProxyError::Other(
+                "HA baseline must include baseline_start and baseline_end".to_string(),
+            ));
+        }
+        if let Err(err) = clear_ha_outbox_suppression_on_conn(&mut self.conn).await {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *self.conn).await;
+            let _ = sqlx::query("PRAGMA foreign_keys = ON")
+                .execute(&mut *self.conn)
+                .await;
+            return Err(err);
+        }
+        sqlx::query("COMMIT").execute(&mut *self.conn).await?;
+        sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut *self.conn)
+            .await?;
+        Ok(HaApplyResult {
+            channel: self.channel,
+            high_watermark: self.high_watermark,
+            row_count: self.row_count,
+        })
+    }
+}
+
+impl HaEventsApplySession {
+    pub async fn apply_line(&mut self, line: &str) -> Result<(), ProxyError> {
+        let value: serde_json::Value = serde_json::from_str(line)
+            .map_err(|err| ProxyError::Other(format!("invalid HA events NDJSON: {err}")))?;
+        match value.get("kind").and_then(serde_json::Value::as_str) {
+            Some("events_start") => {}
+            Some("event") => {
+                let event = value
+                    .get("event")
+                    .ok_or_else(|| ProxyError::Other("HA event wrapper is missing event".to_string()))?;
+                let resource = event
+                    .get("resource")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| ProxyError::Other("HA event resource is missing".to_string()))?;
+                ensure_ha_resource_whitelisted(self.channel, resource)?;
+                let op = event
+                    .get("op")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("upsert");
+                let resource_id = event
+                    .get("resourceId")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or_default();
+                let payload = sanitize_ha_resource_payload(
+                    resource,
+                    event
+                        .get("payload")
+                        .cloned()
+                        .unwrap_or(serde_json::Value::Null),
+                );
+                self.high_watermark = event
+                    .get("seq")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(self.high_watermark)
+                    .max(self.high_watermark);
+                match op {
+                    "delete" => {
+                        delete_json_row_on_conn(
+                            &mut self.conn,
+                            self.channel,
+                            resource,
+                            resource_id,
+                            &payload,
+                        )
+                        .await?
+                    }
+                    "upsert" => {
+                        insert_json_row_on_conn(&mut self.conn, self.channel, resource, &payload)
+                            .await?
+                    }
+                    other => {
+                        return Err(ProxyError::Other(format!(
+                            "unsupported HA event operation: {other}"
+                        )));
+                    }
+                }
+                self.row_count += 1;
+            }
+            Some("events_end") => {
+                self.high_watermark = value
+                    .get("lastSeq")
+                    .and_then(serde_json::Value::as_i64)
+                    .unwrap_or(self.high_watermark)
+                    .max(self.high_watermark);
+            }
+            other => {
+                return Err(ProxyError::Other(format!(
+                    "unsupported HA events record kind: {other:?}"
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    pub async fn finish(mut self) -> Result<HaApplyResult, ProxyError> {
+        if let Err(err) = clear_ha_outbox_suppression_on_conn(&mut self.conn).await {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *self.conn).await;
+            return Err(err);
+        }
+        sqlx::query("COMMIT").execute(&mut *self.conn).await?;
+        Ok(HaApplyResult {
+            channel: self.channel,
+            high_watermark: self.high_watermark,
+            row_count: self.row_count,
+        })
     }
 }
 

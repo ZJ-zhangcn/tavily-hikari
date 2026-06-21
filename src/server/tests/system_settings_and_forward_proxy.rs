@@ -314,6 +314,53 @@ use super::upstream_support_and_manual_jobs::*;
     }
 
     #[tokio::test]
+    async fn standby_health_skips_xray_readiness_when_active_standby_role_is_not_serving() {
+        let share_link =
+            "vless://0688fa59-e971-4278-8c03-4b35821a71dc@standby-health.example.com:443?encryption=none#Standby";
+        let db_path = temp_db_path("health-xray-standby");
+        let db_str = db_path.to_string_lossy().to_string();
+        let upstream_addr = spawn_forward_proxy_probe_upstream().await;
+        let upstream = format!("http://{}/mcp", upstream_addr);
+        let mut options = tavily_hikari::TavilyProxyOptions::from_database_path(&db_str);
+        options.xray_binary = "/tmp/tavily-hikari-missing-xray".to_string();
+        options.health_readiness_grace_period = Duration::from_secs(0);
+        let proxy = TavilyProxy::with_options_in_ha_mode::<Vec<String>, String>(
+            Vec::new(),
+            &upstream,
+            &db_str,
+            options,
+            tavily_hikari::HaMode::ActiveStandby,
+        )
+        .await
+        .expect("create standby proxy");
+        proxy
+            .update_forward_proxy_settings(
+                ForwardProxySettings {
+                    proxy_urls: vec![share_link.to_string()],
+                    subscription_urls: Vec::new(),
+                    subscription_update_interval_secs: 3600,
+                    insert_direct: false,
+                    egress_socks5_enabled: false,
+                    egress_socks5_url: String::new(),
+                },
+                true,
+            )
+            .await
+            .expect("save standby xray relay settings");
+
+        let addr = spawn_proxy_server(proxy, format!("http://{}", upstream_addr)).await;
+        let response = Client::new()
+            .get(format!("http://{addr}/health"))
+            .send()
+            .await
+            .expect("call standby health");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.text().await.expect("standby health body"), "ok");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
     async fn startup_restores_subscription_runtime_before_refreshing_slow_subscription() {
         let db_path = temp_db_path("startup-restore-subscription-runtime");
         let db_str = db_path.to_string_lossy().to_string();

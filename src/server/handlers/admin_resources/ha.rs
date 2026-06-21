@@ -47,7 +47,6 @@ struct HaEventResponseItem {
     value: Value,
 }
 
-const HA_BASELINE_MAX_COMPRESSED_BYTES: usize = 64 * 1024 * 1024;
 const HA_EVENTS_MAX_COMPRESSED_BYTES: usize = 4 * 1024 * 1024;
 
 fn parse_ha_channel(raw: Option<&str>) -> Result<tavily_hikari::HaSyncChannel, (StatusCode, String)> {
@@ -225,21 +224,44 @@ async fn get_admin_ha_baseline(
         ));
     }
     let channel = parse_ha_channel(query.channel.as_deref())?;
-    let export = state
+    let high_watermark = state
         .proxy
-        .export_ha_baseline_ndjson(channel, &status.node_id)
+        .ha_channel_high_watermark(channel)
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-    let compressed = encode_zstd_limited(&export.ndjson, HA_BASELINE_MAX_COMPRESSED_BYTES)?;
+    let row_count = state
+        .proxy
+        .count_ha_baseline_rows(channel)
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    let proxy = state.proxy.clone();
+    let node_id = status.node_id.clone();
+    let (writer, reader) = duplex(64 * 1024);
+    tokio::spawn(async move {
+        let mut encoder = ZstdEncoder::with_quality(writer, async_compression::Level::Precise(3));
+        if let Err(err) = proxy
+            .write_ha_baseline_ndjson(channel, &node_id, &mut encoder)
+            .await
+        {
+            tracing::warn!(
+                component = "ha",
+                event = "baseline_stream_write_failed",
+                channel = channel.as_str(),
+                err = %err,
+                "HA baseline stream write failed"
+            );
+        }
+        let _ = encoder.shutdown().await;
+    });
     Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "application/x-ndjson")
         .header("content-encoding", "zstd")
         .header("x-ha-schema-version", "2")
         .header("x-ha-channel", channel.as_str())
-        .header("x-ha-high-watermark", export.high_watermark.to_string())
-        .header("x-ha-row-count", export.row_count.to_string())
-        .body(Body::from(compressed))
+        .header("x-ha-high-watermark", high_watermark.to_string())
+        .header("x-ha-row-count", row_count.to_string())
+        .body(Body::from_stream(ReaderStream::new(reader)))
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
 }
 
@@ -406,21 +428,6 @@ async fn post_admin_ha_events_ack(
     })))
 }
 
-fn encode_zstd_limited(value: &str, limit: usize) -> Result<Vec<u8>, (StatusCode, String)> {
-    let compressed = zstd::stream::encode_all(value.as_bytes(), 3)
-        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-    if compressed.len() > limit {
-        return Err((
-            StatusCode::PAYLOAD_TOO_LARGE,
-            format!(
-                "HA payload exceeds compressed limit: {} > {limit}",
-                compressed.len()
-            ),
-        ));
-    }
-    Ok(compressed)
-}
-
 async fn get_public_ha_status(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<tavily_hikari::HaStatusView>, (StatusCode, String)> {
@@ -443,39 +450,47 @@ async fn post_admin_ha_promote(
         .promote_self_to_provisional_with_audit(payload.force.unwrap_or(false))
         .await;
     let (status, audit_entries) = result.map_err(|err| (StatusCode::CONFLICT, err))?;
+    sync_forward_proxy_runtime_for_role(state.proxy.clone(), status.role)
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    let node_id = status.node_id.clone();
+    let edgeone_origin = status.edgeone_origin.clone();
+    let source_effective = status.ha_source_effective.clone();
+    let message = status.message.clone();
     let operation = tavily_hikari::HaFailoverOperationRecord {
         operation_id: format!(
             "promote-{}-{}",
-            status.node_id,
+            node_id,
             state.proxy.backend_time().now_ts()
         ),
         operation_kind: "promote".to_string(),
-        target_node_id: Some(status.node_id.clone()),
+        target_node_id: Some(node_id.clone()),
         from_origin: before.edgeone_origin,
         to_origin: status.edgeone_current_target.clone(),
         status: "provisional_master".to_string(),
-        message: status.message.clone(),
+        message: message.clone(),
     };
     state
         .proxy
         .insert_ha_failover_operation(&operation)
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-    async {
-        state
-            .proxy
-            .persist_ha_node_state(
-                &status.node_id,
-                status.role,
-                status.edgeone_origin.as_deref(),
-                status.ha_source_effective.as_ref(),
-                status.message.as_deref(),
-            )
-            .await?;
-        state.proxy.flush_ha_state_writes().await
-    }
-    .await
-    .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    state
+        .proxy
+        .persist_ha_node_state(
+            &node_id,
+            status.role,
+            edgeone_origin.as_deref(),
+            source_effective.as_ref(),
+            message.as_deref(),
+        )
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    state
+        .proxy
+        .flush_ha_state_writes()
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     for (idx, entry) in audit_entries.iter().enumerate() {
         state
             .proxy
@@ -509,21 +524,29 @@ async fn post_admin_ha_finalize(
         .finalize_failover()
         .await
         .map_err(|err| (StatusCode::CONFLICT, err))?;
-    async {
-        state
-            .proxy
-            .persist_ha_node_state(
-                &status.node_id,
-                status.role,
-                status.edgeone_origin.as_deref(),
-                status.ha_source_effective.as_ref(),
-                status.message.as_deref(),
-            )
-            .await?;
-        state.proxy.flush_ha_state_writes().await
-    }
-    .await
-    .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    sync_forward_proxy_runtime_for_role(state.proxy.clone(), status.role)
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    let node_id = status.node_id.clone();
+    let edgeone_origin = status.edgeone_origin.clone();
+    let source_effective = status.ha_source_effective.clone();
+    let message = status.message.clone();
+    state
+        .proxy
+        .persist_ha_node_state(
+            &node_id,
+            status.role,
+            edgeone_origin.as_deref(),
+            source_effective.as_ref(),
+            message.as_deref(),
+        )
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    state
+        .proxy
+        .flush_ha_state_writes()
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     Ok(Json(status))
 }
 
