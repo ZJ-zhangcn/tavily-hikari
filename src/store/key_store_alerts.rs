@@ -13,6 +13,7 @@ struct AlertEventFilters<'a> {
 struct AlertEventProjectionRow {
     source_kind: String,
     source_id: String,
+    row_sort_id: String,
     alert_type: String,
     occurred_at: i64,
     token_id: Option<String>,
@@ -37,6 +38,23 @@ struct AlertEventProjectionRow {
 }
 
 #[derive(Debug, Clone)]
+struct AlertGroupProjectionRow {
+    grouping_kind: String,
+    row_sort_id: String,
+    alert_type: String,
+    subject_kind: String,
+    subject_id: String,
+    count: i64,
+    first_seen: i64,
+    last_seen: i64,
+    semantic_window_kind: Option<String>,
+    semantic_window_minutes: Option<i64>,
+    semantic_window_start: Option<i64>,
+    semantic_window_end: Option<i64>,
+    child_count: i64,
+}
+
+#[derive(Debug, Clone)]
 struct AlertGroupingEnvelope {
     top_level_items: Vec<AlertGroupRecord>,
     total: i64,
@@ -50,56 +68,6 @@ struct AlertChildWindowAccumulator {
     semantic_window_start: Option<i64>,
     semantic_window_end: Option<i64>,
     events: Vec<AlertEventRecord>,
-}
-
-#[derive(Debug, Clone)]
-struct CompatGroupSummary {
-    latest_event: AlertEventRecord,
-    count: i64,
-    first_seen: i64,
-    last_seen: i64,
-}
-
-#[derive(Debug, Clone)]
-struct SemanticSubjectAccumulator {
-    next_mother_ordinal: usize,
-    open_child: SemanticChildSummary,
-    open_mother: SemanticMotherSummary,
-    completed_mothers: Vec<SemanticMotherSummary>,
-}
-
-#[derive(Debug, Clone)]
-struct SemanticChildSummary {
-    latest_event: AlertEventRecord,
-    event_count: i64,
-    first_seen: i64,
-    last_seen: i64,
-    semantic_window_kind: String,
-    semantic_window_minutes: Option<i64>,
-    semantic_window_start: Option<i64>,
-    semantic_window_end: Option<i64>,
-    semantic_window_key: Option<String>,
-}
-
-#[derive(Debug, Clone)]
-struct SemanticMotherSummary {
-    id: String,
-    alert_type: String,
-    subject_kind: String,
-    subject_id: String,
-    subject_label: String,
-    user: Option<AlertUserRef>,
-    token: Option<AlertEntityRef>,
-    key: Option<AlertEntityRef>,
-    latest_event: AlertEventRecord,
-    first_seen: i64,
-    last_seen: i64,
-    semantic_window_kind: Option<String>,
-    semantic_window_minutes: Option<i64>,
-    semantic_window_start: Option<i64>,
-    semantic_window_end: Option<i64>,
-    child_count: i64,
-    event_count: i64,
 }
 
 
@@ -242,35 +210,6 @@ fn build_compat_group_record(events: &[AlertEventRecord]) -> Option<AlertGroupRe
         children: Vec::new(),
         child_events: Vec::new(),
     })
-}
-
-fn build_compat_group_record_from_summary(summary: CompatGroupSummary) -> AlertGroupRecord {
-    let latest_event = summary.latest_event;
-    AlertGroupRecord {
-        id: alert_group_id(&latest_event),
-        alert_type: latest_event.alert_type.clone(),
-        subject_kind: latest_event.subject_kind.clone(),
-        subject_id: latest_event.subject_id.clone(),
-        subject_label: latest_event.subject_label.clone(),
-        user: latest_event.user.clone(),
-        token: latest_event.token.clone(),
-        key: latest_event.key.clone(),
-        request_kind: latest_event.request_kind.clone(),
-        count: summary.count,
-        first_seen: summary.first_seen,
-        last_seen: summary.last_seen,
-        latest_event,
-        grouping_kind: "compat".to_string(),
-        semantic_window_kind: None,
-        semantic_window_minutes: None,
-        semantic_window_start: None,
-        semantic_window_end: None,
-        semantic_window_key: None,
-        child_count: 0,
-        event_count: summary.count,
-        children: Vec::new(),
-        child_events: Vec::new(),
-    }
 }
 
 fn semantic_group_base_id(event: &AlertEventRecord) -> String {
@@ -466,112 +405,6 @@ fn child_group_chain_boundary(left: &AlertGroupRecord, right: &AlertGroupRecord)
 fn semantic_mother_id_from_child(latest_event: &AlertEventRecord, ordinal: usize) -> String {
     let base = semantic_group_base_id(latest_event);
     format!("{base}:mother:{ordinal}")
-}
-
-fn child_summary_chain_boundary(left: &SemanticChildSummary, right: &SemanticChildSummary) -> bool {
-    if left.semantic_window_kind != right.semantic_window_kind {
-        return true;
-    }
-    match left.semantic_window_kind.as_str() {
-        "request_rate" => {
-            let threshold = left.semantic_window_minutes.unwrap_or(5) * 60;
-            let left_end = left.semantic_window_end.unwrap_or(left.last_seen);
-            let right_start = right.semantic_window_start.unwrap_or(right.first_seen);
-            right_start.saturating_sub(left_end) > threshold
-        }
-        "rolling_hour" => {
-            let left_end = left.semantic_window_end.unwrap_or(left.last_seen);
-            let right_start = right.semantic_window_start.unwrap_or(right.first_seen);
-            right_start.saturating_sub(left_end) > 60 * 60
-        }
-        "day" | "month" => {
-            let left_end = left.semantic_window_end.unwrap_or(left.last_seen);
-            let right_start = right.semantic_window_start.unwrap_or(right.first_seen);
-            right_start.saturating_sub(left_end) > 1
-        }
-        _ => true,
-    }
-}
-
-fn new_semantic_mother_summary(
-    child: &SemanticChildSummary,
-    ordinal: usize,
-) -> SemanticMotherSummary {
-    SemanticMotherSummary {
-        id: semantic_mother_id_from_child(&child.latest_event, ordinal),
-        alert_type: child.latest_event.alert_type.clone(),
-        subject_kind: child.latest_event.subject_kind.clone(),
-        subject_id: child.latest_event.subject_id.clone(),
-        subject_label: child.latest_event.subject_label.clone(),
-        user: child.latest_event.user.clone(),
-        token: child.latest_event.token.clone(),
-        key: child.latest_event.key.clone(),
-        latest_event: child.latest_event.clone(),
-        first_seen: child.first_seen,
-        last_seen: child.last_seen,
-        semantic_window_kind: Some(child.semantic_window_kind.clone()),
-        semantic_window_minutes: child.semantic_window_minutes,
-        semantic_window_start: child.semantic_window_start,
-        semantic_window_end: child.semantic_window_end,
-        child_count: 1,
-        event_count: child.event_count,
-    }
-}
-
-fn merge_child_into_mother_summary(mother: &mut SemanticMotherSummary, child: &SemanticChildSummary) {
-    mother.first_seen = mother.first_seen.min(child.first_seen);
-    mother.last_seen = mother.last_seen.max(child.last_seen);
-    mother.event_count += child.event_count;
-    mother.child_count += 1;
-    mother.semantic_window_start = match (mother.semantic_window_start, child.semantic_window_start) {
-        (Some(left), Some(right)) => Some(left.min(right)),
-        (Some(left), None) => Some(left),
-        (None, Some(right)) => Some(right),
-        (None, None) => None,
-    };
-    mother.semantic_window_end = match (mother.semantic_window_end, child.semantic_window_end) {
-        (Some(left), Some(right)) => Some(left.max(right)),
-        (Some(left), None) => Some(left),
-        (None, Some(right)) => Some(right),
-        (None, None) => None,
-    };
-    let child_latest = (&child.latest_event.occurred_at, &child.latest_event.id);
-    let mother_latest = (&mother.latest_event.occurred_at, &mother.latest_event.id);
-    if child_latest > mother_latest {
-        mother.latest_event = child.latest_event.clone();
-        mother.subject_label = child.latest_event.subject_label.clone();
-        mother.user = child.latest_event.user.clone();
-        mother.token = child.latest_event.token.clone();
-        mother.key = child.latest_event.key.clone();
-    }
-}
-
-fn build_mother_group_record_from_summary(summary: SemanticMotherSummary) -> AlertGroupRecord {
-    AlertGroupRecord {
-        id: summary.id,
-        alert_type: summary.alert_type,
-        subject_kind: summary.subject_kind,
-        subject_id: summary.subject_id,
-        subject_label: summary.subject_label,
-        user: summary.user,
-        token: summary.token,
-        key: summary.key,
-        request_kind: None,
-        count: summary.event_count,
-        first_seen: summary.first_seen,
-        last_seen: summary.last_seen,
-        latest_event: summary.latest_event,
-        grouping_kind: "mother".to_string(),
-        semantic_window_kind: summary.semantic_window_kind,
-        semantic_window_minutes: summary.semantic_window_minutes,
-        semantic_window_start: summary.semantic_window_start,
-        semantic_window_end: summary.semantic_window_end,
-        semantic_window_key: None,
-        child_count: summary.child_count,
-        event_count: summary.event_count,
-        children: Vec::new(),
-        child_events: Vec::new(),
-    }
 }
 
 fn build_semantic_mother_groups(children: Vec<AlertGroupRecord>) -> Vec<AlertGroupRecord> {
@@ -1221,7 +1054,433 @@ impl KeyStore {
             .collect())
     }
 
-    async fn stream_top_level_group_page(
+    fn alert_group_request_kind_sql(alias: &str) -> String {
+        format!("COALESCE(NULLIF(TRIM({alias}.request_kind_key), ''), 'unknown')")
+    }
+
+    fn push_alert_groups_cte<'a>(
+        query: &mut QueryBuilder<'a, Sqlite>,
+        filters: AlertEventFilters<'a>,
+    ) {
+        let subject_kind_sql = Self::alert_subject_kind_sql("alerts");
+        let subject_id_sql = Self::alert_subject_id_sql("alerts");
+        let request_kind_sql = Self::alert_group_request_kind_sql("alerts");
+        let request_rate_minutes = request_rate_limit_window_minutes();
+        let request_rate_seconds = request_rate_minutes * 60;
+        Self::push_alert_events_cte(query, filters);
+        query.push(format!(
+            r#",
+            classified_alerts AS (
+                SELECT
+                    alerts.*,
+                    {subject_kind_sql} AS subject_kind,
+                    {subject_id_sql} AS subject_id,
+                    {request_kind_sql} AS request_kind_key_normalized,
+                    CASE
+                        WHEN alerts.alert_type = 'user_request_rate_limited'
+                            THEN 'mother'
+                        WHEN alerts.alert_type = 'user_quota_exhausted'
+                             AND (
+                                 instr(COALESCE(alerts.error_message, ''), 'month window') > 0
+                                 OR instr(COALESCE(alerts.error_message, ''), 'day window') > 0
+                                 OR instr(COALESCE(alerts.error_message, ''), 'hour window') > 0
+                             )
+                            THEN 'mother'
+                        ELSE 'compat'
+                    END AS grouping_kind,
+                    CASE
+                        WHEN alerts.alert_type = 'user_request_rate_limited'
+                            THEN 'request_rate'
+                        WHEN alerts.alert_type = 'user_quota_exhausted'
+                             AND instr(COALESCE(alerts.error_message, ''), 'month window') > 0
+                            THEN 'month'
+                        WHEN alerts.alert_type = 'user_quota_exhausted'
+                             AND instr(COALESCE(alerts.error_message, ''), 'day window') > 0
+                            THEN 'day'
+                        WHEN alerts.alert_type = 'user_quota_exhausted'
+                             AND instr(COALESCE(alerts.error_message, ''), 'hour window') > 0
+                            THEN 'rolling_hour'
+                        ELSE NULL
+                    END AS semantic_window_kind,
+                    CASE
+                        WHEN alerts.alert_type = 'user_request_rate_limited'
+                            THEN {request_rate_minutes}
+                        WHEN alerts.alert_type = 'user_quota_exhausted'
+                             AND instr(COALESCE(alerts.error_message, ''), 'hour window') > 0
+                            THEN 60
+                        ELSE NULL
+                    END AS semantic_window_minutes,
+                    CASE
+                        WHEN alerts.alert_type = 'user_request_rate_limited'
+                            THEN alerts.occurred_at - {request_rate_seconds}
+                        WHEN alerts.alert_type = 'user_quota_exhausted'
+                             AND instr(COALESCE(alerts.error_message, ''), 'hour window') > 0
+                            THEN alerts.occurred_at - 3540
+                        WHEN alerts.alert_type = 'user_quota_exhausted'
+                             AND instr(COALESCE(alerts.error_message, ''), 'day window') > 0
+                            THEN CAST(strftime('%s', datetime(alerts.occurred_at, 'unixepoch', 'localtime', 'start of day', 'utc')) AS INTEGER)
+                        WHEN alerts.alert_type = 'user_quota_exhausted'
+                             AND instr(COALESCE(alerts.error_message, ''), 'month window') > 0
+                            THEN CAST(strftime('%s', datetime(alerts.occurred_at, 'unixepoch', 'start of month')) AS INTEGER)
+                        ELSE NULL
+                    END AS semantic_window_start,
+                    CASE
+                        WHEN alerts.alert_type = 'user_request_rate_limited'
+                            THEN alerts.occurred_at
+                        WHEN alerts.alert_type = 'user_quota_exhausted'
+                             AND instr(COALESCE(alerts.error_message, ''), 'hour window') > 0
+                            THEN alerts.occurred_at
+                        WHEN alerts.alert_type = 'user_quota_exhausted'
+                             AND instr(COALESCE(alerts.error_message, ''), 'day window') > 0
+                            THEN CAST(strftime('%s', datetime(alerts.occurred_at, 'unixepoch', 'localtime', 'start of day', '+1 day', 'utc')) AS INTEGER) - 1
+                        WHEN alerts.alert_type = 'user_quota_exhausted'
+                             AND instr(COALESCE(alerts.error_message, ''), 'month window') > 0
+                            THEN CAST(strftime('%s', datetime(alerts.occurred_at, 'unixepoch', 'start of month', '+1 month')) AS INTEGER) - 1
+                        ELSE NULL
+                    END AS semantic_window_end,
+                    CASE
+                        WHEN alerts.alert_type = 'user_request_rate_limited'
+                            THEN NULL
+                        WHEN alerts.alert_type = 'user_quota_exhausted'
+                             AND instr(COALESCE(alerts.error_message, ''), 'hour window') > 0
+                            THEN printf('hour:%lld', alerts.occurred_at - 3540)
+                        WHEN alerts.alert_type = 'user_quota_exhausted'
+                             AND instr(COALESCE(alerts.error_message, ''), 'day window') > 0
+                            THEN printf('day:%lld', CAST(strftime('%s', datetime(alerts.occurred_at, 'unixepoch', 'localtime', 'start of day', 'utc')) AS INTEGER))
+                        WHEN alerts.alert_type = 'user_quota_exhausted'
+                             AND instr(COALESCE(alerts.error_message, ''), 'month window') > 0
+                            THEN printf('month:%lld', CAST(strftime('%s', datetime(alerts.occurred_at, 'unixepoch', 'start of month')) AS INTEGER))
+                        ELSE NULL
+                    END AS semantic_window_key
+                FROM alerts
+            ),
+            filtered_alerts AS (
+                SELECT * FROM classified_alerts
+                WHERE 1 = 1
+            "#
+        ));
+        Self::push_alert_request_kind_filter(
+            query,
+            "COALESCE(NULLIF(TRIM(request_kind_key_normalized), ''), 'unknown')",
+            filters.request_kinds,
+        );
+        query.push(format!(
+            r#"
+            ),
+            semantic_events AS (
+                SELECT
+                    filtered_alerts.*,
+                    LAG(filtered_alerts.semantic_window_key) OVER semantic_partition AS prev_window_key,
+                    LAG(filtered_alerts.semantic_window_kind) OVER semantic_partition AS prev_window_kind,
+                    LAG(filtered_alerts.semantic_window_minutes) OVER semantic_partition AS prev_window_minutes,
+                    LAG(filtered_alerts.semantic_window_end) OVER semantic_partition AS prev_window_end,
+                    LAG(filtered_alerts.occurred_at) OVER semantic_partition AS prev_occurred_at
+                FROM filtered_alerts
+                WHERE filtered_alerts.grouping_kind = 'mother'
+                  AND filtered_alerts.semantic_window_kind IS NOT NULL
+                WINDOW semantic_partition AS (
+                    PARTITION BY filtered_alerts.alert_type,
+                                 filtered_alerts.subject_kind,
+                                 filtered_alerts.subject_id,
+                                 filtered_alerts.semantic_window_kind,
+                                 COALESCE(filtered_alerts.semantic_window_minutes, 0)
+                    ORDER BY filtered_alerts.occurred_at ASC, filtered_alerts.row_sort_id ASC
+                )
+            ),
+            semantic_children AS (
+                SELECT
+                    semantic_events.*,
+                    SUM(
+                        CASE
+                            WHEN semantic_events.semantic_window_kind = 'request_rate' THEN
+                                CASE
+                                    WHEN semantic_events.prev_occurred_at IS NULL THEN 1
+                                    WHEN semantic_events.occurred_at - semantic_events.prev_occurred_at
+                                         > COALESCE(semantic_events.prev_window_minutes, semantic_events.semantic_window_minutes, {request_rate_minutes}) * 60
+                                        THEN 1
+                                    ELSE 0
+                                END
+                            ELSE
+                                CASE
+                                    WHEN semantic_events.prev_window_key IS NULL THEN 1
+                                    WHEN semantic_events.prev_window_kind != semantic_events.semantic_window_kind THEN 1
+                                    WHEN COALESCE(semantic_events.prev_window_key, '') != COALESCE(semantic_events.semantic_window_key, '') THEN 1
+                                    ELSE 0
+                                END
+                        END
+                    ) OVER (
+                        PARTITION BY semantic_events.alert_type,
+                                     semantic_events.subject_kind,
+                                     semantic_events.subject_id,
+                                     semantic_events.semantic_window_kind,
+                                     COALESCE(semantic_events.semantic_window_minutes, 0)
+                        ORDER BY semantic_events.occurred_at ASC, semantic_events.row_sort_id ASC
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                    ) AS child_ordinal
+                FROM semantic_events
+            ),
+            semantic_child_ranges AS (
+                SELECT
+                    semantic_children.*,
+                    MIN(semantic_children.occurred_at) OVER child_partition AS child_first_seen,
+                    MAX(semantic_children.occurred_at) OVER child_partition AS child_last_seen,
+                    COUNT(*) OVER child_partition AS child_event_count,
+                    MIN(semantic_children.semantic_window_start) OVER child_partition AS child_window_start,
+                    MAX(semantic_children.semantic_window_end) OVER child_partition AS child_window_end,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY semantic_children.alert_type,
+                                     semantic_children.subject_kind,
+                                     semantic_children.subject_id,
+                                     semantic_children.semantic_window_kind,
+                                     COALESCE(semantic_children.semantic_window_minutes, 0),
+                                     semantic_children.child_ordinal
+                        ORDER BY semantic_children.occurred_at DESC, semantic_children.row_sort_id DESC
+                    ) AS child_latest_rank
+                FROM semantic_children
+                WINDOW child_partition AS (
+                    PARTITION BY semantic_children.alert_type,
+                                 semantic_children.subject_kind,
+                                 semantic_children.subject_id,
+                                 semantic_children.semantic_window_kind,
+                                 COALESCE(semantic_children.semantic_window_minutes, 0),
+                                 semantic_children.child_ordinal
+                )
+            ),
+            semantic_child_heads AS (
+                SELECT
+                    semantic_child_ranges.alert_type,
+                    semantic_child_ranges.subject_kind,
+                    semantic_child_ranges.subject_id,
+                    semantic_child_ranges.semantic_window_kind,
+                    semantic_child_ranges.semantic_window_minutes,
+                    semantic_child_ranges.child_ordinal,
+                    semantic_child_ranges.row_sort_id,
+                    semantic_child_ranges.child_first_seen,
+                    semantic_child_ranges.child_last_seen,
+                    semantic_child_ranges.child_event_count,
+                    semantic_child_ranges.child_window_start,
+                    semantic_child_ranges.child_window_end,
+                    LAG(semantic_child_ranges.child_window_end) OVER child_head_partition AS prev_child_window_end,
+                    LAG(semantic_child_ranges.child_last_seen) OVER child_head_partition AS prev_child_last_seen
+                FROM semantic_child_ranges
+                WHERE semantic_child_ranges.child_latest_rank = 1
+                WINDOW child_head_partition AS (
+                    PARTITION BY semantic_child_ranges.alert_type,
+                                 semantic_child_ranges.subject_kind,
+                                 semantic_child_ranges.subject_id,
+                                 semantic_child_ranges.semantic_window_kind,
+                                 COALESCE(semantic_child_ranges.semantic_window_minutes, 0)
+                    ORDER BY semantic_child_ranges.child_first_seen ASC,
+                             semantic_child_ranges.child_ordinal ASC
+                )
+            ),
+            semantic_mother_heads AS (
+                SELECT
+                    semantic_child_heads.*,
+                    SUM(
+                        CASE
+                            WHEN semantic_child_heads.prev_child_last_seen IS NULL THEN 1
+                            WHEN semantic_child_heads.semantic_window_kind = 'request_rate'
+                                 AND semantic_child_heads.child_window_start
+                                     - COALESCE(semantic_child_heads.prev_child_window_end, semantic_child_heads.prev_child_last_seen)
+                                     > COALESCE(semantic_child_heads.semantic_window_minutes, {request_rate_minutes}) * 60
+                                THEN 1
+                            WHEN semantic_child_heads.semantic_window_kind = 'rolling_hour'
+                                 AND semantic_child_heads.child_window_start
+                                     - COALESCE(semantic_child_heads.prev_child_window_end, semantic_child_heads.prev_child_last_seen)
+                                     > 3600
+                                THEN 1
+                            WHEN semantic_child_heads.semantic_window_kind IN ('day', 'month')
+                                 AND semantic_child_heads.child_window_start
+                                     - COALESCE(semantic_child_heads.prev_child_window_end, semantic_child_heads.prev_child_last_seen)
+                                     > 1
+                                THEN 1
+                            ELSE 0
+                        END
+                    ) OVER (
+                        PARTITION BY semantic_child_heads.alert_type,
+                                     semantic_child_heads.subject_kind,
+                                     semantic_child_heads.subject_id,
+                                     semantic_child_heads.semantic_window_kind,
+                                     COALESCE(semantic_child_heads.semantic_window_minutes, 0)
+                        ORDER BY semantic_child_heads.child_first_seen ASC,
+                                 semantic_child_heads.child_ordinal ASC
+                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                    ) AS mother_ordinal
+                FROM semantic_child_heads
+            ),
+            semantic_grouped_alerts AS (
+                SELECT
+                    'mother' AS grouping_kind,
+                    semantic_mother_heads.row_sort_id AS row_sort_id,
+                    semantic_mother_heads.alert_type AS alert_type,
+                    semantic_mother_heads.subject_kind AS subject_kind,
+                    semantic_mother_heads.subject_id AS subject_id,
+                    NULL AS request_kind_key_normalized,
+                    SUM(semantic_mother_heads.child_event_count) OVER mother_partition AS total_count,
+                    MIN(semantic_mother_heads.child_first_seen) OVER mother_partition AS first_seen,
+                    MAX(semantic_mother_heads.child_last_seen) OVER mother_partition AS last_seen,
+                    semantic_mother_heads.semantic_window_kind AS semantic_window_kind,
+                    semantic_mother_heads.semantic_window_minutes AS semantic_window_minutes,
+                    MIN(semantic_mother_heads.child_window_start) OVER mother_partition AS semantic_window_start,
+                    MAX(semantic_mother_heads.child_window_end) OVER mother_partition AS semantic_window_end,
+                    COUNT(*) OVER mother_partition AS child_count,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY semantic_mother_heads.alert_type,
+                                     semantic_mother_heads.subject_kind,
+                                     semantic_mother_heads.subject_id,
+                                     semantic_mother_heads.semantic_window_kind,
+                                     COALESCE(semantic_mother_heads.semantic_window_minutes, 0),
+                                     semantic_mother_heads.mother_ordinal
+                        ORDER BY semantic_mother_heads.child_last_seen DESC,
+                                 semantic_mother_heads.row_sort_id DESC
+                    ) AS group_rank
+                FROM semantic_mother_heads
+                WINDOW mother_partition AS (
+                    PARTITION BY semantic_mother_heads.alert_type,
+                                 semantic_mother_heads.subject_kind,
+                                 semantic_mother_heads.subject_id,
+                                 semantic_mother_heads.semantic_window_kind,
+                                 COALESCE(semantic_mother_heads.semantic_window_minutes, 0),
+                                 semantic_mother_heads.mother_ordinal
+                )
+            ),
+            compat_grouped_alerts AS (
+                SELECT
+                    'compat' AS grouping_kind,
+                    filtered_alerts.row_sort_id AS row_sort_id,
+                    filtered_alerts.alert_type AS alert_type,
+                    filtered_alerts.subject_kind AS subject_kind,
+                    filtered_alerts.subject_id AS subject_id,
+                    filtered_alerts.request_kind_key_normalized AS request_kind_key_normalized,
+                    COUNT(*) OVER compat_partition AS total_count,
+                    MIN(filtered_alerts.occurred_at) OVER compat_partition AS first_seen,
+                    MAX(filtered_alerts.occurred_at) OVER compat_partition AS last_seen,
+                    NULL AS semantic_window_kind,
+                    NULL AS semantic_window_minutes,
+                    NULL AS semantic_window_start,
+                    NULL AS semantic_window_end,
+                    0 AS child_count,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY filtered_alerts.alert_type,
+                                     filtered_alerts.subject_kind,
+                                     filtered_alerts.subject_id,
+                                     filtered_alerts.request_kind_key_normalized
+                        ORDER BY filtered_alerts.occurred_at DESC, filtered_alerts.row_sort_id DESC
+                    ) AS group_rank
+                FROM filtered_alerts
+                WHERE filtered_alerts.grouping_kind = 'compat'
+                WINDOW compat_partition AS (
+                    PARTITION BY filtered_alerts.alert_type,
+                                 filtered_alerts.subject_kind,
+                                 filtered_alerts.subject_id,
+                                 filtered_alerts.request_kind_key_normalized
+                )
+            ),
+            grouped_alerts AS (
+                SELECT * FROM semantic_grouped_alerts
+                UNION ALL
+                SELECT * FROM compat_grouped_alerts
+            )"#
+        ));
+    }
+
+    fn decode_alert_group_projection_row(
+        row: &sqlx::sqlite::SqliteRow,
+    ) -> Result<AlertGroupProjectionRow, sqlx::Error> {
+        Ok(AlertGroupProjectionRow {
+            grouping_kind: row.try_get("grouping_kind")?,
+            row_sort_id: row.try_get("row_sort_id")?,
+            alert_type: row.try_get("alert_type")?,
+            subject_kind: row.try_get("subject_kind")?,
+            subject_id: row.try_get("subject_id")?,
+            count: row.try_get("total_count")?,
+            first_seen: row.try_get("first_seen")?,
+            last_seen: row.try_get("last_seen")?,
+            semantic_window_kind: row.try_get("semantic_window_kind")?,
+            semantic_window_minutes: row.try_get("semantic_window_minutes")?,
+            semantic_window_start: row.try_get("semantic_window_start")?,
+            semantic_window_end: row.try_get("semantic_window_end")?,
+            child_count: row.try_get("child_count")?,
+        })
+    }
+
+    async fn fetch_group_latest_events_by_projection(
+        &self,
+        filters: AlertEventFilters<'_>,
+        groups: &[AlertGroupProjectionRow],
+    ) -> Result<HashMap<String, AlertEventRecord>, ProxyError> {
+        if groups.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let mut query = QueryBuilder::new("");
+        Self::push_alert_events_cte(&mut query, filters);
+        query.push(" SELECT * FROM alerts WHERE row_sort_id IN (");
+        {
+            let mut separated = query.separated(", ");
+            for group in groups {
+                separated.push_bind(group.row_sort_id.as_str());
+            }
+        }
+        query.push(")");
+
+        let rows = query.build().fetch_all(&self.pool).await?;
+        let mut events_by_row_sort_id = HashMap::new();
+        for row in rows {
+            let decoded = Self::decode_alert_event_projection_row(row)?;
+            let row_sort_id = decoded.row_sort_id.clone();
+            if let Some(event) = Self::build_alert_event_from_projection(decoded) {
+                events_by_row_sort_id.insert(row_sort_id, event);
+            }
+        }
+        Ok(events_by_row_sort_id)
+    }
+
+    fn build_alert_group_records(
+        groups: Vec<AlertGroupProjectionRow>,
+        latest_events_by_row_sort_id: HashMap<String, AlertEventRecord>,
+    ) -> Vec<AlertGroupRecord> {
+        groups
+            .into_iter()
+            .filter_map(|group| {
+                let latest_event = latest_events_by_row_sort_id.get(&group.row_sort_id)?.clone();
+                Some(AlertGroupRecord {
+                    id: if group.grouping_kind == "mother" {
+                        semantic_mother_id_from_child(&latest_event, 0)
+                    } else {
+                        alert_group_id(&latest_event)
+                    },
+                    alert_type: group.alert_type,
+                    subject_kind: group.subject_kind,
+                    subject_id: group.subject_id,
+                    subject_label: latest_event.subject_label.clone(),
+                    user: latest_event.user.clone(),
+                    token: latest_event.token.clone(),
+                    key: latest_event.key.clone(),
+                    request_kind: (group.grouping_kind == "compat")
+                        .then(|| latest_event.request_kind.clone())
+                        .flatten(),
+                    count: group.count,
+                    first_seen: group.first_seen,
+                    last_seen: group.last_seen,
+                    latest_event,
+                    grouping_kind: group.grouping_kind,
+                    semantic_window_kind: group.semantic_window_kind,
+                    semantic_window_minutes: group.semantic_window_minutes,
+                    semantic_window_start: group.semantic_window_start,
+                    semantic_window_end: group.semantic_window_end,
+                    semantic_window_key: None,
+                    child_count: group.child_count,
+                    event_count: group.count,
+                    children: Vec::new(),
+                    child_events: Vec::new(),
+                })
+            })
+            .collect()
+    }
+
+    async fn fetch_alert_group_projection_page(
         &self,
         filters: AlertEventFilters<'_>,
         page: i64,
@@ -1230,225 +1489,30 @@ impl KeyStore {
         let page = page.max(1);
         let per_page = per_page.clamp(1, 100);
         let offset = (page - 1) * per_page;
+        let mut count_query = QueryBuilder::new("");
+        Self::push_alert_groups_cte(&mut count_query, filters);
+        count_query.push(" SELECT COUNT(*) FROM grouped_alerts WHERE group_rank = 1");
+        let total: i64 = count_query.build_query_scalar().fetch_one(&self.pool).await?;
+
         let mut query = QueryBuilder::new("");
-        Self::push_alert_events_cte(&mut query, filters);
-        query.push(" SELECT * FROM alerts WHERE 1 = 1");
-        Self::push_alert_request_kind_filter(
-            &mut query,
-            "COALESCE(NULLIF(TRIM(request_kind_key), ''), 'unknown')",
-            filters.request_kinds,
+        Self::push_alert_groups_cte(&mut query, filters);
+        query.push(" SELECT * FROM grouped_alerts WHERE group_rank = 1");
+        query.push(
+            " ORDER BY last_seen DESC, total_count DESC, alert_type DESC, row_sort_id DESC LIMIT ",
         );
-        query.push(" ORDER BY occurred_at ASC, row_sort_id ASC");
+        query.push_bind(per_page);
+        query.push(" OFFSET ");
+        query.push_bind(offset);
 
-        let mut stream = query.build().fetch(&self.pool);
-        let mut compat_groups: HashMap<String, CompatGroupSummary> = HashMap::new();
-        let mut semantic_groups: HashMap<String, SemanticSubjectAccumulator> = HashMap::new();
-
-        while let Some(row) = stream.try_next().await? {
-            let Some(event) = Self::build_alert_event_from_projection(Self::decode_alert_event_projection_row(row)?) else {
-                continue;
-            };
-
-            if matches!(
-                event.alert_type.as_str(),
-                ALERT_TYPE_USER_REQUEST_RATE_LIMITED | ALERT_TYPE_USER_QUOTA_EXHAUSTED
-            ) && event.semantic_window.is_some()
-            {
-                let subject_key = semantic_subject_key(&event);
-                let semantic = event.semantic_window.clone().expect("semantic window exists");
-                let window_key = semantic.window_key.clone().unwrap_or_default();
-                let child_start = semantic.window_start.unwrap_or(event.occurred_at);
-                let child_summary = SemanticChildSummary {
-                    latest_event: event.clone(),
-                    event_count: 1,
-                    first_seen: event.occurred_at,
-                    last_seen: event.occurred_at,
-                    semantic_window_kind: semantic.kind.as_str().to_string(),
-                    semantic_window_minutes: semantic.window_minutes,
-                    semantic_window_start: semantic.window_start,
-                    semantic_window_end: semantic.window_end,
-                    semantic_window_key: Some(if window_key.is_empty() {
-                        format!("{}:{child_start}", semantic.kind.as_str())
-                    } else {
-                        window_key
-                    }),
-                };
-                match semantic_groups.get_mut(&subject_key) {
-                    Some(accumulator) => {
-                        let same_child = accumulator
-                            .open_child
-                            .semantic_window_key
-                            .as_deref()
-                            == child_summary.semantic_window_key.as_deref()
-                            && accumulator.open_child.semantic_window_kind == child_summary.semantic_window_kind;
-                        let request_rate_append = accumulator.open_child.semantic_window_kind == "request_rate"
-                            && child_summary.semantic_window_kind == "request_rate"
-                            && event
-                                .occurred_at
-                                .saturating_sub(accumulator.open_child.last_seen)
-                                <= accumulator.open_child.semantic_window_minutes.unwrap_or(5) * 60;
-                        if same_child || request_rate_append {
-                            accumulator.open_child.event_count += 1;
-                            accumulator.open_child.last_seen = event.occurred_at;
-                            let event_is_latest = (event.occurred_at, event.id.as_str())
-                                > (
-                                    accumulator.open_child.latest_event.occurred_at,
-                                    accumulator.open_child.latest_event.id.as_str(),
-                                );
-                            if event_is_latest {
-                                accumulator.open_child.latest_event = event.clone();
-                            }
-                            accumulator.open_child.semantic_window_start = match (
-                                accumulator.open_child.semantic_window_start,
-                                semantic.window_start,
-                            ) {
-                                (Some(left), Some(right)) => Some(left.min(right)),
-                                (Some(left), None) => Some(left),
-                                (None, Some(right)) => Some(right),
-                                (None, None) => None,
-                            };
-                            accumulator.open_child.semantic_window_end = match (
-                                accumulator.open_child.semantic_window_end,
-                                semantic.window_end,
-                            ) {
-                                (Some(left), Some(right)) => Some(left.max(right)),
-                                (Some(left), None) => Some(left),
-                                (None, Some(right)) => Some(right),
-                                (None, None) => None,
-                            };
-                            accumulator.open_mother.last_seen = accumulator
-                                .open_mother
-                                .last_seen
-                                .max(event.occurred_at);
-                            accumulator.open_mother.event_count += 1;
-                            accumulator.open_mother.semantic_window_start = match (
-                                accumulator.open_mother.semantic_window_start,
-                                semantic.window_start,
-                            ) {
-                                (Some(left), Some(right)) => Some(left.min(right)),
-                                (Some(left), None) => Some(left),
-                                (None, Some(right)) => Some(right),
-                                (None, None) => None,
-                            };
-                            accumulator.open_mother.semantic_window_end = match (
-                                accumulator.open_mother.semantic_window_end,
-                                semantic.window_end,
-                            ) {
-                                (Some(left), Some(right)) => Some(left.max(right)),
-                                (Some(left), None) => Some(left),
-                                (None, Some(right)) => Some(right),
-                                (None, None) => None,
-                            };
-                            if event_is_latest
-                                && (event.occurred_at, event.id.as_str())
-                                > (
-                                    accumulator.open_mother.latest_event.occurred_at,
-                                    accumulator.open_mother.latest_event.id.as_str(),
-                                )
-                            {
-                                accumulator.open_mother.latest_event =
-                                    accumulator.open_child.latest_event.clone();
-                                accumulator.open_mother.subject_label = accumulator
-                                    .open_child
-                                    .latest_event
-                                    .subject_label
-                                    .clone();
-                                accumulator.open_mother.user =
-                                    accumulator.open_child.latest_event.user.clone();
-                                accumulator.open_mother.token =
-                                    accumulator.open_child.latest_event.token.clone();
-                                accumulator.open_mother.key =
-                                    accumulator.open_child.latest_event.key.clone();
-                            }
-                            continue;
-                        }
-
-                        let finished_child = accumulator.open_child.clone();
-                        if child_summary_chain_boundary(&finished_child, &child_summary) {
-                            accumulator
-                                .completed_mothers
-                                .push(accumulator.open_mother.clone());
-                            accumulator.next_mother_ordinal += 1;
-                            accumulator.open_mother = new_semantic_mother_summary(
-                                &child_summary,
-                                accumulator.next_mother_ordinal,
-                            );
-                        } else {
-                            merge_child_into_mother_summary(&mut accumulator.open_mother, &child_summary);
-                        }
-                        accumulator.open_child = child_summary;
-                    }
-                    None => {
-                        semantic_groups.insert(
-                            subject_key,
-                            SemanticSubjectAccumulator {
-                                next_mother_ordinal: 0,
-                                open_child: child_summary.clone(),
-                                open_mother: new_semantic_mother_summary(&child_summary, 0),
-                                completed_mothers: Vec::new(),
-                            },
-                        );
-                    }
-                }
-                continue;
-            }
-
-            let compat_key = compat_subject_key(&event);
-            match compat_groups.get_mut(&compat_key) {
-                Some(summary) => {
-                    summary.count += 1;
-                    summary.first_seen = summary.first_seen.min(event.occurred_at);
-                    summary.last_seen = summary.last_seen.max(event.occurred_at);
-                    if (event.occurred_at, event.id.as_str())
-                        > (summary.latest_event.occurred_at, summary.latest_event.id.as_str())
-                    {
-                        summary.latest_event = event;
-                    }
-                }
-                None => {
-                    compat_groups.insert(
-                        compat_key,
-                        CompatGroupSummary {
-                            latest_event: event.clone(),
-                            count: 1,
-                            first_seen: event.occurred_at,
-                            last_seen: event.occurred_at,
-                        },
-                    );
-                }
-            }
-        }
-
-        let mut items = Vec::new();
-        for (_key, summary) in compat_groups {
-            items.push(build_compat_group_record_from_summary(summary));
-        }
-        for (_key, accumulator) in semantic_groups {
-            items.extend(
-                accumulator
-                    .completed_mothers
-                    .into_iter()
-                    .map(build_mother_group_record_from_summary),
-            );
-            items.push(build_mother_group_record_from_summary(accumulator.open_mother));
-        }
-
-        items.sort_by(|left, right| {
-            right
-                .last_seen
-                .cmp(&left.last_seen)
-                .then_with(|| right.count.cmp(&left.count))
-                .then_with(|| right.alert_type.cmp(&left.alert_type))
-                .then_with(|| right.id.cmp(&left.id))
-        });
-
-        let total = items.len() as i64;
-        let page_items = items
-            .into_iter()
-            .skip(offset as usize)
-            .take(per_page as usize)
-            .collect::<Vec<_>>();
-        Ok((page_items, total))
+        let rows = query.build().fetch_all(&self.pool).await?;
+        let groups = rows
+            .iter()
+            .map(Self::decode_alert_group_projection_row)
+            .collect::<Result<Vec<_>, _>>()?;
+        let latest_events_by_row_sort_id =
+            self.fetch_group_latest_events_by_projection(filters, &groups).await?;
+        let items = Self::build_alert_group_records(groups, latest_events_by_row_sort_id);
+        Ok((items, total))
     }
 
     async fn populate_selected_mother_groups(
@@ -1502,17 +1566,27 @@ impl KeyStore {
         {
             let mut separated = query.separated(" OR ");
             for (alert_type, subject_kind, subject_id, first_seen, last_seen) in &selected_subjects {
-                separated.push("(");
-                separated.push("alerts.alert_type = ").push_bind(alert_type);
-                separated.push(" AND ");
-                separated.push(subject_kind_sql.as_str());
-                separated.push(" = ").push_bind(subject_kind);
-                separated.push(" AND ");
-                separated.push(subject_id_sql.as_str());
-                separated.push(" = ").push_bind(subject_id);
-                separated.push(" AND alerts.occurred_at >= ").push_bind(*first_seen);
-                separated.push(" AND alerts.occurred_at <= ").push_bind(*last_seen);
-                separated.push(")");
+                separated.push_unseparated("(");
+                separated
+                    .push_unseparated("alerts.alert_type = ")
+                    .push_bind_unseparated(alert_type);
+                separated.push_unseparated(" AND ");
+                separated.push_unseparated(subject_kind_sql.as_str());
+                separated
+                    .push_unseparated(" = ")
+                    .push_bind_unseparated(subject_kind);
+                separated.push_unseparated(" AND ");
+                separated.push_unseparated(subject_id_sql.as_str());
+                separated
+                    .push_unseparated(" = ")
+                    .push_bind_unseparated(subject_id);
+                separated
+                    .push_unseparated(" AND alerts.occurred_at >= ")
+                    .push_bind_unseparated(*first_seen);
+                separated
+                    .push_unseparated(" AND alerts.occurred_at <= ")
+                    .push_bind_unseparated(*last_seen);
+                separated.push_unseparated(")");
             }
         }
         query.push(")");
@@ -1569,6 +1643,7 @@ impl KeyStore {
         Ok(AlertEventProjectionRow {
             source_kind: row.try_get("source_kind")?,
             source_id: row.try_get("source_id")?,
+            row_sort_id: row.try_get("row_sort_id")?,
             alert_type: row.try_get("alert_type")?,
             occurred_at: row.try_get("occurred_at")?,
             token_id: row.try_get("token_id")?,
@@ -1599,6 +1674,7 @@ impl KeyStore {
         let AlertEventProjectionRow {
             source_kind,
             source_id,
+            row_sort_id: _,
             alert_type,
             occurred_at,
             token_id,
@@ -1751,7 +1827,8 @@ impl KeyStore {
             key_id,
             request_kinds,
         };
-        let (page_items, total) = self.stream_top_level_group_page(filters, page, per_page).await?;
+        let (page_items, total) =
+            self.fetch_alert_group_projection_page(filters, page, per_page).await?;
         let items = self.populate_selected_mother_groups(filters, page_items).await?;
         Ok(PaginatedAlertGroups {
             items,

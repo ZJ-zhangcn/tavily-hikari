@@ -486,6 +486,87 @@ async fn alerts_endpoints_default_to_all_history_while_dashboard_recent_alerts_s
         Some("user_request_rate_limited")
     );
 
+    let paged_groups_resp = client
+        .get(format!(
+            "http://{}/api/alerts/groups?page=2&per_page=1",
+            admin_addr
+        ))
+        .header(reqwest::header::COOKIE, &admin_cookie)
+        .send()
+        .await
+        .expect("paged alert groups request");
+    assert_eq!(paged_groups_resp.status(), reqwest::StatusCode::OK);
+    let paged_groups_body: serde_json::Value =
+        paged_groups_resp.json().await.expect("paged alert groups json");
+    assert_eq!(
+        paged_groups_body.get("total").and_then(|value| value.as_i64()),
+        Some(5)
+    );
+    assert_eq!(
+        paged_groups_body
+            .pointer("/items/0/type")
+            .and_then(|value| value.as_str()),
+        Some("upstream_usage_limit_432")
+    );
+    assert_eq!(
+        paged_groups_body
+            .pointer("/items/0/groupingKind")
+            .and_then(|value| value.as_str()),
+        Some("compat")
+    );
+    assert_eq!(
+        paged_groups_body
+            .pointer("/items/0/children")
+            .and_then(|value| value.as_array())
+            .map(Vec::len),
+        Some(0)
+    );
+
+    let semantic_page_resp = client
+        .get(format!(
+            "http://{}/api/alerts/groups?page=4&per_page=1",
+            admin_addr
+        ))
+        .header(reqwest::header::COOKIE, &admin_cookie)
+        .send()
+        .await
+        .expect("semantic paged alert groups request");
+    assert_eq!(semantic_page_resp.status(), reqwest::StatusCode::OK);
+    let semantic_page_body: serde_json::Value = semantic_page_resp
+        .json()
+        .await
+        .expect("semantic paged alert groups json");
+    assert_eq!(
+        semantic_page_body
+            .pointer("/items/0/type")
+            .and_then(|value| value.as_str()),
+        Some("user_request_rate_limited")
+    );
+    assert_eq!(
+        semantic_page_body
+            .pointer("/items/0/groupingKind")
+            .and_then(|value| value.as_str()),
+        Some("mother")
+    );
+    assert_eq!(
+        semantic_page_body
+            .pointer("/items/0/childCount")
+            .and_then(|value| value.as_i64()),
+        Some(1)
+    );
+    assert_eq!(
+        semantic_page_body
+            .pointer("/items/0/children/0/groupingKind")
+            .and_then(|value| value.as_str()),
+        Some("child")
+    );
+    assert_eq!(
+        semantic_page_body
+            .pointer("/items/0/children/0/childEvents/0/type")
+            .and_then(|value| value.as_str()),
+        Some("user_request_rate_limited")
+    );
+
     let overview_resp = client
         .get(format!("http://{}/api/dashboard/overview", admin_addr))
         .header(reqwest::header::COOKIE, &admin_cookie)
