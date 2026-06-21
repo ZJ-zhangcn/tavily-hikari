@@ -1,19 +1,62 @@
 impl KeyStore {
-    fn dashboard_month_series_point_has_visible_value(point: &DashboardMonthSeriesPoint) -> bool {
-        [
-            point.total,
-            point.valuable_success,
-            point.valuable_failure,
-            point.other_success,
-            point.other_failure,
-            point.unknown,
-            point.upstream_exhausted,
-            point.new_keys,
-            point.new_quarantines,
-        ]
-        .into_iter()
-        .flatten()
-        .any(|value| value > 0)
+    async fn dashboard_month_series_has_retained_data_tx(
+        tx: &mut Transaction<'_, Sqlite>,
+        range_start: i64,
+        range_end: i64,
+    ) -> Result<bool, ProxyError> {
+        if range_end <= range_start {
+            return Ok(false);
+        }
+
+        let retained = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT CASE
+                WHEN EXISTS(
+                    SELECT 1
+                    FROM dashboard_request_rollup_buckets
+                    WHERE bucket_start >= ?
+                      AND bucket_start < ?
+                ) THEN 1
+                WHEN EXISTS(
+                    SELECT 1
+                    FROM api_keys
+                    WHERE created_at >= ?
+                      AND created_at < ?
+                ) THEN 1
+                WHEN EXISTS(
+                    SELECT 1
+                    FROM api_key_quarantines
+                    WHERE created_at >= ?
+                      AND created_at < ?
+                ) THEN 1
+                WHEN EXISTS(
+                    SELECT 1
+                    FROM api_key_maintenance_records
+                    WHERE source = ?
+                      AND operation_code = ?
+                      AND reason_code = ?
+                      AND created_at >= ?
+                      AND created_at < ?
+                ) THEN 1
+                ELSE 0
+            END
+            "#,
+        )
+        .bind(range_start)
+        .bind(range_end)
+        .bind(range_start)
+        .bind(range_end)
+        .bind(range_start)
+        .bind(range_end)
+        .bind(MAINTENANCE_SOURCE_SYSTEM)
+        .bind(MAINTENANCE_OP_AUTO_MARK_EXHAUSTED)
+        .bind(OUTCOME_QUOTA_EXHAUSTED)
+        .bind(range_start)
+        .bind(range_end)
+        .fetch_one(&mut **tx)
+        .await?;
+
+        Ok(retained != 0)
     }
 
     pub(crate) fn collect_bucket_ranges<F>(
@@ -235,6 +278,12 @@ impl KeyStore {
             summary_windows.month_end,
         )
         .await?;
+        let comparison_has_retained_data = Self::dashboard_month_series_has_retained_data_tx(
+            &mut tx,
+            summary_windows.previous_month_start,
+            summary_windows.previous_month_end,
+        )
+        .await?;
         let mut comparison = Self::fetch_dashboard_month_series_points_tx(
             &mut tx,
             summary_windows.previous_month_start,
@@ -251,10 +300,7 @@ impl KeyStore {
                         .unwrap_or(current_point.bucket_start)
                 });
         }
-        if !comparison
-            .iter()
-            .any(Self::dashboard_month_series_point_has_visible_value)
-        {
+        if !comparison_has_retained_data {
             comparison.clear();
         }
 

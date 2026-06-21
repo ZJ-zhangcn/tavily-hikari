@@ -927,8 +927,6 @@ struct DashboardSiteStatusView {
     total_proxy_nodes: Option<i64>,
 }
 
-const DASHBOARD_OVERVIEW_SINGLEFLIGHT_GRACE: Duration = Duration::from_secs(2);
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct DashboardForwardProxyView {
@@ -1387,11 +1385,6 @@ async fn load_dashboard_overview_snapshot(
         let cache_handle = dashboard_overview_cache_for_state(state.as_ref());
         let waiter = {
             let cache = cache_handle.lock().await;
-            if let Some(cached) = cache.cached.as_ref()
-                && cached.loaded_at.elapsed() <= DASHBOARD_OVERVIEW_SINGLEFLIGHT_GRACE
-            {
-                return Ok(cached.snapshot.clone());
-            }
             if cache.loading {
                 Some(cache.notify.clone().notified_owned())
             } else {
@@ -1409,12 +1402,9 @@ async fn load_dashboard_overview_snapshot(
         let waiter = {
             let mut cache = cache_handle.lock().await;
             if let Some(cached) = cache.cached.as_ref()
+                && cached.freshness == freshness
             {
-                let loaded_recently =
-                    cached.loaded_at.elapsed() <= DASHBOARD_OVERVIEW_SINGLEFLIGHT_GRACE;
-                if cached.freshness == freshness || loaded_recently {
-                    return Ok(cached.snapshot.clone());
-                }
+                return Ok(cached.snapshot.clone());
             }
             if cache.loading {
                 Some(cache.notify.clone().notified_owned())
@@ -1429,17 +1419,13 @@ async fn load_dashboard_overview_snapshot(
             continue;
         }
 
-        let result = build_dashboard_overview_payload(state).await.map(|mut snapshot| {
-            snapshot.freshness = freshness.clone();
-            snapshot
-        });
+        let result = build_dashboard_overview_payload(state).await;
         let mut cache = cache_handle.lock().await;
         cache.loading = false;
         if let Ok(snapshot) = result.as_ref() {
             cache.cached = Some(CachedDashboardOverviewSnapshot {
                 snapshot: snapshot.clone(),
-                freshness: freshness.clone(),
-                loaded_at: std::time::Instant::now(),
+                freshness: snapshot.freshness.clone(),
             });
         }
         cache.notify.notify_waiters();

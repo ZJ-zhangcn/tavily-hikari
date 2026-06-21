@@ -37,7 +37,6 @@ struct DashboardOverviewFreshness {
 struct CachedDashboardOverviewSnapshot {
     snapshot: DashboardOverviewSnapshot,
     freshness: DashboardOverviewFreshness,
-    loaded_at: std::time::Instant,
 }
 
 #[derive(Debug, Clone)]

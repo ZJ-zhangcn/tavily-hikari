@@ -2353,7 +2353,6 @@ use super::upstream_support_and_manual_jobs::*;
             cache.cached = Some(CachedDashboardOverviewSnapshot {
                 snapshot: first.clone(),
                 freshness: first.freshness.clone(),
-                loaded_at: std::time::Instant::now(),
             });
         }
 
@@ -2369,9 +2368,78 @@ use super::upstream_support_and_manual_jobs::*;
             "SSE snapshot should reuse the shared overview cache instead of rebuilding within the same refresh wave",
         );
         assert!(
-            first.payload.month_series.current.len() >= first.payload.month_series.comparison.len()
-                || first.payload.month_series.comparison.is_empty(),
+            !first.payload.month_series.current.is_empty(),
             "snapshot should still expose the expected month series payload",
+        );
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn dashboard_overview_snapshot_does_not_reuse_recent_cache_after_freshness_changes() {
+        let db_path = temp_db_path("dashboard-overview-shared-snapshot-freshness-change");
+        let db_str = db_path.to_string_lossy().to_string();
+        let proxy = TavilyProxy::with_endpoint(
+            vec!["tvly-dashboard-overview-shared-snapshot-freshness-change".to_string()],
+            DEFAULT_UPSTREAM,
+            &db_str,
+        )
+        .await
+        .expect("proxy created");
+
+        let state = Arc::new(AppState {
+            proxy,
+            static_dir: None,
+            forward_auth: ForwardAuthConfig::new(None, None, None, None),
+            forward_auth_enabled: false,
+            builtin_admin: BuiltinAdminAuth::new(false, None, None),
+            linuxdo_oauth: LinuxDoOAuthOptions::disabled(),
+            linuxdo_credit: LinuxDoCreditOptions::disabled(),
+            ha: tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig::default()),
+            dev_open_admin: false,
+            usage_base: "http://127.0.0.1:58088".to_string(),
+            api_key_ip_geo_origin: "https://api.country.is".to_string(),
+        });
+        let pool = connect_sqlite_test_pool(&db_str).await;
+
+        let first = load_dashboard_overview_snapshot(&state)
+            .await
+            .expect("first overview snapshot");
+        let cache_handle = dashboard_overview_cache_for_state(state.as_ref());
+        {
+            let mut cache = cache_handle.lock().await;
+            cache.cached = Some(CachedDashboardOverviewSnapshot {
+                snapshot: first,
+                freshness: compute_dashboard_overview_freshness(&state)
+                    .await
+                    .expect("freshness for cached snapshot"),
+            });
+        }
+
+        reset_dashboard_overview_build_count();
+
+        sqlx::query(
+            "UPDATE api_keys SET quota_limit = ?, quota_remaining = ?, quota_synced_at = ?",
+        )
+        .bind(2_000_i64)
+        .bind(1_234_i64)
+        .bind(Utc::now().timestamp())
+        .execute(&pool)
+        .await
+        .expect("update quota totals");
+
+        let refreshed = load_dashboard_overview_snapshot(&state)
+            .await
+            .expect("refreshed overview snapshot");
+
+        assert_eq!(
+            refreshed.payload.site_status.remaining_quota,
+            1_234,
+            "freshness changes should bypass the recently loaded cache entry"
+        );
+        assert!(
+            dashboard_overview_build_count() >= 1,
+            "overview snapshot should rebuild after freshness changes even inside the grace window"
         );
 
         let _ = std::fs::remove_file(db_path);

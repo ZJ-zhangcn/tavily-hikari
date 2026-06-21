@@ -297,6 +297,60 @@ async fn dashboard_month_series_returns_explicit_empty_comparison_when_previous_
     let _ = std::fs::remove_file(db_path);
 }
 
+#[tokio::test]
+async fn dashboard_month_series_keeps_zero_value_retained_previous_month_comparison() {
+    let db_path = temp_db_path("dashboard-month-series-zero-retained-comparison");
+    let db_str = db_path.to_string_lossy().to_string();
+
+    let proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-dashboard-month-series-zero-retained-comparison".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("proxy created");
+
+    let evaluation_time = Utc
+        .with_ymd_and_hms(2026, 4, 7, 12, 10, 0)
+        .single()
+        .expect("valid utc evaluation time");
+    let local_evaluation = evaluation_time.with_timezone(&Local);
+    let summary_windows = proxy
+        .summary_windows_at(local_evaluation)
+        .await
+        .expect("summary windows");
+
+    insert_dashboard_summary_rollup_day_bucket(&proxy, summary_windows.month_start, 12, 9, 2, 1)
+        .await;
+    insert_dashboard_summary_rollup_day_bucket(
+        &proxy,
+        summary_windows.previous_month_start,
+        0,
+        0,
+        0,
+        0,
+    )
+    .await;
+
+    let month_series = proxy
+        .key_store
+        .fetch_dashboard_month_series(&summary_windows)
+        .await
+        .expect("dashboard month series");
+
+    assert!(
+        !month_series.comparison.is_empty(),
+        "retained previous-month buckets should stay visible even when every retained value is zero"
+    );
+    assert_eq!(month_series.comparison[0].total, Some(0));
+    assert_eq!(
+        month_series.comparison[0].display_bucket_start,
+        Some(summary_windows.month_start)
+    );
+
+    let _ = std::fs::remove_file(db_path);
+}
+
 #[test]
 fn dashboard_month_series_bucket_iteration_uses_successor_boundaries() {
     let ranges = KeyStore::collect_bucket_ranges(
