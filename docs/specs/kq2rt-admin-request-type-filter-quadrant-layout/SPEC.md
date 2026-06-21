@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 进行中（快车道）
+- Status: 已实现（待审查）
 - Created: 2026-06-21
 - Last: 2026-06-21
 
@@ -121,6 +121,7 @@
   submission_gate: `approved`
   state: `desktop request type panel expanded`
   evidence_note: 验证桌面端 request type 浮层已经压缩为标题/清空 + Billing/Protocol + API/MCP 田字形结构。
+  PR: include
   image:
   ![Desktop request type quadrant layout](./assets/request-kind-desktop-proof.png)
 
@@ -134,9 +135,11 @@
   submission_gate: `approved`
   state: `mobile request type drawer open`
   evidence_note: 验证 small viewport 下同一触发入口改为 Drawer，内容顺序与点击面积保持稳定。
+  PR: include
   image:
   ![Mobile request type drawer layout](./assets/request-kind-mobile-proof.png)
 
 ## 变更记录（Change log）
 
 - 2026-06-21: 初始化 follow-up spec，冻结共享 request type 面板的桌面田字形布局、小屏 drawer 收口与 stable Storybook evidence 合同。
+- 2026-06-21: 共享 `AdminRecentRequestsPanel` request type 筛选已按合同落地；桌面端改为田字形布局，小屏 Drawer 保持按钮单选，Storybook/build 验证通过并补齐最终视觉证据。
