@@ -797,6 +797,7 @@ export const Default: Story = {
     ],
     recentAlerts,
     onOpenModule: () => {},
+    onOpenRecentAlerts: () => {},
     onOpenToken: () => {},
     onOpenKey: () => {},
   },

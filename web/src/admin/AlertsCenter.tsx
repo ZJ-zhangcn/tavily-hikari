@@ -212,11 +212,29 @@ function defaultCopy(language: Language) {
           collapse: '收起',
           children: '子窗口',
           rawEvents: '条原始告警',
+          requestRecords: '条调用记录',
+          hitRecords: '条命中调用',
           firstHit: '首次命中',
           lastHit: '末次命中',
           latestSummary: '最新摘要',
           noRawEvents: '当前子窗口下没有原始告警。',
           compatibility: '兼容分组',
+        },
+        childDrawer: {
+          title: '调用记录',
+          requestKind: '调用类型',
+          allRequestKinds: '全部调用类型',
+          noRequestKinds: '当前子窗口下没有调用类型',
+          outcome: '结果',
+          allOutcomes: '全部结果',
+          quotaExhausted: '额度/限流',
+          success: '成功',
+          error: '错误',
+          neutral: '中性',
+          search: '搜索',
+          searchPlaceholder: '搜索请求路径、摘要或主体',
+          empty: '当前子窗口下没有关联调用记录。',
+          emptyFiltered: '当前筛选下没有命中的调用记录。',
         },
         paginationPrevious: '上一页',
         paginationNext: '下一页',
@@ -289,11 +307,29 @@ function defaultCopy(language: Language) {
           collapse: 'Collapse',
           children: 'Child windows',
           rawEvents: 'raw alerts',
+          requestRecords: 'call records',
+          hitRecords: 'matching calls',
           firstHit: 'First hit',
           lastHit: 'Last hit',
           latestSummary: 'Latest summary',
           noRawEvents: 'No raw alert events are available for this child window.',
           compatibility: 'Compatibility group',
+        },
+        childDrawer: {
+          title: 'Call records',
+          requestKind: 'Request kind',
+          allRequestKinds: 'All request kinds',
+          noRequestKinds: 'No request kinds in this child window',
+          outcome: 'Outcome',
+          allOutcomes: 'All outcomes',
+          quotaExhausted: 'Quota / rate limit',
+          success: 'Success',
+          error: 'Error',
+          neutral: 'Neutral',
+          search: 'Search',
+          searchPlaceholder: 'Search request path, summary, or subject',
+          empty: 'No related call records are available for this child window.',
+          emptyFiltered: 'No call records match the current filters.',
         },
         paginationPrevious: 'Previous',
         paginationNext: 'Next',
@@ -1093,7 +1129,9 @@ export default function AlertsCenter({
                                       <div className="alerts-center-time-cell alerts-center-child-window">
                                         <strong>{semanticWindowLabel(child, language)}</strong>
                                         {child.semanticWindowStart != null && child.semanticWindowEnd != null ? (
-                                          <span>{`${formatTimeDetail(child.semanticWindowStart)} → ${formatTimeDetail(child.semanticWindowEnd)}`}</span>
+                                          <span>
+                                            {`${formatMonthDayTimeWithSeconds(child.semanticWindowStart, language)} → ${formatMonthDayTimeWithSeconds(child.semanticWindowEnd, language)}`}
+                                          </span>
                                         ) : null}
                                       </div>
                                     </TableCell>
@@ -1137,7 +1175,7 @@ export default function AlertsCenter({
                                           }}
                                         >
                                           <Icon icon="mdi:format-list-bulleted-square" width={16} height={16} aria-hidden="true" />
-                                          <span>{`${copy.groupUi.expand} ${child.childEvents?.length ?? 0} 条调用记录`}</span>
+                                          <span>{`${copy.groupUi.expand} ${child.childEvents?.length ?? 0} ${copy.groupUi.requestRecords}`}</span>
                                         </button>
                                       </div>
                                     </TableCell>
@@ -1219,12 +1257,12 @@ export default function AlertsCenter({
           <section className="alerts-center-request-drawer alerts-center-child-drawer__content">
             <header className="alerts-center-request-drawer__header alerts-center-child-drawer__header">
               <DrawerTitle asChild>
-                <h3>调用记录</h3>
+                <h3>{copy.childDrawer.title}</h3>
               </DrawerTitle>
               <DrawerDescription asChild>
                 <p className="panel-description">
                   {selectedChildDetails
-                    ? `${semanticWindowLabel(selectedChildDetails.child, language)} · ${childRequestRecords.length} 条命中调用`
+                    ? `${semanticWindowLabel(selectedChildDetails.child, language)} · ${childRequestRecords.length} ${copy.groupUi.hitRecords}`
                     : '—'}
                 </p>
               </DrawerDescription>
@@ -1232,22 +1270,22 @@ export default function AlertsCenter({
 
             <div className="alerts-center-child-request-filters">
               <div className="alerts-center-filter-field">
-                <span className="alerts-center-filter-label">调用类型</span>
+                <span className="alerts-center-filter-label">{copy.childDrawer.requestKind}</span>
                 <SearchableFacetSelect
                   value={childRequestFilters.requestKind}
                   options={childRequestKindOptions}
                   summary={
                     childRequestFilters.requestKind == null
-                      ? '全部调用类型'
+                      ? copy.childDrawer.allRequestKinds
                       : childRequestKindOptions.find((option) => option.value === childRequestFilters.requestKind)?.label ??
                         childRequestFilters.requestKind
                   }
-                  allLabel="全部调用类型"
-                  emptyLabel="当前子窗口下没有调用类型"
+                  allLabel={copy.childDrawer.allRequestKinds}
+                  emptyLabel={copy.childDrawer.noRequestKinds}
                   searchPlaceholder={copy.filters.searchPlaceholder}
-                  searchAriaLabel="调用类型"
-                  triggerAriaLabel="调用类型"
-                  listAriaLabel="调用类型"
+                  searchAriaLabel={copy.childDrawer.requestKind}
+                  triggerAriaLabel={copy.childDrawer.requestKind}
+                  listAriaLabel={copy.childDrawer.requestKind}
                   onChange={(nextValue) =>
                     setChildRequestFilters((current) => ({
                       ...current,
@@ -1256,31 +1294,31 @@ export default function AlertsCenter({
                 />
               </div>
               <div className="alerts-center-filter-field">
-                <span className="alerts-center-filter-label">结果</span>
+                <span className="alerts-center-filter-label">{copy.childDrawer.outcome}</span>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <button type="button" className="searchable-facet-select__trigger alerts-center-request-kinds-trigger">
                       <span className="searchable-facet-select__summary">
                         {childRequestFilters.outcome === 'all'
-                          ? '全部结果'
+                          ? copy.childDrawer.allOutcomes
                           : childRequestFilters.outcome === 'quota_exhausted'
-                            ? '额度/限流'
+                            ? copy.childDrawer.quotaExhausted
                             : childRequestFilters.outcome === 'success'
-                              ? '成功'
+                              ? copy.childDrawer.success
                               : childRequestFilters.outcome === 'error'
-                                ? '错误'
-                                : '中性'}
+                                ? copy.childDrawer.error
+                                : copy.childDrawer.neutral}
                       </span>
                       <Icon icon="mdi:chevron-down" width={16} height={16} aria-hidden="true" />
                     </button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" className="alerts-center-request-kinds-menu">
                     {[
-                      ['all', '全部结果'],
-                      ['quota_exhausted', '额度/限流'],
-                      ['success', '成功'],
-                      ['error', '错误'],
-                      ['neutral', '中性'],
+                      ['all', copy.childDrawer.allOutcomes],
+                      ['quota_exhausted', copy.childDrawer.quotaExhausted],
+                      ['success', copy.childDrawer.success],
+                      ['error', copy.childDrawer.error],
+                      ['neutral', copy.childDrawer.neutral],
                     ].map(([value, label]) => (
                       <button
                         key={value}
@@ -1304,7 +1342,7 @@ export default function AlertsCenter({
                 </DropdownMenu>
               </div>
               <div className="alerts-center-filter-field alerts-center-child-request-filters__search">
-                <span className="alerts-center-filter-label">搜索</span>
+                <span className="alerts-center-filter-label">{copy.childDrawer.search}</span>
                 <Input
                   value={childRequestFilters.text}
                   onChange={(event) =>
@@ -1312,7 +1350,7 @@ export default function AlertsCenter({
                       ...current,
                       text: event.target.value,
                     }))}
-                  placeholder="搜索请求路径、摘要或主体"
+                  placeholder={copy.childDrawer.searchPlaceholder}
                   className="alerts-center-time-input"
                 />
               </div>
@@ -1320,15 +1358,15 @@ export default function AlertsCenter({
 
             <div className="alerts-center-child-events alerts-center-child-request-list">
               {selectedChildDetails == null || childRequestRecords.length === 0 ? (
-                <div className="alerts-center-inline-muted">当前子窗口下没有关联调用记录。</div>
+                <div className="alerts-center-inline-muted">{copy.childDrawer.empty}</div>
               ) : filteredChildRequestRecords.length === 0 ? (
-                <div className="alerts-center-inline-muted">当前筛选下没有命中的调用记录。</div>
+                <div className="alerts-center-inline-muted">{copy.childDrawer.emptyFiltered}</div>
               ) : (
                 filteredChildRequestRecords.map(({ event, log }) => (
                   <div key={event.id} className="alerts-center-child-event alerts-center-child-request-item">
                     <div className="alerts-center-child-event__meta">
                       <StatusBadge tone={alertTypeTone(event.type)}>{copy.types[event.type]}</StatusBadge>
-                      <span>{`${formatTime(event.occurredAt)} · ${formatTimeDetail(event.occurredAt)}`}</span>
+                      <span>{formatMonthDayTimeWithSeconds(event.occurredAt, language)}</span>
                       {log.request_kind_key ? (
                         <RequestKindBadge requestKindKey={log.request_kind_key} requestKindLabel={log.request_kind_label ?? log.request_kind_key} size="sm" />
                       ) : null}

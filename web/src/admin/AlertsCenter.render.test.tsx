@@ -301,6 +301,16 @@ function formatExpectedRangeLine(timestamp: number): string {
   return `${month}月${day}日 ${hours}:${minutes}:${seconds}`
 }
 
+function formatExpectedEnglishRangeLine(timestamp: number): string {
+  const parsed = new Date(timestamp * 1000)
+  const month = String(parsed.getMonth() + 1).padStart(2, '0')
+  const day = String(parsed.getDate()).padStart(2, '0')
+  const hours = String(parsed.getHours()).padStart(2, '0')
+  const minutes = String(parsed.getMinutes()).padStart(2, '0')
+  const seconds = String(parsed.getSeconds()).padStart(2, '0')
+  return `${month}/${day} ${hours}:${minutes}:${seconds}`
+}
+
 async function mountAlertsCenter(partialProps: Partial<AlertsCenterProps> = {}): Promise<MountedAlertsCenter> {
   const container = document.createElement('div')
   document.body.appendChild(container)
@@ -586,6 +596,8 @@ describe('AlertsCenter loading behavior', () => {
     await flushEffects()
     expect(container.textContent).toContain('展开 2 条调用记录')
     expect(container.textContent).not.toContain('收起 2 条原始告警')
+    expect(container.textContent).toContain(formatExpectedRangeLine(semanticGroups.items[0]!.children![0]!.semanticWindowStart!))
+    expect(container.textContent).toContain(formatExpectedRangeLine(semanticGroups.items[0]!.children![0]!.semanticWindowEnd!))
 
     const toggles = container.querySelectorAll('.alerts-center-inline-toggle')
     expect(toggles.length).toBeGreaterThan(1)
@@ -595,6 +607,48 @@ describe('AlertsCenter loading behavior', () => {
     await flushEffects()
     expect(container.textContent).toContain('MCP tools/list')
     expect(container.textContent).toContain('Alice Wang hit the local rolling request-rate window for MCP tools/list.')
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
+  it('localizes the child request drawer in English', async () => {
+    const { container, root } = await mountAlertsCenter({
+      language: 'en',
+      search: alertsPath({ view: 'groups' }).replace('/admin/alerts', ''),
+      initialCatalog: storyCatalog,
+      initialGroupsPage: semanticGroups,
+      groupsLoader: async () => semanticGroups,
+      formatTime: () => '09:00:00',
+      formatTimeDetail: () => '04/19',
+    })
+
+    const groupToggle = container.querySelector('.alerts-center-row-expander')
+    expect(groupToggle).not.toBeNull()
+    await act(async () => {
+      groupToggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const toggles = container.querySelectorAll('.alerts-center-inline-toggle')
+    await act(async () => {
+      toggles[1]?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+    await flushEffects()
+
+    const pageText = container.textContent ?? ''
+    const overlayText = document.body.textContent ?? ''
+    expect(pageText).toContain('Expand 2 call records')
+    expect(pageText).toContain(formatExpectedEnglishRangeLine(semanticGroups.items[0]!.children![0]!.semanticWindowStart!))
+    expect(pageText).toContain(formatExpectedEnglishRangeLine(semanticGroups.items[0]!.children![0]!.semanticWindowEnd!))
+    expect(overlayText).toContain('Call records')
+    expect(overlayText).toContain('All request kinds')
+    expect(overlayText).toContain('All outcomes')
+    expect(overlayText).toContain('Search')
+    expect(overlayText).toContain('Rolling 5m')
+    expect(overlayText).not.toContain('调用记录')
+    expect(overlayText).not.toContain('全部调用类型')
 
     await act(async () => {
       root.unmount()

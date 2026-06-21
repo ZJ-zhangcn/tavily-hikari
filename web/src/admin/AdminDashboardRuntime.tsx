@@ -4419,12 +4419,7 @@ function AdminDashboard(): JSX.Element {
         return
       }
       if (target === 'alerts') {
-        const now = new Date()
-        navigateToPath(alertsPath({
-          view: 'groups',
-          since: formatIso8601WithOffset(new Date(now.getTime() - 24 * 60 * 60 * 1000)),
-          until: formatIso8601WithOffset(now),
-        }))
+        navigateToPath(alertsPath({ view: 'groups' }))
         return
       }
       if (target === 'system-settings-ha') {
@@ -10014,6 +10009,14 @@ function AdminDashboard(): JSX.Element {
       ariaLabel={moduleDesktopIntro.title}
     />
   )
+  const openDashboardRecentAlerts = useCallback(() => {
+    const now = new Date()
+    navigateToPath(alertsPath({
+      view: 'groups',
+      since: formatIso8601WithOffset(new Date(now.getTime() - 24 * 60 * 60 * 1000)),
+      until: formatIso8601WithOffset(now),
+    }))
+  }, [navigateToPath])
   const renderUsersSearchControls = (className?: string) => (
     <div style={{ display: 'grid', gap: 6 }}>
       <div className={['users-search-controls', className].filter(Boolean).join(' ')}>
@@ -10480,6 +10483,7 @@ function AdminDashboard(): JSX.Element {
           jobs={dashboardJobs}
           recentAlerts={dashboardRecentAlerts}
           onOpenModule={navigateModule}
+          onOpenRecentAlerts={openDashboardRecentAlerts}
           onOpenToken={navigateToken}
           onOpenKey={navigateKey}
         />

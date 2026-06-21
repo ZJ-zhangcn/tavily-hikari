@@ -3471,6 +3471,7 @@ export function DashboardPageCanvas({ beforeIntro }: { beforeIntro?: ReactNode }
         jobs={MOCK_JOBS}
         recentAlerts={STORY_RECENT_ALERTS}
         onOpenModule={() => {}}
+        onOpenRecentAlerts={() => {}}
         onOpenToken={() => {}}
         onOpenKey={() => {}}
       />
