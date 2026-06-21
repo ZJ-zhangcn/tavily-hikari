@@ -68,3 +68,19 @@ export const JobType: Story = {
     ],
   },
 }
+
+export const MobileButtons: Story = {
+  args: {
+    ariaLabel: '移动端按钮分段',
+    value: 'all',
+    smallViewportBehavior: 'buttons',
+    options: [
+      { value: 'all', label: 'Any' },
+      { value: 'success', label: 'Paid' },
+      { value: 'error', label: 'Free' },
+    ],
+  },
+  parameters: {
+    viewport: { defaultViewport: 'mobile1' },
+  },
+}

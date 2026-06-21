@@ -38,12 +38,16 @@ import SearchableFacetSelect from './SearchableFacetSelect'
 import { StatusBadge, type StatusTone } from './StatusBadge'
 import { Button } from './ui/button'
 import {
+  Drawer,
+  DrawerContent,
+  DrawerDescription,
+  DrawerHeader,
+  DrawerTitle,
+} from './ui/drawer'
+import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu'
 import {
@@ -58,6 +62,7 @@ import {
 import SegmentedTabs from './ui/SegmentedTabs'
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip'
+import { useViewportMode } from '../lib/responsive'
 type Language = 'en' | 'zh'
 type RecentRequestsVariant = 'admin' | 'token'
 type RecentRequestsOutcomeFilterKind = 'result' | 'keyEffect' | 'bindingEffect' | 'selectionEffect'
@@ -129,6 +134,15 @@ const requestKindProtocolQuickFilterOptions = [
 ] as const
 const recentRequestsAllFilterValue = '__all__'
 const recentRequestsCompactAllLabel = 'All'
+
+function resolveRequestKindProtocolGroup(
+  option: TokenLogRequestKindOption,
+): 'api' | 'mcp' {
+  if (option.protocol_group === 'api' || option.key.startsWith('api:')) {
+    return 'api'
+  }
+  return 'mcp'
+}
 function statusTone(status: string): StatusTone {
   const normalized = status.trim().toLowerCase()
   if (normalized === 'success') return 'success'
@@ -823,7 +837,10 @@ export default function AdminRecentRequestsPanel({
   const [expandedLogs, setExpandedLogs] = useState<Set<number>>(() => new Set())
   const [logBodiesById, setLogBodiesById] = useState<Record<number, LogBodiesLoadState>>({})
   const [headerFiltersTarget, setHeaderFiltersTarget] = useState<HTMLElement | null>(null)
+  const [requestKindFilterOpen, setRequestKindFilterOpen] = useState(false)
   const logBodyControllersRef = useRef<Map<number, AbortController>>(new Map())
+  const viewportMode = useViewportMode()
+  const isSmallViewport = viewportMode === 'small'
   useEffect(() => {
     if (!headerFiltersTargetId) {
       setHeaderFiltersTarget(null)
@@ -951,6 +968,20 @@ export default function AdminRecentRequestsPanel({
     () => summarizeRequestKindQuickFilters(requestKindQuickFilters),
     [requestKindQuickFilters],
   )
+  const requestKindClearDisabled =
+    effectiveSelectedRequestKinds.length === 0 && !hasActiveQuickRequestKindFilters
+  const requestKindColumnGroups = useMemo(() => {
+    const api: TokenLogRequestKindOption[] = []
+    const mcp: TokenLogRequestKindOption[] = []
+    for (const option of visibleRequestKindOptions) {
+      if (resolveRequestKindProtocolGroup(option) === 'api') {
+        api.push(option)
+      } else {
+        mcp.push(option)
+      }
+    }
+    return { api, mcp }
+  }, [visibleRequestKindOptions])
   const requestKindTriggerSummary = useMemo(() => {
     return summarizeRequestKindTrigger(
       effectiveSelectedRequestKinds,
@@ -995,82 +1026,186 @@ export default function AdminRecentRequestsPanel({
       ? 'user-console-mobile-kv user-console-mobile-kv--stacked'
       : 'admin-mobile-kv admin-mobile-kv--stacked'
   const headerCopyVisible = showHeaderCopy && (title.trim().length > 0 || description.trim().length > 0)
+  const handleClearRequestKinds = useCallback(() => {
+    if (requestKindClearDisabled) return
+    onClearRequestKinds()
+  }, [onClearRequestKinds, requestKindClearDisabled])
+  const renderRequestKindOptionsList = useCallback(
+    (
+      options: TokenLogRequestKindOption[],
+      groupLabel: string,
+      container: 'dropdown' | 'drawer',
+    ) => (
+      <div className="token-request-kind-group">
+        <div className="token-request-kind-group-label">{groupLabel}</div>
+        {options.length === 0 ? (
+          <div className="token-request-kind-empty">{strings.logs.filters.requestTypeEmpty}</div>
+        ) : (
+          <div className="token-request-kind-group-options">
+            {options.map((option) => {
+              const checked = effectiveSelectedRequestKinds.includes(option.key)
+              const content = (
+                <span className="recent-requests-request-kind-option">
+                  <RequestKindBadge requestKindKey={option.key} requestKindLabel={option.label} size="sm" />
+                  <span className="recent-requests-request-kind-count">
+                    {`x${option.count ?? 0}`}
+                  </span>
+                </span>
+              )
+              if (container === 'drawer') {
+                return (
+                  <button
+                    key={option.key}
+                    type="button"
+                    role="checkbox"
+                    aria-checked={checked}
+                    className={`recent-requests-request-kind-drawer-item${
+                      checked ? ' recent-requests-request-kind-drawer-item--checked' : ''
+                    }`}
+                    onClick={() => onToggleRequestKind(option.key)}
+                  >
+                    <span className="recent-requests-request-kind-drawer-mark" aria-hidden="true">
+                      {checked ? (
+                        <Icon icon="mdi:check" width={16} height={16} />
+                      ) : null}
+                    </span>
+                    {content}
+                  </button>
+                )
+              }
+              return (
+                <DropdownMenuCheckboxItem
+                  key={option.key}
+                  className="cursor-pointer recent-requests-request-kind-item"
+                  checked={checked}
+                  onSelect={(event) => event.preventDefault()}
+                  onCheckedChange={() => onToggleRequestKind(option.key)}
+                >
+                  {content}
+                </DropdownMenuCheckboxItem>
+              )
+            })}
+          </div>
+        )}
+      </div>
+    ),
+    [effectiveSelectedRequestKinds, onToggleRequestKind, strings.logs.filters.requestTypeEmpty],
+  )
+  const renderRequestKindFiltersContent = useCallback(
+    (container: 'dropdown' | 'drawer') => (
+      <div
+        className={[
+          'token-request-kind-panel',
+          `token-request-kind-panel--${container}`,
+        ].join(' ')}
+      >
+        <div className="token-request-kind-panel-header">
+          <div className="token-request-kind-panel-title">{strings.logs.filters.requestType}</div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            className="token-request-kind-clear"
+            disabled={requestKindClearDisabled}
+            onClick={handleClearRequestKinds}
+          >
+            {strings.users.clear}
+          </Button>
+        </div>
+        <div className="token-request-kind-layout">
+          <div className="token-request-kind-quick-filters">
+            <div className="token-request-kind-quick-cell">
+              <div className="token-request-kind-group-label">{strings.logs.filters.billingGroup}</div>
+              <SegmentedTabs<TokenLogRequestKindQuickBilling>
+                value={requestKindQuickBilling}
+                onChange={(next) => onRequestKindQuickFiltersChange(next, requestKindQuickProtocol)}
+                options={requestKindBillingQuickFilterOptions}
+                ariaLabel={strings.logs.filters.billingGroup}
+                className="token-request-quick-segmented"
+                smallViewportBehavior={container === 'drawer' ? 'buttons' : 'select'}
+              />
+            </div>
+            <div className="token-request-kind-quick-cell">
+              <div className="token-request-kind-group-label">{strings.logs.filters.protocolGroup}</div>
+              <SegmentedTabs<TokenLogRequestKindQuickProtocol>
+                value={requestKindQuickProtocol}
+                onChange={(next) => onRequestKindQuickFiltersChange(requestKindQuickBilling, next)}
+                options={requestKindProtocolQuickFilterOptions}
+                ariaLabel={strings.logs.filters.protocolGroup}
+                className="token-request-quick-segmented"
+                smallViewportBehavior={container === 'drawer' ? 'buttons' : 'select'}
+              />
+            </div>
+          </div>
+          <div className="token-request-kind-columns">
+            {renderRequestKindOptionsList(requestKindColumnGroups.api, 'API', container)}
+            {renderRequestKindOptionsList(requestKindColumnGroups.mcp, 'MCP', container)}
+          </div>
+        </div>
+      </div>
+    ),
+    [
+      handleClearRequestKinds,
+      onRequestKindQuickFiltersChange,
+      requestKindClearDisabled,
+      requestKindColumnGroups.api,
+      requestKindColumnGroups.mcp,
+      requestKindQuickBilling,
+      requestKindQuickProtocol,
+      renderRequestKindOptionsList,
+      strings.logs.filters.billingGroup,
+      strings.logs.filters.protocolGroup,
+      strings.logs.filters.requestType,
+      strings.users.clear,
+    ],
+  )
   const renderFilters = (className?: string) => (
     <div className={['panel-actions recent-requests-filters', className].filter(Boolean).join(' ')}>
       <div className="recent-requests-filter-field recent-requests-filter-field--request-kind">
         <span className="recent-requests-filter-label">{strings.logs.filters.requestType}</span>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
+        {isSmallViewport ? (
+          <Drawer
+            open={requestKindFilterOpen}
+            onOpenChange={setRequestKindFilterOpen}
+            shouldScaleBackground={false}
+          >
             <button
               type="button"
               className="recent-requests-filter-select-trigger recent-requests-filter-select-trigger--menu"
               aria-label={`${strings.logs.filters.requestType}: ${requestKindTriggerSummary}`}
+              onClick={() => setRequestKindFilterOpen(true)}
             >
               <span className="recent-requests-filter-select-text">{requestKindTriggerSummary}</span>
               <Icon icon="mdi:chevron-down" width={16} height={16} aria-hidden="true" />
             </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="end"
-            className="token-request-kind-menu recent-requests-filter-menu recent-requests-filter-menu--request-kind"
-          >
-            <DropdownMenuLabel>{strings.logs.filters.requestType}</DropdownMenuLabel>
-            <div className="token-request-quick-filters">
-              <div className="token-request-quick-filter-row">
-                <span className="token-request-quick-filter-label">{strings.logs.filters.billingGroup}</span>
-                <SegmentedTabs<TokenLogRequestKindQuickBilling>
-                  value={requestKindQuickBilling}
-                  onChange={(next) => onRequestKindQuickFiltersChange(next, requestKindQuickProtocol)}
-                  options={requestKindBillingQuickFilterOptions}
-                  ariaLabel={strings.logs.filters.billingGroup}
-                  className="token-request-quick-segmented"
-                />
-              </div>
-              <div className="token-request-quick-filter-row">
-                <span className="token-request-quick-filter-label">{strings.logs.filters.protocolGroup}</span>
-                <SegmentedTabs<TokenLogRequestKindQuickProtocol>
-                  value={requestKindQuickProtocol}
-                  onChange={(next) => onRequestKindQuickFiltersChange(requestKindQuickBilling, next)}
-                  options={requestKindProtocolQuickFilterOptions}
-                  ariaLabel={strings.logs.filters.protocolGroup}
-                  className="token-request-quick-segmented"
-                />
-              </div>
-            </div>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem
-              className="cursor-pointer"
-              disabled={effectiveSelectedRequestKinds.length === 0 && !hasActiveQuickRequestKindFilters}
-              onSelect={(event) => {
-                event.preventDefault()
-                onClearRequestKinds()
-              }}
+            <DrawerContent className="token-request-kind-drawer">
+              <DrawerHeader className="sr-only">
+                <DrawerTitle>{strings.logs.filters.requestType}</DrawerTitle>
+                <DrawerDescription>{strings.logs.descriptionFallback}</DrawerDescription>
+              </DrawerHeader>
+              {renderRequestKindFiltersContent('drawer')}
+            </DrawerContent>
+          </Drawer>
+        ) : (
+          <DropdownMenu open={requestKindFilterOpen} onOpenChange={setRequestKindFilterOpen}>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                className="recent-requests-filter-select-trigger recent-requests-filter-select-trigger--menu"
+                aria-label={`${strings.logs.filters.requestType}: ${requestKindTriggerSummary}`}
+              >
+                <span className="recent-requests-filter-select-text">{requestKindTriggerSummary}</span>
+                <Icon icon="mdi:chevron-down" width={16} height={16} aria-hidden="true" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="token-request-kind-menu recent-requests-filter-menu recent-requests-filter-menu--request-kind"
             >
-              {strings.logs.filters.requestTypeAll}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            {visibleRequestKindOptions.length === 0 ? (
-              <DropdownMenuItem disabled>{strings.logs.filters.requestTypeEmpty}</DropdownMenuItem>
-            ) : (
-              visibleRequestKindOptions.map((option) => (
-                <DropdownMenuCheckboxItem
-                  key={option.key}
-                  className="cursor-pointer"
-                  checked={effectiveSelectedRequestKinds.includes(option.key)}
-                  onSelect={(event) => event.preventDefault()}
-                  onCheckedChange={() => onToggleRequestKind(option.key)}
-                >
-                  <span className="recent-requests-request-kind-option">
-                    <RequestKindBadge requestKindKey={option.key} requestKindLabel={option.label} size="sm" />
-                    <span className="recent-requests-request-kind-count">
-                      {`x${option.count ?? 0}`}
-                    </span>
-                  </span>
-                </DropdownMenuCheckboxItem>
-              ))
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+              {renderRequestKindFiltersContent('dropdown')}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
       <div className="recent-requests-filter-field">
         <span className="recent-requests-filter-label">{strings.logs.filters.resultOrEffect}</span>

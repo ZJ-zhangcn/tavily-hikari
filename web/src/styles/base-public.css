@@ -840,6 +840,12 @@
   overflow: visible;
 }
 
+.segmented-tabs-mobile-buttons {
+  display: flex;
+  width: 100%;
+  overflow: visible;
+}
+
 .segmented-tabs-select-trigger {
   width: min(176px, 100%);
   min-height: 44px;

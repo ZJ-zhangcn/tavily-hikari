@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from '@storybook/react-vite'
-import { useCallback, useLayoutEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 
 import type { RequestLog, RequestLogBodies } from '../api'
 import { useLanguage, useTranslate } from '../i18n'
@@ -515,6 +515,196 @@ function RebalanceMarkerShowcase(): JSX.Element {
   )
 }
 
+function RequestKindDesktopExpandedShowcase(): JSX.Element {
+  const admin = useTranslate().admin
+  const { language } = useLanguage()
+  const [requestKinds, setRequestKinds] = useState<string[]>([])
+  const [quickBilling, setQuickBilling] = useState<'all' | 'billable' | 'non_billable'>('all')
+  const [quickProtocol, setQuickProtocol] = useState<'all' | 'api' | 'mcp'>('all')
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const trigger = document.querySelector<HTMLButtonElement>(
+        '.recent-requests-filter-field--request-kind .recent-requests-filter-select-trigger',
+      )
+      trigger?.click()
+    }, 120)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  const facets = useMemo(
+    () => ({
+      results: buildFacetOptions(storyLogs.map((log) => log.result_status)),
+      keyEffects: buildFacetOptions(storyLogs.map((log) => log.key_effect_code ?? 'none')),
+      bindingEffects: buildFacetOptions(storyLogs.map((log) => log.binding_effect_code ?? 'none')),
+      selectionEffects: buildFacetOptions(storyLogs.map((log) => log.selection_effect_code ?? 'none')),
+      tokens: buildFacetOptions(storyLogs.map((log) => log.auth_token_id)),
+      keys: buildFacetOptions(storyLogs.map((log) => log.key_id)),
+    }),
+    [],
+  )
+
+  return (
+    <div style={{ maxWidth: 1480, margin: '0 auto', padding: 24 }}>
+      <AdminRecentRequestsPanel
+        variant="admin"
+        language={language}
+        strings={admin}
+        title="Request Type Desktop 2x2"
+        description="Desktop proof for the shared request-type grid with quick filters on the first row and API/MCP columns below."
+        emptyLabel="No logs."
+        loadState="ready"
+        loadingLabel="Loading…"
+        logs={storyLogs}
+        requestKindOptions={[
+          ...requestKindOptions,
+          {
+            key: 'mcp:tools/list',
+            label: 'MCP | tools/list',
+            protocol_group: 'mcp',
+            billing_group: 'non_billable',
+            count: 19_349,
+          },
+          {
+            key: 'api:research-result',
+            label: 'API | research result',
+            protocol_group: 'api',
+            billing_group: 'non_billable',
+            count: 5,
+          },
+        ]}
+        requestKindQuickBilling={quickBilling}
+        requestKindQuickProtocol={quickProtocol}
+        selectedRequestKinds={requestKinds}
+        onRequestKindQuickFiltersChange={(billing, protocol) => {
+          setQuickBilling(billing)
+          setQuickProtocol(protocol)
+        }}
+        onToggleRequestKind={(key) =>
+          setRequestKinds((current) =>
+            current.includes(key) ? current.filter((value) => value !== key) : [...current, key],
+          )
+        }
+        onClearRequestKinds={() => {
+          setRequestKinds([])
+          setQuickBilling('all')
+          setQuickProtocol('all')
+        }}
+        outcomeFilter={null}
+        resultOptions={facets.results}
+        keyEffectOptions={facets.keyEffects}
+        bindingEffectOptions={facets.bindingEffects}
+        selectionEffectOptions={facets.selectionEffects}
+        onOutcomeFilterChange={() => undefined}
+        keyOptions={facets.keys}
+        selectedKeyId={null}
+        onKeyFilterChange={() => undefined}
+        showKeyColumn
+        showTokenColumn
+        perPage={20}
+        hasOlder
+        hasNewer={false}
+        paginationSummary={admin.logs.pagination.summary}
+        onNewerPage={() => undefined}
+        onOlderPage={() => undefined}
+        onPerPageChange={() => undefined}
+        formatTime={(ts) => new Date((ts ?? 0) * 1000).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US')}
+        formatTimeDetail={(ts) => new Date((ts ?? 0) * 1000).toISOString()}
+        onOpenKey={() => undefined}
+        onOpenToken={() => undefined}
+        loadLogBodies={() => Promise.resolve({ request_body: null, response_body: null })}
+      />
+    </div>
+  )
+}
+
+function RequestKindMobileDrawerShowcase(): JSX.Element {
+  const admin = useTranslate().admin
+  const { language } = useLanguage()
+  const [requestKinds, setRequestKinds] = useState<string[]>([])
+  const [quickBilling, setQuickBilling] = useState<'all' | 'billable' | 'non_billable'>('all')
+  const [quickProtocol, setQuickProtocol] = useState<'all' | 'api' | 'mcp'>('all')
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      const trigger = document.querySelector<HTMLButtonElement>(
+        '.recent-requests-filter-field--request-kind .recent-requests-filter-select-trigger',
+      )
+      trigger?.click()
+    }, 120)
+    return () => window.clearTimeout(timer)
+  }, [])
+
+  const facets = useMemo(
+    () => ({
+      results: buildFacetOptions(storyLogs.map((log) => log.result_status)),
+      keyEffects: buildFacetOptions(storyLogs.map((log) => log.key_effect_code ?? 'none')),
+      bindingEffects: buildFacetOptions(storyLogs.map((log) => log.binding_effect_code ?? 'none')),
+      selectionEffects: buildFacetOptions(storyLogs.map((log) => log.selection_effect_code ?? 'none')),
+      tokens: buildFacetOptions(storyLogs.map((log) => log.auth_token_id)),
+      keys: buildFacetOptions(storyLogs.map((log) => log.key_id)),
+    }),
+    [],
+  )
+
+  return (
+    <div style={{ maxWidth: 420, margin: '0 auto', padding: 16 }}>
+      <AdminRecentRequestsPanel
+        variant="admin"
+        language={language}
+        strings={admin}
+        title="Request Type Mobile Drawer"
+        description="Small-viewport proof for the shared request-type drawer ordering and touch targets."
+        emptyLabel="No logs."
+        loadState="ready"
+        loadingLabel="Loading…"
+        logs={storyLogs.slice(0, 3)}
+        requestKindOptions={requestKindOptions}
+        requestKindQuickBilling={quickBilling}
+        requestKindQuickProtocol={quickProtocol}
+        selectedRequestKinds={requestKinds}
+        onRequestKindQuickFiltersChange={(billing, protocol) => {
+          setQuickBilling(billing)
+          setQuickProtocol(protocol)
+        }}
+        onToggleRequestKind={(key) =>
+          setRequestKinds((current) =>
+            current.includes(key) ? current.filter((value) => value !== key) : [...current, key],
+          )
+        }
+        onClearRequestKinds={() => {
+          setRequestKinds([])
+          setQuickBilling('all')
+          setQuickProtocol('all')
+        }}
+        outcomeFilter={null}
+        resultOptions={facets.results}
+        keyEffectOptions={facets.keyEffects}
+        bindingEffectOptions={facets.bindingEffects}
+        selectionEffectOptions={facets.selectionEffects}
+        onOutcomeFilterChange={() => undefined}
+        keyOptions={facets.keys}
+        selectedKeyId={null}
+        onKeyFilterChange={() => undefined}
+        showKeyColumn
+        showTokenColumn
+        perPage={20}
+        hasOlder={false}
+        hasNewer={false}
+        paginationSummary={admin.logs.pagination.summary}
+        onNewerPage={() => undefined}
+        onOlderPage={() => undefined}
+        onPerPageChange={() => undefined}
+        formatTime={(ts) => new Date((ts ?? 0) * 1000).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US')}
+        formatTimeDetail={(ts) => new Date((ts ?? 0) * 1000).toISOString()}
+        onOpenKey={() => undefined}
+        onOpenToken={() => undefined}
+        loadLogBodies={() => Promise.resolve({ request_body: null, response_body: null })}
+      />
+    </div>
+  )
+}
+
 function CatalogLoadingShowcase(): JSX.Element {
   const admin = useTranslate().admin
   const { language } = useLanguage()
@@ -755,6 +945,69 @@ export const RebalanceMarkers: Story = {
       if (!text.includes(expected)) {
         throw new Error(`Expected rebalance marker canvas to contain: ${expected}`)
       }
+    }
+  },
+}
+
+export const RequestKindDesktopExpanded: Story = {
+  render: () => <RequestKindDesktopExpandedShowcase />,
+  globals: {
+    language: 'zh',
+    themeMode: 'dark',
+  },
+  parameters: {
+    viewport: { defaultViewport: '1440-device-desktop' },
+    docs: {
+      description: {
+        story: '桌面端 request type 浮层固定为 2x2：第一行计费/协议快捷筛选，第二行 API/MCP 分列列表。',
+      },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 260))
+    const text = canvasElement.ownerDocument.body.textContent ?? ''
+    for (const expected of ['请求类型', '清空', '计费', '协议', 'API', 'MCP', 'tools/list']) {
+      if (!text.includes(expected)) {
+        throw new Error(`Expected request kind desktop proof to contain: ${expected}`)
+      }
+    }
+  },
+}
+
+export const RequestKindMobileDrawer: Story = {
+  render: () => <RequestKindMobileDrawerShowcase />,
+  globals: {
+    language: 'zh',
+    themeMode: 'dark',
+  },
+  parameters: {
+    viewport: { defaultViewport: 'mobile1' },
+    docs: {
+      description: {
+        story: '小屏端 request type 同一触发入口打开 Drawer，内容顺序固定为标题/清空、计费、协议、API、MCP，且计费/协议保持按钮单选。',
+      },
+    },
+  },
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 260))
+    const ownerDocument = canvasElement.ownerDocument
+    const text = ownerDocument.body.textContent ?? ''
+    for (const expected of ['Request Type Mobile Drawer', '清空', '计费', '协议', 'API', 'MCP']) {
+      if (!text.includes(expected)) {
+        throw new Error(`Expected request kind mobile proof to contain: ${expected}`)
+      }
+    }
+    const drawer = ownerDocument.querySelector('.token-request-kind-panel--drawer')
+    if (!drawer) {
+      throw new Error('Expected mobile drawer request-kind panel to be present.')
+    }
+    const billingGroup = drawer.querySelector('[aria-label="计费"]')
+    const protocolGroup = drawer.querySelector('[aria-label="协议"]')
+    if (!billingGroup || !protocolGroup) {
+      throw new Error('Expected mobile quick filters to render button groups.')
+    }
+    if (drawer.querySelector('[role="combobox"]')) {
+      throw new Error('Expected mobile quick filters to avoid combobox fallback.')
     }
   },
 }

@@ -626,7 +626,11 @@ table {
   min-width: 15rem;
 }
 
-.recent-requests-filter-menu--request-kind { min-width: max(var(--radix-dropdown-menu-trigger-width, 19rem), 19rem); width: max-content; max-width: calc(100vw - 1rem); }
+.recent-requests-filter-menu--request-kind {
+  min-width: max(var(--radix-dropdown-menu-trigger-width, 19rem), 19rem);
+  width: min(46rem, calc(100vw - 1rem));
+  max-width: calc(100vw - 1rem);
+}
 
 .recent-requests-filter-menu--searchable {
   width: min(18rem, calc(100vw - 2rem));
@@ -915,6 +919,15 @@ table {
   font-size: 0.82rem;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+
+.recent-requests-request-kind-item[data-highlighted] {
+  background: hsl(var(--accent) / 0.78);
+  color: hsl(var(--accent-foreground));
+}
+
+.recent-requests-request-kind-item[data-state='checked'] {
+  background: hsl(var(--primary) / 0.14);
 }
 
 @media (max-width: 1180px) {
