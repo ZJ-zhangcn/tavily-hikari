@@ -11,6 +11,7 @@ mod tests {
     use nanoid::nanoid;
     use reqwest::Client;
     use sha2::{Digest, Sha256};
+    use sqlx::Connection;
     use sqlx::Row;
     use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
     use std::collections::HashMap;

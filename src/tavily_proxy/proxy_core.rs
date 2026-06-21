@@ -624,84 +624,94 @@ impl TavilyProxy {
         {
             return Ok(());
         }
-        let startup_started = Instant::now();
-        let restored_subscription_endpoints = {
-            let manager = self.forward_proxy.lock().await;
-            manager.restored_subscription_endpoint_count()
-        };
-        if restored_subscription_endpoints > 0 {
-            info!(
-                component = "forward_proxy",
-                event = "startup_subscription_restore",
-                restored_count = restored_subscription_endpoints,
-                "forward-proxy startup restored persisted subscription nodes; deferred refresh to maintenance"
-            );
-        } else {
-            let refresh_started = Instant::now();
-            if let Err(err) = self.refresh_forward_proxy_subscriptions_for_startup().await {
-                warn!(
+        let init_result = async {
+            let startup_started = Instant::now();
+            let restored_subscription_endpoints = {
+                let manager = self.forward_proxy.lock().await;
+                manager.restored_subscription_endpoint_count()
+            };
+            if restored_subscription_endpoints > 0 {
+                info!(
                     component = "forward_proxy",
-                    event = "startup_subscription_refresh_failed",
-                    err = %err,
-                    "forward-proxy startup subscription refresh failed"
+                    event = "startup_subscription_restore",
+                    restored_count = restored_subscription_endpoints,
+                    "forward-proxy startup restored persisted subscription nodes; deferred refresh to maintenance"
                 );
-                let restored = {
-                    let mut manager = self.forward_proxy.lock().await;
-                    manager.restore_persisted_subscription_endpoints()
-                };
-                if restored > 0 {
+            } else {
+                let refresh_started = Instant::now();
+                if let Err(err) = self.refresh_forward_proxy_subscriptions_for_startup().await {
                     warn!(
                         component = "forward_proxy",
                         event = "startup_subscription_restore_after_failure",
-                        restored_count = restored,
-                        "forward-proxy restored persisted subscription nodes after startup refresh failure"
+                        err = %err,
+                        "forward-proxy startup subscription refresh failed"
                     );
-                }
-            } else {
-                info!(
-                    component = "forward_proxy",
-                    event = "startup_subscription_refresh_succeeded",
-                    elapsed_ms = refresh_started.elapsed().as_millis() as u64,
-                    "forward-proxy startup refreshed subscriptions"
-                );
-            }
-        }
-        let xray_started = Instant::now();
-        let persist_started = Instant::now();
-        {
-            let mut manager = self.forward_proxy.lock().await;
-            let egress_socks5_url = manager.settings.effective_egress_socks5_url();
-            {
-                let mut xray = self.xray_supervisor.lock().await;
-                if let Err(_err) = xray
-                    .sync_endpoints(&mut manager.endpoints, egress_socks5_url.as_ref())
-                    .await
-                {
-                    warn!(
+                    let restored = {
+                        let mut manager = self.forward_proxy.lock().await;
+                        manager.restore_persisted_subscription_endpoints()
+                    };
+                    if restored > 0 {
+                        warn!(
+                            component = "forward_proxy",
+                            event = "startup_subscription_restore_after_failure",
+                            restored_count = restored,
+                            "forward-proxy restored persisted subscription nodes after startup refresh failure"
+                        );
+                    }
+                } else {
+                    info!(
                         component = "forward_proxy",
-                        event = "startup_xray_prewarm_failed",
-                        err = %_err,
-                        "forward-proxy startup xray prewarm failed"
+                        event = "startup_subscription_refresh_succeeded",
+                        elapsed_ms = refresh_started.elapsed().as_millis() as u64,
+                        "forward-proxy startup refreshed subscriptions"
                     );
                 }
             }
-            self.sync_forward_proxy_runtime_state(&mut manager).await?;
+            let xray_started = Instant::now();
+            let persist_started = Instant::now();
+            {
+                let mut manager = self.forward_proxy.lock().await;
+                let egress_socks5_url = manager.settings.effective_egress_socks5_url();
+                {
+                    let mut xray = self.xray_supervisor.lock().await;
+                    if let Err(_err) = xray
+                        .sync_endpoints(&mut manager.endpoints, egress_socks5_url.as_ref())
+                        .await
+                    {
+                        warn!(
+                            component = "forward_proxy",
+                            event = "startup_xray_prewarm_failed",
+                            err = %_err,
+                            "forward-proxy startup xray prewarm failed"
+                        );
+                    }
+                }
+                self.sync_forward_proxy_runtime_state(&mut manager).await?;
+            }
+            info!(
+                component = "forward_proxy",
+                event = "startup_runtime_snapshot_persisted",
+                elapsed_ms = persist_started.elapsed().as_millis() as u64,
+                "forward-proxy startup persisted xray sync and runtime snapshot"
+            );
+            let manager = self.forward_proxy.lock().await;
+            forward_proxy::sync_manager_runtime_to_store(&self.key_store, &manager).await?;
+            info!(
+                component = "forward_proxy",
+                event = "startup_runtime_store_synced",
+                phase_elapsed_ms = xray_started.elapsed().as_millis() as u64,
+                total_elapsed_ms = startup_started.elapsed().as_millis() as u64,
+                "forward-proxy startup synced runtime store"
+            );
+            Ok(())
         }
-        info!(
-            component = "forward_proxy",
-            event = "startup_runtime_snapshot_persisted",
-            elapsed_ms = persist_started.elapsed().as_millis() as u64,
-            "forward-proxy startup persisted xray sync and runtime snapshot"
-        );
-        let manager = self.forward_proxy.lock().await;
-        forward_proxy::sync_manager_runtime_to_store(&self.key_store, &manager).await?;
-        info!(
-            component = "forward_proxy",
-            event = "startup_runtime_store_synced",
-            phase_elapsed_ms = xray_started.elapsed().as_millis() as u64,
-            total_elapsed_ms = startup_started.elapsed().as_millis() as u64,
-            "forward-proxy startup synced runtime store"
-        );
+        .await;
+        if let Err(err) = init_result {
+            let _ = self.shutdown_forward_proxy_runtime().await;
+            self.forward_proxy_runtime_started
+                .store(false, Ordering::SeqCst);
+            return Err(err);
+        }
         Ok(())
     }
 
