@@ -60,6 +60,9 @@
 - Given release workflow 进入发布阶段
   When `binary-native` 与 `binary-portable` jobs 完成
   Then GitHub Release 必须同时包含 `tavily-hikari-<tag>-linux-amd64.tar.gz`、`tavily-hikari-<tag>-linux-amd64.tar.gz.sha256`、`tavily-hikari-<tag>-linux-arm64.tar.gz`、`tavily-hikari-<tag>-linux-arm64.tar.gz.sha256`、`tavily-hikari-<tag>-linux-amd64-portable.tar.gz`、`tavily-hikari-<tag>-linux-amd64-portable.tar.gz.sha256`、`tavily-hikari-<tag>-linux-arm64-portable.tar.gz`、`tavily-hikari-<tag>-linux-arm64-portable.tar.gz.sha256`。
+- Given release workflow 通过 `workflow_dispatch(head_sha=...)` 回填一个 pre-portable 迁移之前的历史提交
+  When 当前 workflow checkout 到目标源码树并检测其 release contract
+  Then portable binary job 必须被跳过，GitHub Release 继续只发布该历史提交原本支持的 native binary 资产，而不是因为当前主干 workflow 新增 portable job 而回填失败。
 - Given release workflow 需要同时构建 Docker 镜像与 binary 资产
   When `web-assets` job 成功完成
   Then `docker-native` 与 `binary-native` 必须下载同一个 `release-web-dist` artifact，而不是各自重复执行 Bun 安装与前端构建。

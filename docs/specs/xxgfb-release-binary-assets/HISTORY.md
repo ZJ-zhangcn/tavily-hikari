@@ -11,3 +11,4 @@
 - `xray` 不随主程序 binary 打包，继续由宿主环境单独安装或配置。
 - GitHub Release job 不 checkout 仓库时，`gh` CLI 必须显式指定 repository，不能依赖本地 `.git` 上下文。
 - release workflow 内部的 `web/dist` 只构建一次，再通过 release-local artifact 复用给 Docker 与 binary 矩阵，避免在发布链里重复 Bun 安装与前端构建。
+- portable 资产合同按目标源码树声明启用，而不是按“当前主干 workflow 是否支持 portable”强推到所有历史 backfill；`workflow_dispatch(head_sha=...)` 必须继续兼容 pre-portable 提交的 native-only 发布事实。

@@ -1,4 +1,5 @@
 name: Release
+# portable_release_contract=v1
 
 on:
   workflow_run:
@@ -46,6 +47,7 @@ jobs:
       reason: ${{ steps.intent.outputs.reason }}
       version: ${{ steps.tagmeta.outputs.version }}
       tag: ${{ steps.tagmeta.outputs.tag }}
+      supports_portable: ${{ steps.capabilities.outputs.supports_portable }}
     steps:
       - name: Checkout (workflow_run)
         uses: actions/checkout@v6
@@ -68,6 +70,20 @@ jobs:
           WORKFLOW_RUN_SHA: ${{ env.RELEASE_HEAD_SHA }}
         run: |
           bash ./.github/scripts/release-intent.sh
+
+      - name: Detect release asset capabilities
+        id: capabilities
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          supports_portable=false
+          if [[ -f ".github/workflows/release.yml" ]] &&
+            grep -Fq 'portable_release_contract=v1' ".github/workflows/release.yml"; then
+            supports_portable=true
+          fi
+
+          echo "supports_portable=${supports_portable}" >> "${GITHUB_OUTPUT}"
 
       - name: Determine release version/tag (idempotent)
         id: tagmeta
@@ -173,6 +189,7 @@ jobs:
             echo "- reason: ${{ steps.intent.outputs.reason }}"
             echo "- tag: ${{ steps.tagmeta.outputs.tag || '<none>' }}"
             echo "- version: ${{ steps.tagmeta.outputs.version || '<none>' }}"
+            echo "- supports_portable: ${{ steps.capabilities.outputs.supports_portable }}"
           } >> "${GITHUB_STEP_SUMMARY}"
 
   web-assets:
@@ -517,7 +534,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     needs: [prepare, web-assets]
-    if: ${{ needs.prepare.outputs.should_release == 'true' }}
+    if: ${{ needs.prepare.outputs.should_release == 'true' && needs.prepare.outputs.supports_portable == 'true' }}
     permissions:
       contents: read
     strategy:
@@ -802,7 +819,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     needs: [prepare, docker-manifest, binary-native, binary-portable]
-    if: ${{ needs.prepare.outputs.should_release == 'true' }}
+    if: >-
+      ${{
+        always() &&
+        needs.prepare.outputs.should_release == 'true' &&
+        needs.prepare.result == 'success' &&
+        needs.docker-manifest.result == 'success' &&
+        needs.binary-native.result == 'success' &&
+        (needs.binary-portable.result == 'success' || needs.binary-portable.result == 'skipped')
+      }}
     permissions:
       contents: write
       issues: write
@@ -853,6 +878,7 @@ jobs:
           RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
           RELEASE_CHANNEL: ${{ needs.prepare.outputs.release_channel }}
           RELEASE_PR_NUMBER: ${{ needs.prepare.outputs.pr_number }}
+          RELEASE_SUPPORTS_PORTABLE: ${{ needs.prepare.outputs.supports_portable }}
         with:
           script: |
             const { owner, repo } = context.repo
@@ -861,6 +887,7 @@ jobs:
             const releaseTag = process.env.RELEASE_TAG
             const releaseVersion = process.env.RELEASE_VERSION
             const releaseChannel = process.env.RELEASE_CHANNEL || '(unknown)'
+            const supportsPortable = process.env.RELEASE_SUPPORTS_PORTABLE === 'true'
             const targetSha = process.env.TARGET_SHA || '(unknown)'
             const issueNumber = Number(rawPrNumber)
 
@@ -886,11 +913,15 @@ jobs:
               `${binaryBase}-linux-amd64.tar.gz.sha256`,
               `${binaryBase}-linux-arm64.tar.gz`,
               `${binaryBase}-linux-arm64.tar.gz.sha256`,
-              `${binaryBase}-linux-amd64-portable.tar.gz`,
-              `${binaryBase}-linux-amd64-portable.tar.gz.sha256`,
-              `${binaryBase}-linux-arm64-portable.tar.gz`,
-              `${binaryBase}-linux-arm64-portable.tar.gz.sha256`,
             ]
+            if (supportsPortable) {
+              binaryAssets.push(
+                `${binaryBase}-linux-amd64-portable.tar.gz`,
+                `${binaryBase}-linux-amd64-portable.tar.gz.sha256`,
+                `${binaryBase}-linux-arm64-portable.tar.gz`,
+                `${binaryBase}-linux-arm64-portable.tar.gz.sha256`
+              )
+            }
 
             const body = [
               marker,
