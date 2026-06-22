@@ -43,6 +43,7 @@ pub use models::*;
 pub use runtime_logging::{
     LegacyStdIoLevel, RuntimeLogFormat, emit_legacy_stdio_event, init_runtime_logging,
 };
+pub use store::{HaApplyResult, HaBaselineApplySession, HaEventsApplySession, HaEventsReadSession};
 pub use tavily_proxy::*;
 
 use std::{
@@ -60,7 +61,7 @@ use std::{
 
 use bytes::Bytes;
 use chrono::{Datelike, Local, TimeZone, Utc};
-use futures_util::{StreamExt, TryStreamExt};
+use futures_util::StreamExt;
 use nanoid::nanoid;
 use rand::Rng;
 use reqwest::{

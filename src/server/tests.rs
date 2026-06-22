@@ -11,6 +11,7 @@ mod tests {
     use nanoid::nanoid;
     use reqwest::Client;
     use sha2::{Digest, Sha256};
+    use sqlx::Connection;
     use sqlx::Row;
     use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
     use std::collections::HashMap;
@@ -31,6 +32,8 @@ mod tests {
     mod admin_token_filters_and_maintenance;
     mod admin_users_and_tokens;
     mod alerts_and_ha;
+    mod alerts_and_ha_event_exports;
+    mod alerts_and_ha_serving_modes;
     mod api_keys_and_registration;
     mod core_support_and_parsing;
     mod linuxdo_oauth_and_admin_keys;

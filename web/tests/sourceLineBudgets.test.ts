@@ -18,16 +18,16 @@ const EXCEPTIONS = new Map<string, { max: number; reason: string }>([
   [
     'src/admin/AdminDashboardRuntime.tsx',
     {
-      max: 13450,
+      max: 13480,
       reason: 'Legacy admin dashboard runtime remains as a compatibility shell while HA source settings, active-user list filtering, and the admin rankings live-status wiring finish converging before a larger extraction pass.',
     },
   ],
   [
     'src/admin/storySupport/AdminPagesStoryRuntime.tsx',
     {
-      max: 7620,
+      max: 7640,
       reason:
-        'Storybook proof runtime remains centralized temporarily while active-user admin states and system-settings proof data stay on the shared Admin/Pages proof shell.',
+        'Storybook proof runtime remains centralized temporarily while active-user admin states, rankings shell proof, and system-settings proof data stay on the shared Admin/Pages proof shell.',
     },
   ],
   [
@@ -59,7 +59,7 @@ const EXCEPTIONS = new Map<string, { max: number; reason: string }>([
     {
       max: 1700,
       reason:
-        'Shared API contract coverage now includes auth-token retention settings, the user-console overview snapshot, events surface, and admin rankings endpoint until the largest runtime suites are split out.',
+        'Shared API contract coverage now includes auth-token retention settings, the user-console overview snapshot, events surface, and the expanded admin rankings endpoint until the largest runtime suites are split out.',
     },
   ],
   [
@@ -73,23 +73,23 @@ const EXCEPTIONS = new Map<string, { max: number; reason: string }>([
   [
     'src/i18n/translations/en.ts',
     {
-      max: 1562,
+      max: 1575,
       reason:
-        'Admin jobs maintenance copy, the expanded admin rankings live-status/accessibility strings, and the auth-token retention settings copy are still stored in the shared English runtime catalog.',
+        'Admin jobs maintenance copy, the expanded admin rankings grouping/dimension strings, and the auth-token retention settings copy are still stored in the shared English runtime catalog.',
     },
   ],
   [
     'src/i18n/translations/zh.ts',
     {
-      max: 1561,
+      max: 1575,
       reason:
-        'Admin jobs maintenance copy, the expanded admin rankings live-status/accessibility strings, and the auth-token retention settings copy are still stored in the shared Chinese runtime catalog.',
+        'Admin jobs maintenance copy, the expanded admin rankings grouping/dimension strings, and the auth-token retention settings copy are still stored in the shared Chinese runtime catalog.',
     },
   ],
   [
     'src/i18n/types.ts',
     {
-      max: 1637,
+      max: 1650,
       reason:
         'HA source settings mode-specific failure copy, admin jobs maintenance strings, the expanded admin rankings contract, and auth-token retention settings copy remain in the shared catalog contract.',
     },

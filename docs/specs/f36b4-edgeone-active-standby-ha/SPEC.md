@@ -39,12 +39,21 @@ Tavily Hikari 的高可用方案采用单活主备热备，而不是一主多从
 - standby 每 5-15 秒从 active 拉取状态基线或 outbox 增量事件，目标 RPO `<=15s`。
 - 禁止通过 HA 同步传输全量 SQLite 数据库文件。
 - 状态基线与事件流使用 versioned zstd NDJSON，基线压缩后上限 `64MiB`，事件批次压缩后上限 `4MiB`。
+- HA baseline/export/import 必须保持有界内存：active 侧不得整批 materialize 单个 channel
+  的全量 NDJSON 再整体压缩；standby 侧不得先 `response.bytes()`、`decode_all()`、整块
+  UTF-8，再统一收集成 `Vec` 后一次 apply。可接受实现是逐行生成、逐行压缩、逐行解压和
+  单事务增量 apply。
+- `billing_ledger` 等大表必须复用同一条流式 baseline 导出路径，避免 active 重复导出时出现
+  持续抬升的 GiB 级内存峰值。
 - HA wire contract 按三个正式 channel 拆分：`control`、`billing`、`runtime`。每个 channel 独立导出 baseline、独立拉取 events、独立记录 peer watermark，不支持 mixed-version HA。
 - `control` 只同步控制面小状态，事件流写入 `ha_outbox`，保留窗口为 72 小时；超过窗口必须重新拉取该 channel 的状态基线。
 - `billing` 只同步 `billing_ledger` 完整账本行历史，事件流写入 `ha_billing_outbox`，不再通过 `ha_outbox` 复制账本。
 - `runtime` 只同步 failover 后若不恢复就会影响基础 API/MCP 正确性的最小运行态，事件流写入 `ha_runtime_outbox`。允许的最小运行态包括 quota 当前状态与 bucket、token/account 月额度、MCP 当前会话必要状态、forward proxy 亲和与节点 override、以及主/次 API key affinity。
 - `control`/`billing`/`runtime` 三个 channel 的 baseline 和 events 都禁止包含 `request_logs`、`auth_token_logs`、请求体、响应体、path/query/IP/header 明细、dashboard recent logs、OAuth login 临时态、Web session、forward proxy runtime/attempts/hourly weight、维护审计、调度队列、请求限流快照和节点本地观测噪声。
 - `HA_MODE=single` 下不得产生新的 HA 事件写入；仅保留 schema 兼容、显式 one-shot 维护工具与后续切回 `active_standby` 的启动能力。
+- `standby` / `recovery` 启动时不得预热 forward-proxy runtime 或共享 `xray` 子进程；只有
+  角色恢复到允许业务流量的状态后，才允许按需拉起业务 runtime。对应地，standby/recovery
+  的 `/health` 不得因为 `xray` 未就绪而失败。
 - recovery 只允许导入幂等账本事件，不导入调用记录，不覆盖新主当前权威状态。
 - recovery 完成后 quota 与 usage 聚合必须可继续滚动更新。
 

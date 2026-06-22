@@ -1431,6 +1431,7 @@ pub struct UserRankingRow {
 pub struct UserRankingWindow {
     pub primary_success_top: Vec<UserRankingRow>,
     pub business_credits_top: Vec<UserRankingRow>,
+    pub unique_ip_top: Vec<UserRankingRow>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

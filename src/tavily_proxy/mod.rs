@@ -8,7 +8,7 @@ use sqlx::Row;
 use std::collections::VecDeque;
 use std::sync::{
     OnceLock,
-    atomic::{AtomicI64, Ordering},
+    atomic::{AtomicBool, AtomicI64, Ordering},
 };
 
 #[derive(Clone, Debug)]
@@ -468,6 +468,8 @@ pub struct TavilyProxy {
     pub(crate) mcp_session_init_locks: Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>,
     pub(crate) mcp_session_request_locks: Arc<Mutex<HashMap<String, Weak<Mutex<()>>>>>,
     pub(crate) low_quota_depletion_threshold: i64,
+    pub(crate) forward_proxy_runtime_started: Arc<AtomicBool>,
+    pub(crate) forward_proxy_runtime_transition_lock: Arc<Mutex<()>>,
     health_readiness_grace_until: tokio::time::Instant,
     pub(crate) backend_time: BackendTime,
 }

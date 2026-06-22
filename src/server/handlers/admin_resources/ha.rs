@@ -41,14 +41,8 @@ struct HaEventsAckRequest {
     acked_seq: i64,
 }
 
-#[derive(Debug)]
-struct HaEventResponseItem {
-    seq: i64,
-    value: Value,
-}
-
-const HA_BASELINE_MAX_COMPRESSED_BYTES: usize = 64 * 1024 * 1024;
 const HA_EVENTS_MAX_COMPRESSED_BYTES: usize = 4 * 1024 * 1024;
+const HA_BASELINE_MAX_COMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
 
 fn parse_ha_channel(raw: Option<&str>) -> Result<tavily_hikari::HaSyncChannel, (StatusCode, String)> {
     let Some(value) = raw else {
@@ -225,22 +219,187 @@ async fn get_admin_ha_baseline(
         ));
     }
     let channel = parse_ha_channel(query.channel.as_deref())?;
-    let export = state
-        .proxy
-        .export_ha_baseline_ndjson(channel, &status.node_id)
-        .await
-        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-    let compressed = encode_zstd_limited(&export.ndjson, HA_BASELINE_MAX_COMPRESSED_BYTES)?;
+    let baseline = build_ha_baseline_reader(&state.proxy, channel, &status.node_id).await?;
     Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "application/x-ndjson")
         .header("content-encoding", "zstd")
         .header("x-ha-schema-version", "2")
         .header("x-ha-channel", channel.as_str())
-        .header("x-ha-high-watermark", export.high_watermark.to_string())
-        .header("x-ha-row-count", export.row_count.to_string())
-        .body(Body::from(compressed))
+        .header(
+            "x-ha-high-watermark",
+            baseline.export.high_watermark.to_string(),
+        )
+        .header("x-ha-row-count", baseline.export.row_count.to_string())
+        .body(Body::from_stream(ReaderStream::new(baseline.reader)))
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
+}
+
+struct HaBaselineReader {
+    reader: tokio::fs::File,
+    export: tavily_hikari::HaApplyResult,
+}
+
+struct HaEventsReader {
+    reader: tokio::fs::File,
+    export: tavily_hikari::HaApplyResult,
+}
+
+fn create_ha_temp_output_file() -> Result<tokio::fs::File, (StatusCode, String)> {
+    tempfile::tempfile()
+        .map(tokio::fs::File::from_std)
+        .map_err(internal_error)
+}
+
+async fn rewind_ha_temp_output_file(
+    file: &mut tokio::fs::File,
+) -> Result<(), (StatusCode, String)> {
+    tokio::io::AsyncSeekExt::seek(file, std::io::SeekFrom::Start(0))
+        .await
+        .map(|_| ())
+        .map_err(internal_error)
+}
+
+async fn build_ha_baseline_reader(
+    proxy: &TavilyProxy,
+    channel: tavily_hikari::HaSyncChannel,
+    node_id: &str,
+) -> Result<HaBaselineReader, (StatusCode, String)> {
+    #[cfg(test)]
+    if std::env::var("TAVILY_TEST_FAIL_HA_BASELINE_EXPORT")
+        .ok()
+        .as_deref()
+        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case(channel.as_str()))
+    {
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "forced HA baseline export failure".to_string(),
+        ));
+    }
+    let mut preflight = proxy
+        .begin_ha_baseline_read(channel)
+        .await
+        .map_err(internal_error)?;
+    let export = preflight.export_info().await.map_err(internal_error)?;
+    let mut reader = create_ha_temp_output_file()?;
+    let encode_result = {
+        let mut encoder =
+            ZstdEncoder::with_quality(&mut reader, async_compression::Level::Precise(3));
+        let export_result = preflight
+            .write_ndjson(
+                node_id,
+                export.high_watermark,
+                export.row_count,
+                &mut encoder,
+            )
+            .await
+            .map_err(internal_error);
+        match export_result {
+            Ok(()) => encoder.shutdown().await.map_err(internal_error),
+            Err(err) => Err(err),
+        }
+    };
+    let close_result = preflight.close().await.map_err(internal_error);
+    encode_result?;
+    close_result?;
+    let compressed_bytes = reader.metadata().await.map_err(internal_error)?.len();
+    if compressed_bytes > ha_baseline_max_compressed_bytes() {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!(
+                "HA payload exceeds compressed limit: {compressed_bytes} > {}",
+                ha_baseline_max_compressed_bytes()
+            ),
+        ));
+    }
+    rewind_ha_temp_output_file(&mut reader).await?;
+    Ok(HaBaselineReader { reader, export })
+}
+
+async fn build_ha_events_reader(
+    proxy: &TavilyProxy,
+    channel: tavily_hikari::HaSyncChannel,
+    after: i64,
+    limit: i64,
+) -> Result<HaEventsReader, (StatusCode, String)> {
+    let max_compressed_bytes = ha_events_max_compressed_bytes();
+    let mut preflight = proxy.begin_ha_events_read(channel).await.map_err(map_ha_export_error)?;
+    let available = preflight
+        .available_event_count(after, limit)
+        .await
+        .map_err(map_ha_export_error)?;
+    let mut event_count = available;
+    loop {
+        let mut reader = create_ha_temp_output_file()?;
+        let export_result = {
+            let mut encoder =
+                ZstdEncoder::with_quality(&mut reader, async_compression::Level::Precise(3));
+            match preflight.write_ndjson(after, limit, event_count, &mut encoder).await {
+                Ok(export) => match encoder.shutdown().await.map_err(internal_error) {
+                    Ok(()) => Ok(export),
+                    Err(err) => Err(err),
+                },
+                Err(err) => Err(map_ha_export_error(err)),
+            }
+        };
+        let export = match export_result {
+            Ok(export) => export,
+            Err(err) => {
+                let close_result = preflight.close().await.map_err(internal_error);
+                close_result?;
+                return Err(err);
+            }
+        };
+        let compressed_bytes = reader.metadata().await.map_err(internal_error)?.len();
+        if compressed_bytes <= max_compressed_bytes {
+            preflight.close().await.map_err(internal_error)?;
+            rewind_ha_temp_output_file(&mut reader).await?;
+            return Ok(HaEventsReader { reader, export });
+        }
+        if event_count <= 1 {
+            preflight.close().await.map_err(internal_error)?;
+            return Err((
+                StatusCode::PAYLOAD_TOO_LARGE,
+                format!(
+                    "HA events payload exceeds compressed limit: {compressed_bytes} > {max_compressed_bytes}"
+                ),
+            ));
+        }
+        event_count = event_count.div_ceil(2);
+    }
+}
+
+fn internal_error(err: impl std::fmt::Display) -> (StatusCode, String) {
+    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+}
+
+fn map_ha_export_error(err: impl std::fmt::Display) -> (StatusCode, String) {
+    let message = err.to_string();
+    if message.contains("retention window") {
+        (StatusCode::GONE, message)
+    } else {
+        (StatusCode::INTERNAL_SERVER_ERROR, message)
+    }
+}
+
+fn ha_baseline_max_compressed_bytes() -> u64 {
+    #[cfg(test)]
+    if let Ok(value) = std::env::var("TAVILY_TEST_HA_BASELINE_MAX_COMPRESSED_BYTES")
+        && let Ok(parsed) = value.parse::<u64>()
+    {
+        return parsed;
+    }
+    HA_BASELINE_MAX_COMPRESSED_BYTES
+}
+
+fn ha_events_max_compressed_bytes() -> u64 {
+    #[cfg(test)]
+    if let Ok(value) = std::env::var("TAVILY_TEST_HA_EVENTS_MAX_COMPRESSED_BYTES")
+        && let Ok(parsed) = value.parse::<u64>()
+    {
+        return parsed;
+    }
+    HA_EVENTS_MAX_COMPRESSED_BYTES as u64
 }
 
 async fn get_admin_ha_events(
@@ -264,124 +423,17 @@ async fn get_admin_ha_events(
     let channel = parse_ha_channel(query.channel.as_deref())?;
     let after = query.after.unwrap_or(0).max(0);
     let limit = query.limit.unwrap_or(100).clamp(1, 1000);
-    let events = state
-        .proxy
-        .list_ha_events_after(channel, after, limit)
-        .await
-        .map_err(|err| {
-            let message = err.to_string();
-            if message.contains("retention window") {
-                (StatusCode::GONE, message)
-            } else {
-                (StatusCode::INTERNAL_SERVER_ERROR, message)
-            }
-        })?;
-    let event_items = events
-        .iter()
-        .map(|event| HaEventResponseItem {
-            seq: event.seq,
-            value: json!({
-                "schemaVersion": 2,
-                "kind": "event",
-                "channel": channel,
-                "event": event
-            }),
-        })
-        .collect::<Vec<_>>();
-    let encoded =
-        encode_ha_events_limited(channel, after, limit, &event_items, HA_EVENTS_MAX_COMPRESSED_BYTES)?;
+    let events = build_ha_events_reader(&state.proxy, channel, after, limit).await?;
     Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "application/x-ndjson")
         .header("content-encoding", "zstd")
         .header("x-ha-schema-version", "2")
         .header("x-ha-channel", channel.as_str())
-        .header("x-ha-last-seq", encoded.last_seq.to_string())
-        .header("x-ha-event-count", encoded.event_count.to_string())
-        .body(Body::from(encoded.compressed))
+        .header("x-ha-last-seq", events.export.high_watermark.to_string())
+        .header("x-ha-event-count", events.export.row_count.to_string())
+        .body(Body::from_stream(ReaderStream::new(events.reader)))
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
-}
-
-struct EncodedHaEvents {
-    compressed: Vec<u8>,
-    last_seq: i64,
-    event_count: usize,
-}
-
-fn encode_ha_events_limited(
-    channel: tavily_hikari::HaSyncChannel,
-    after: i64,
-    limit: i64,
-    events: &[HaEventResponseItem],
-    max_compressed_bytes: usize,
-) -> Result<EncodedHaEvents, (StatusCode, String)> {
-    let mut event_count = events.len();
-    loop {
-        let selected = &events[..event_count];
-        let mut ndjson = String::new();
-        let mut last_seq = after;
-        append_ha_events_ndjson(&mut ndjson, channel, after, limit, selected, &mut last_seq)?;
-        let compressed = zstd::stream::encode_all(ndjson.as_bytes(), 3)
-            .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-        if compressed.len() <= max_compressed_bytes {
-            return Ok(EncodedHaEvents {
-                compressed,
-                last_seq,
-                event_count,
-            });
-        }
-        if event_count <= 1 {
-            return Err((
-                StatusCode::PAYLOAD_TOO_LARGE,
-                format!(
-                    "HA events payload exceeds compressed limit: {} > {max_compressed_bytes}",
-                    compressed.len()
-                ),
-            ));
-        }
-        event_count = event_count.div_ceil(2);
-    }
-}
-
-fn append_ha_events_ndjson(
-    ndjson: &mut String,
-    channel: tavily_hikari::HaSyncChannel,
-    after: i64,
-    limit: i64,
-    events: &[HaEventResponseItem],
-    last_seq: &mut i64,
-) -> Result<(), (StatusCode, String)> {
-    ndjson.push_str(
-        &serde_json::to_string(&json!({
-            "schemaVersion": 2,
-            "kind": "events_start",
-            "channel": channel,
-            "after": after,
-            "limit": limit
-        }))
-        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?,
-    );
-    ndjson.push('\n');
-    for event in events {
-        *last_seq = event.seq;
-        ndjson.push_str(
-            &serde_json::to_string(&event.value)
-                .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?,
-        );
-        ndjson.push('\n');
-    }
-    ndjson.push_str(
-        &serde_json::to_string(&json!({
-            "schemaVersion": 2,
-            "kind": "events_end",
-            "channel": channel,
-            "lastSeq": *last_seq,
-            "eventCount": events.len()
-        }))
-        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?,
-    );
-    ndjson.push('\n');
-    Ok(())
 }
 
 async fn post_admin_ha_events_ack(
@@ -406,21 +458,6 @@ async fn post_admin_ha_events_ack(
     })))
 }
 
-fn encode_zstd_limited(value: &str, limit: usize) -> Result<Vec<u8>, (StatusCode, String)> {
-    let compressed = zstd::stream::encode_all(value.as_bytes(), 3)
-        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-    if compressed.len() > limit {
-        return Err((
-            StatusCode::PAYLOAD_TOO_LARGE,
-            format!(
-                "HA payload exceeds compressed limit: {} > {limit}",
-                compressed.len()
-            ),
-        ));
-    }
-    Ok(compressed)
-}
-
 async fn get_public_ha_status(
     State(state): State<Arc<AppState>>,
 ) -> Result<Json<tavily_hikari::HaStatusView>, (StatusCode, String)> {
@@ -443,39 +480,47 @@ async fn post_admin_ha_promote(
         .promote_self_to_provisional_with_audit(payload.force.unwrap_or(false))
         .await;
     let (status, audit_entries) = result.map_err(|err| (StatusCode::CONFLICT, err))?;
+    sync_forward_proxy_runtime_for_role(state.proxy.clone(), status.role)
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    let node_id = status.node_id.clone();
+    let edgeone_origin = status.edgeone_origin.clone();
+    let source_effective = status.ha_source_effective.clone();
+    let message = status.message.clone();
     let operation = tavily_hikari::HaFailoverOperationRecord {
         operation_id: format!(
             "promote-{}-{}",
-            status.node_id,
+            node_id,
             state.proxy.backend_time().now_ts()
         ),
         operation_kind: "promote".to_string(),
-        target_node_id: Some(status.node_id.clone()),
+        target_node_id: Some(node_id.clone()),
         from_origin: before.edgeone_origin,
         to_origin: status.edgeone_current_target.clone(),
         status: "provisional_master".to_string(),
-        message: status.message.clone(),
+        message: message.clone(),
     };
     state
         .proxy
         .insert_ha_failover_operation(&operation)
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-    async {
-        state
-            .proxy
-            .persist_ha_node_state(
-                &status.node_id,
-                status.role,
-                status.edgeone_origin.as_deref(),
-                status.ha_source_effective.as_ref(),
-                status.message.as_deref(),
-            )
-            .await?;
-        state.proxy.flush_ha_state_writes().await
-    }
-    .await
-    .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    state
+        .proxy
+        .persist_ha_node_state(
+            &node_id,
+            status.role,
+            edgeone_origin.as_deref(),
+            source_effective.as_ref(),
+            message.as_deref(),
+        )
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    state
+        .proxy
+        .flush_ha_state_writes()
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     for (idx, entry) in audit_entries.iter().enumerate() {
         state
             .proxy
@@ -509,21 +554,29 @@ async fn post_admin_ha_finalize(
         .finalize_failover()
         .await
         .map_err(|err| (StatusCode::CONFLICT, err))?;
-    async {
-        state
-            .proxy
-            .persist_ha_node_state(
-                &status.node_id,
-                status.role,
-                status.edgeone_origin.as_deref(),
-                status.ha_source_effective.as_ref(),
-                status.message.as_deref(),
-            )
-            .await?;
-        state.proxy.flush_ha_state_writes().await
-    }
-    .await
-    .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    sync_forward_proxy_runtime_for_role(state.proxy.clone(), status.role)
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    let node_id = status.node_id.clone();
+    let edgeone_origin = status.edgeone_origin.clone();
+    let source_effective = status.ha_source_effective.clone();
+    let message = status.message.clone();
+    state
+        .proxy
+        .persist_ha_node_state(
+            &node_id,
+            status.role,
+            edgeone_origin.as_deref(),
+            source_effective.as_ref(),
+            message.as_deref(),
+        )
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    state
+        .proxy
+        .flush_ha_state_writes()
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     Ok(Json(status))
 }
 

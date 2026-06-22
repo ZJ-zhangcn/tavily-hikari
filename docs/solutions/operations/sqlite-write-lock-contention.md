@@ -115,6 +115,11 @@ brief contention visible as HTTP 500s or failed background bookkeeping.
   that caused `billing_ledger` and runtime quota tables to bloat `ha_outbox` even in effectively
   single-node production. Keep HA channels explicit: `control` small-state, `billing` dedicated
   ledger truth, and `runtime` minimal correctness state.
+- Do not stop at splitting HA channels if the replication path still materializes a whole baseline
+  or whole event batch in memory. In this service the next failure mode after channel split was a
+  billing baseline path that still built one giant NDJSON string on the active node and one giant
+  decompressed blob on the standby node. The reusable rule is: state-replication paths must stream
+  rows/events end-to-end and apply incrementally within a bounded transaction.
 - Keep `HA_MODE=single` truly silent for HA replication writes. Leaving replication triggers enabled
   on a single live node creates unbounded local-only backlog with no standby consumer.
 - Treat large retained HA event cleanup like request-log cleanup: bounded online GC for freshness,
