@@ -900,7 +900,7 @@ impl KeyStore {
         let init_result = async {
             insert_ha_outbox_suppression_on_conn(&mut conn).await?;
             for table in ha_baseline_tables(channel) {
-                if self.table_exists(table).await? {
+                if Self::table_exists_on_conn(&mut conn, table).await? {
                     let sql = if *table == "meta" {
                         format!(
                             "DELETE FROM {} WHERE key IN ({})",
