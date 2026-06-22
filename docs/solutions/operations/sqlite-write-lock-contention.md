@@ -111,6 +111,23 @@ brief contention visible as HTTP 500s or failed background bookkeeping.
   rebuildable/eventually consistent views rather than HA-trigger-replicated truth. SQLite attached
   database triggers cannot safely write back into `main`, so the HA outbox should stay focused on
   core control-plane and billing truth tables.
+- Do not reuse one HA whitelist for both baseline export and change-event triggers. In this codebase
+  that caused `billing_ledger` and runtime quota tables to bloat `ha_outbox` even in effectively
+  single-node production. Keep HA channels explicit: `control` small-state, `billing` dedicated
+  ledger truth, and `runtime` minimal correctness state.
+- Keep `HA_MODE=single` truly silent for HA replication writes. Leaving replication triggers enabled
+  on a single live node creates unbounded local-only backlog with no standby consumer.
+- Treat large retained HA event cleanup like request-log cleanup: bounded online GC for freshness,
+  explicit offline one-shot cleanup for backlog removal, and optional later compaction only when
+  reclaimable bytes justify it.
+- For upgraded HA databases, treat trigger repair as a separate first-class maintenance step.
+  If legacy `trg_ha_outbox_*` triggers from the old single-channel era remain in `sqlite_master`,
+  online GC will never catch up because the live node keeps appending fresh non-control noise into
+  `ha_outbox`. Repair the trigger set first, then start backlog cleanup.
+- When offline maintenance proof depends on a production-derived SQLite copy, define the input as a
+  full DB set instead of a single file. In this service that means the core DB plus the
+  observability sibling sidecar; copying only `tavily_proxy.db` would miss the attached
+  request-log/read-model layout that production actually serves.
 - Once observability tables move into a sidecar, test helpers and admin/read paths must become
   sidecar-aware too. Unqualified schema probes or direct core-only SQLite opens can silently stop
   covering `request_logs` even though production still reads that table through the attached
@@ -149,12 +166,38 @@ brief contention visible as HTTP 500s or failed background bookkeeping.
 - Provide the same offline path for compaction. Manual HTTP trigger endpoints are still useful, but
   operators need a `db_compaction_once`-style bypass for maintenance windows when the online job
   gate is busy.
+- For HA maintenance windows, the safe order is `ha_trigger_repair_once` (or
+  `ha_outbox_cleanup_once --repair-triggers`) first, `ha_outbox_cleanup_once` second, and
+  `db_compaction_once` optional third. Reversing that order can leave the live node still writing
+  invalid backlog, or vacuum retained dead rows too early and waste I/O without reclaiming the real
+  problem.
+- If the live system stores the main DB and observability data in sibling SQLite files, export the
+  offline validation input with SQLite `.backup` per file and carry forward SHA-256 plus
+  `PRAGMA integrity_check` evidence for each member of the set.
+- For hot WAL-mode production databases, prefer a single-step backup for offline export instead of
+  small incremental page loops. SQLite's incremental backup API can restart when the live source is
+  modified underneath it; on a busy writer this can turn a snapshot export into an apparent
+  livelock. Use page-level progress reporting for observability, but default the real export path
+  to one single-step copy.
+- If the snapshot export path stages large temporary backup files on the source host, treat cleanup
+  of those staging directories as part of the same maintenance runbook. A successful upload to the
+  shared testbox is not the end of the flow if tens of GiB remain under a temporary source path.
+- Treat disk hygiene as an explicit post-maintenance step. Remove orphaned one-off snapshot
+  directories, stale gzip/sqlite artifacts, and dangling images once the new release is verified, or
+  the next “database is too large” incident can be self-inflicted by leftover maintenance inputs
+  rather than live product data.
 - Avoid high-resource retention catch-up tactics such as rebuilding large log tables or producing a
   large WAL. If the backlog is very large, run repeated bounded cleanup windows and verify progress
   with row counts and resource telemetry.
 - Keep startup backfills cheap and no-op aware. Large production SQLite files make repeated per-user
   repair loops expensive even when every row is already correct; use an indexed precheck in the
   readiness path and move periodic refresh work to a background scheduler.
+- For `billing_ledger` startup truth repair specifically, persist a high-watermark marker and let
+  the readiness path prove “no gap / no drift” before invoking a whole-ledger reconcile. The first
+  upgraded boot may still need one repair, but steady-state restarts should only pay the precheck.
+- If an owner-facing read depends on coalesced rollups, prefer a freshness-gated flush over an
+  unconditional flush. This keeps near-real-time semantics without turning every public/admin read
+  into a write barrier under SQLite's single-writer budget.
 - Do not let lock-contention tests depend on real wall-clock sleep just to cross a retry window or a
   one-second timestamp boundary. Prefer deterministic state shaping or a controlled time seam so the
   test still exercises the production retry logic without paying real-time cost.
@@ -178,6 +221,15 @@ brief contention visible as HTTP 500s or failed background bookkeeping.
   a separate maintenance-window decision after retention cleanup has completed.
 - Automatic compaction should be threshold-gated and cooldown-limited. Triggering it on every GC
   pass can turn a cleanup backlog into a new writer-pressure loop.
+- Do not treat a large main SQLite file as proof that the main DB alone is the whole persistence
+  surface. In this project the observability sibling sidecar is part of the production-shaped input,
+  while `ha_outbox` and other retained rows can make the core file look “unreasonably large” until
+  retention cleanup and optional compaction are completed in the right order.
+- A successful cleanup proof does not guarantee that offline compaction can run on every shared
+  validation host. `VACUUM` still needs enough free filesystem headroom for the rewritten database.
+  When cleanup shows multi-GiB reclaimable space but the shared validation host has only a few GiB
+  left, record that as an environment-capacity blocker and reserve the actual compaction for a real
+  maintenance window with adequate free space.
 - Stale `scheduled_jobs.running` rows from a previous process lifetime are still an operational
   restart concern. Claim-time stale abandonment should cover fresh quota-sync wedges, but the
   broader maintenance queue should abandon every leftover `queued`/`running` row on startup instead
@@ -193,6 +245,9 @@ brief contention visible as HTTP 500s or failed background bookkeeping.
 
 - `src/store/mod.rs`
 - `src/bin/request_logs_gc_once.rs`
+- `src/bin/ha_outbox_cleanup_once.rs`
+- `scripts/export-live-db-snapshot-to-testbox.sh`
+- `src/store/key_store_bootstrap.rs`
 - `src/store/key_store_users_and_oauth.rs`
 - `src/store/key_store_request_logs_and_dashboard.rs`
 - `src/tavily_proxy/proxy_auth_and_oauth.rs`

@@ -63,6 +63,23 @@ reads:
 - Replace repeated window scans with a single bounded scan that derives all needed windows, then add
   a short manager-scoped TTL cache when settings and live stats can request the same window set in
   one admin refresh cycle.
+- Collapse `/api/dashboard/overview` and admin SSE `snapshot` onto one freshness-aware shared
+  snapshot loader. Reuse the same materialized overview within one refresh wave, but invalidate it
+  immediately when summary totals, request-log signature, exhausted-key subset, disabled-token
+  coverage, recent jobs, recent alerts, forward-proxy counts, quota-sync freshness, or current-hour
+  anchor changes.
+- For public metrics or SSE surfaces backed by request-stat rollups, gate synchronous flushes on
+  persisted freshness plus the oldest pending coalesced write. Do not force a flush on every public
+  read once the rollup window is already current enough.
+- Move alert events/groups/recent summary/catalog to SQL-side pagination and aggregation. Pulling
+  all matching alert events into Rust and then sorting, grouping, or paginating in memory does not
+  survive a retained `auth_token_logs` window.
+- Canonicalize alert `request_kind` inside the SQL projection before filtering or grouping rows.
+  Mixed legacy keys such as `tavily_search` / `mcp_search` otherwise drift from the canonical
+  request-kind keys returned by the HTTP contract and can make filtered pages appear empty.
+- Prefer `auth_token_logs`-native fields and narrow joins on alert reads. If a path only needs
+  request kind, failure class, token, or mirrored API-key metadata, do not widen it with a
+  `LEFT JOIN request_logs` just to re-derive fields already stored on the alert-side truth table.
 - For per-user IP statistics over `request_logs`, force the user/IP/time index on count, sample, and
   timeline reads. On large databases SQLite can prefer the visibility/time index for
   `visibility + created_at` predicates and then build temporary B-trees for `GROUP BY`,
@@ -72,6 +89,34 @@ reads:
   details. If a query is bounded by a small user set but SQLite chooses a broad time/visibility
   index, reshape it or use `INDEXED BY` so it seeks by user first instead of scanning the full
   retained window.
+
+## 101 readback
+
+- Current production stack resolution on machine 101 is unambiguous:
+  - stack root: `/home/ivan/srv/ai`
+  - compose file: `/home/ivan/srv/ai/docker-compose.yml`
+  - container: `tavily-hikari`
+  - persistent volume: `ai-tavily-hikari-data`
+  - database paths inside the container:
+    - `/srv/app/data/tavily_proxy.db`
+    - `/srv/app/data/tavily_proxy-observability.db`
+- Read-only inspection on 2026-06-21 showed the container healthy but the data files already large
+  enough to amplify wide scans:
+  - `tavily_proxy.db`: about `3.4G`
+  - `tavily_proxy-observability.db`: about `408M`
+  - `tavily_proxy.db-wal`: about `724M`
+- A controlled in-container admin-style request to
+  `http://127.0.0.1:8787/api/dashboard/overview` with the production forward-auth headers still
+  took about `4.70s` on 2026-06-21.
+- Recent production logs from the same container still show overview-adjacent SQLite pressure, for
+  example:
+  - a retained-window aggregate over `observability.request_logs` logged at about `925ms`
+  - a write into `observability.request_logs` logged at about `938ms`
+  - a follow-up `SELECT request_kind_key, ... FROM request_logs WHERE id = ?` logged at about
+    `1.03s`
+- Treat this as the anti-pattern signature: if overview freshness, snapshot polling, or month-series
+  reads keep touching `observability.request_logs` outside a minute-tail fallback, the read path
+  will contend with live writes and grow with retained history.
 
 ## Guardrails / Reuse Notes
 
@@ -88,6 +133,9 @@ reads:
 - Add query-plan regression tests for admin read hot paths when the fix depends on SQLite choosing a
   specific index. Local small databases may return quickly even when the planner would be disastrous
   on production data volume.
+- When admin and public read paths share one rollup family, keep one freshness contract. Letting
+  HTTP and SSE each invent separate “maybe flush” logic is an easy way to reintroduce duplicate
+  scans and inconsistent first-paint latency.
 - `COUNT(DISTINCT ...)` over request logs is especially prone to temp B-trees; keep its input
   cardinality small with user-first filtering and avoid running it over all visible rows in a recent
   time window for every admin refresh.
@@ -99,4 +147,5 @@ reads:
 - `src/store/key_store_request_logs_and_dashboard.rs`
 - `src/store/key_store_token_logs.rs`
 - `src/store/key_store_keys.rs`
+- `src/store/key_store_alerts.rs`
 - `src/forward_proxy/storage.rs`

@@ -16,6 +16,8 @@ describe('AdminRecentRequestsPanel Storybook proofs', () => {
     expect(panelStories.CatalogLoading).toMatchObject({})
     expect(panelStories.EmptyState).toMatchObject({})
     expect(panelStories.ErrorState).toMatchObject({})
+    expect(panelStories.RequestKindDesktopExpanded).toMatchObject({})
+    expect(panelStories.RequestKindMobileDrawer).toMatchObject({})
   })
 
   it('renders the catalog loading story with the retention-safe fallback copy', () => {
@@ -54,5 +56,29 @@ describe('AdminRecentRequestsPanel Storybook proofs', () => {
     expect(markup).toContain('API Rebalance 路由')
     expect(markup).not.toContain('绑定已更新')
     expect(markup).not.toContain('选路已更新')
+  })
+
+  it('renders the desktop request-kind proof with the 2x2 filter structure copy', () => {
+    const renderStory = panelStories.RequestKindDesktopExpanded.render as (() => JSX.Element) | undefined
+    expect(renderStory).toBeDefined()
+
+    const markup = renderToStaticMarkup(
+      createElement(
+        LanguageProvider,
+        { initialLanguage: 'zh' },
+        createElement(ThemeProvider, null, createElement(TooltipProvider, null, createElement(renderStory!))),
+      ),
+    )
+
+    expect(markup).toContain('Request Type Desktop 2x2')
+    expect(markup).toContain('请求类型')
+    expect(markup).toContain('Desktop proof for the shared request-type grid')
+    expect(markup).toContain('API | search')
+    expect(markup).toContain('MCP | notifications/initialized')
+  })
+
+  it('keeps the mobile drawer proof available for button-style quick filters', () => {
+    const renderStory = panelStories.RequestKindMobileDrawer.render as (() => JSX.Element) | undefined
+    expect(renderStory).toBeDefined()
   })
 })

@@ -211,6 +211,12 @@ impl KeyStore {
         if !self.main_table_exists("billing_ledger").await? {
             return Ok(());
         }
+        let has_updated_at = self.table_column_exists("billing_ledger", "updated_at").await?;
+        let updated_at_select_expr = if has_updated_at {
+            "updated_at"
+        } else {
+            "created_at"
+        };
 
         let mut conn = self.pool.acquire().await?;
         sqlx::query("PRAGMA foreign_keys = OFF")
@@ -234,15 +240,15 @@ impl KeyStore {
                     request_log_id INTEGER,
                     result_status TEXT NOT NULL,
                     created_at INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
                     settled_at INTEGER,
-                    error_message TEXT,
-                    FOREIGN KEY (auth_token_log_id) REFERENCES auth_token_logs(id) ON DELETE CASCADE
+                    error_message TEXT
                 )
                 "#,
             )
             .execute(&mut *conn)
             .await?;
-            sqlx::query(
+            let copy_sql = format!(
                 r#"
                 INSERT INTO billing_ledger_new (
                     auth_token_log_id,
@@ -255,6 +261,7 @@ impl KeyStore {
                     request_log_id,
                     result_status,
                     created_at,
+                    updated_at,
                     settled_at,
                     error_message
                 )
@@ -269,13 +276,13 @@ impl KeyStore {
                     request_log_id,
                     result_status,
                     created_at,
+                    {updated_at_select_expr},
                     settled_at,
                     error_message
                 FROM billing_ledger
-                "#,
-            )
-            .execute(&mut *conn)
-            .await?;
+                "#
+            );
+            sqlx::query(&copy_sql).execute(&mut *conn).await?;
             sqlx::query("DROP TABLE billing_ledger")
                 .execute(&mut *conn)
                 .await?;
@@ -296,6 +303,105 @@ impl KeyStore {
         rebuild_result?;
         reenable?;
         self.ensure_billing_ledger_indexes().await?;
+        Ok(())
+    }
+
+    async fn ensure_billing_ledger_ha_shape(&self) -> Result<(), ProxyError> {
+        let missing_updated_at = self.main_table_exists("billing_ledger").await?
+            && !self.table_column_exists("billing_ledger", "updated_at").await?;
+        let has_auth_token_fk = self
+            .table_has_foreign_key_to("billing_ledger", "auth_token_logs")
+            .await?;
+        if !missing_updated_at && !has_auth_token_fk {
+            return Ok(());
+        }
+        self.rebuild_billing_ledger_without_request_log_foreign_key()
+            .await
+    }
+
+    async fn rebuild_ha_peer_watermarks_for_channels(&self) -> Result<(), ProxyError> {
+        if !self.main_table_exists("ha_peer_watermarks").await? {
+            return Ok(());
+        }
+
+        let mut conn = self.pool.acquire().await?;
+        sqlx::query("PRAGMA foreign_keys = OFF")
+            .execute(&mut *conn)
+            .await?;
+        let rebuild_result = async {
+            sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
+            sqlx::query("DROP TABLE IF EXISTS ha_peer_watermarks_new")
+                .execute(&mut *conn)
+                .await?;
+            sqlx::query(
+                r#"
+                CREATE TABLE ha_peer_watermarks_new (
+                    peer_node_id TEXT NOT NULL,
+                    channel TEXT NOT NULL DEFAULT 'control',
+                    acked_seq INTEGER NOT NULL,
+                    updated_at INTEGER NOT NULL,
+                    PRIMARY KEY (peer_node_id, channel)
+                )
+                "#,
+            )
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query(
+                r#"
+                INSERT INTO ha_peer_watermarks_new (peer_node_id, channel, acked_seq, updated_at)
+                SELECT
+                    peer_node_id,
+                    COALESCE(channel, 'control'),
+                    acked_seq,
+                    updated_at
+                FROM ha_peer_watermarks
+                "#,
+            )
+            .execute(&mut *conn)
+            .await?;
+            sqlx::query("DROP TABLE ha_peer_watermarks")
+                .execute(&mut *conn)
+                .await?;
+            sqlx::query("ALTER TABLE ha_peer_watermarks_new RENAME TO ha_peer_watermarks")
+                .execute(&mut *conn)
+                .await?;
+            sqlx::query("COMMIT").execute(&mut *conn).await?;
+            Ok::<(), ProxyError>(())
+        }
+        .await;
+
+        if rebuild_result.is_err() {
+            let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+        }
+        let reenable = sqlx::query("PRAGMA foreign_keys = ON")
+            .execute(&mut *conn)
+            .await;
+        rebuild_result?;
+        reenable?;
+        Ok(())
+    }
+
+    async fn ensure_ha_peer_watermarks_shape(&self) -> Result<(), ProxyError> {
+        if !self.main_table_exists("ha_peer_watermarks").await? {
+            return Ok(());
+        }
+        let missing_channel = !self.table_column_exists("ha_peer_watermarks", "channel").await?;
+        if missing_channel {
+            return self.rebuild_ha_peer_watermarks_for_channels().await;
+        }
+
+        let pk_rows = sqlx::query(
+            "SELECT name, pk FROM pragma_table_info('ha_peer_watermarks') WHERE pk > 0 ORDER BY pk ASC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        let pk_columns = pk_rows
+            .into_iter()
+            .map(|row| row.try_get::<String, _>("name"))
+            .collect::<Result<Vec<_>, _>>()?;
+        if pk_columns != vec!["peer_node_id".to_string(), "channel".to_string()] {
+            return self.rebuild_ha_peer_watermarks_for_channels().await;
+        }
         Ok(())
     }
 
@@ -526,6 +632,145 @@ impl KeyStore {
         )
         .execute(&self.pool)
         .await?;
+        sqlx::query(
+            r#"CREATE INDEX IF NOT EXISTS idx_billing_ledger_updated_at
+               ON billing_ledger(updated_at, auth_token_log_id)"#,
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            r#"CREATE INDEX IF NOT EXISTS idx_billing_ledger_request_log
+               ON billing_ledger(request_log_id, auth_token_log_id)"#,
+        )
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn billing_ledger_startup_repair_upper_bound(&self) -> Result<Option<i64>, ProxyError> {
+        sqlx::query_scalar::<_, Option<i64>>(
+            r#"
+            SELECT MAX(id)
+            FROM auth_token_logs
+            WHERE billing_state <> 'none'
+               OR billing_subject IS NOT NULL
+               OR business_credits IS NOT NULL
+            "#,
+        )
+        .fetch_one(&self.pool)
+        .await
+        .map_err(ProxyError::Database)
+    }
+
+    async fn billing_ledger_startup_repair_needs_reconcile(
+        &self,
+        upper_bound: i64,
+    ) -> Result<bool, ProxyError> {
+        let persisted_high_watermark = self
+            .get_meta_i64(META_KEY_BILLING_LEDGER_STARTUP_HIGH_WATERMARK_V1)
+            .await?
+            .unwrap_or_default();
+        if persisted_high_watermark >= upper_bound {
+            let has_gap = sqlx::query_scalar::<_, i64>(
+                r#"
+                SELECT 1
+                FROM auth_token_logs atl
+                WHERE atl.id <= ?
+                  AND (
+                    atl.billing_state <> 'none'
+                    OR atl.billing_subject IS NOT NULL
+                    OR atl.business_credits IS NOT NULL
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM billing_ledger bl
+                    WHERE bl.auth_token_log_id = atl.id
+                  )
+                LIMIT 1
+                "#,
+            )
+            .bind(upper_bound)
+            .fetch_optional(&self.pool)
+            .await?;
+            if has_gap.is_none() {
+                return Ok(false);
+            }
+        }
+
+        let mismatch = sqlx::query_scalar::<_, i64>(
+            r#"
+            SELECT 1
+            FROM auth_token_logs atl
+            LEFT JOIN billing_ledger bl ON bl.auth_token_log_id = atl.id
+            WHERE atl.id <= ?
+              AND (
+                atl.billing_state <> 'none'
+                OR atl.billing_subject IS NOT NULL
+                OR atl.business_credits IS NOT NULL
+              )
+              AND (
+                bl.auth_token_log_id IS NULL
+                OR bl.token_id <> atl.token_id
+                OR COALESCE(bl.billing_subject, '') <> COALESCE(atl.billing_subject, '')
+                OR bl.billing_state <> atl.billing_state
+                OR COALESCE(bl.business_credits, -1) <> COALESCE(atl.business_credits, -1)
+                OR COALESCE(bl.request_user_id, '') <> COALESCE(atl.request_user_id, '')
+                OR COALESCE(bl.api_key_id, '') <> COALESCE(atl.api_key_id, '')
+                OR bl.result_status <> atl.result_status
+                OR bl.created_at <> atl.created_at
+                OR COALESCE(bl.error_message, '') <> COALESCE(atl.error_message, '')
+              )
+            LIMIT 1
+            "#,
+        )
+        .bind(upper_bound)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(mismatch.is_some())
+    }
+
+    async fn maybe_repair_billing_ledger_from_auth_token_logs(&self) -> Result<(), ProxyError> {
+        let Some(upper_bound) = self.billing_ledger_startup_repair_upper_bound().await? else {
+            self.set_meta_i64(META_KEY_BILLING_LEDGER_STARTUP_HIGH_WATERMARK_V1, 0)
+                .await?;
+            eprintln!("billing ledger startup precheck skipped: upper_bound=0, reason=no_billable_logs");
+            return Ok(());
+        };
+
+        let precheck_started = Instant::now();
+        let needs_reconcile = self
+            .billing_ledger_startup_repair_needs_reconcile(upper_bound)
+            .await?;
+        log_slow_db_operation(
+            "billing ledger startup precheck",
+            precheck_started.elapsed(),
+            Some("component=startup"),
+        );
+
+        if !needs_reconcile {
+            self.set_meta_i64(META_KEY_BILLING_LEDGER_STARTUP_HIGH_WATERMARK_V1, upper_bound)
+                .await?;
+            eprintln!(
+                "billing ledger startup precheck skipped: upper_bound={upper_bound}, reason=no_gap"
+            );
+            return Ok(());
+        }
+
+        eprintln!("billing ledger startup repair started: upper_bound={upper_bound}");
+        let repair_started = Instant::now();
+        self.backfill_billing_ledger_from_auth_token_logs().await?;
+        self.set_meta_i64(META_KEY_BILLING_LEDGER_STARTUP_HIGH_WATERMARK_V1, upper_bound)
+            .await?;
+        let elapsed = repair_started.elapsed();
+        log_slow_db_operation(
+            "billing ledger startup repair",
+            elapsed,
+            Some("component=startup"),
+        );
+        eprintln!(
+            "billing ledger startup repair completed: upper_bound={upper_bound}, elapsed_ms={}",
+            elapsed.as_millis()
+        );
         Ok(())
     }
 
@@ -1449,14 +1694,15 @@ impl KeyStore {
                 request_log_id INTEGER,
                 result_status TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
                 settled_at INTEGER,
-                error_message TEXT,
-                FOREIGN KEY (auth_token_log_id) REFERENCES auth_token_logs(id) ON DELETE CASCADE
+                error_message TEXT
             )
             "#,
         )
         .execute(&self.pool)
         .await?;
+        self.ensure_billing_ledger_ha_shape().await?;
         self.ensure_billing_ledger_indexes().await?;
 
         // Upgrade: add mcp_status column if missing
@@ -1651,7 +1897,9 @@ impl KeyStore {
             request_kind_schema_changed = true;
         }
 
-        self.backfill_billing_ledger_from_auth_token_logs().await?;
+        self.ensure_meta_schema().await?;
+        self.maybe_repair_billing_ledger_from_auth_token_logs()
+            .await?;
 
         self.ensure_auth_token_logs_indexes().await?;
 
@@ -2286,6 +2534,7 @@ impl KeyStore {
                 request_log_id,
                 result_status,
                 created_at,
+                updated_at,
                 settled_at,
                 error_message
             )
@@ -2299,6 +2548,7 @@ impl KeyStore {
                 atl.api_key_id,
                 atl.request_log_id,
                 atl.result_status,
+                atl.created_at,
                 atl.created_at,
                 CASE
                     WHEN atl.billing_state = 'charged' THEN atl.created_at
@@ -2319,6 +2569,7 @@ impl KeyStore {
                 request_log_id = excluded.request_log_id,
                 result_status = excluded.result_status,
                 created_at = excluded.created_at,
+                updated_at = excluded.updated_at,
                 settled_at = excluded.settled_at,
                 error_message = excluded.error_message
             "#,
@@ -2460,6 +2711,38 @@ impl KeyStore {
         .await?;
         sqlx::query(
             r#"
+            CREATE TABLE IF NOT EXISTS ha_billing_outbox (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                resource TEXT NOT NULL,
+                resource_id TEXT NOT NULL,
+                op TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                checksum TEXT
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS ha_runtime_outbox (
+                seq INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT NOT NULL,
+                resource TEXT NOT NULL,
+                resource_id TEXT NOT NULL,
+                op TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                checksum TEXT
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            r#"
             CREATE TABLE IF NOT EXISTS ha_outbox_suppression (
                 id TEXT PRIMARY KEY CHECK (id = 'local')
             )
@@ -2482,20 +2765,33 @@ impl KeyStore {
         )
         .execute(&self.pool)
         .await?;
+        sqlx::query(
+            r#"CREATE INDEX IF NOT EXISTS idx_ha_billing_outbox_created
+               ON ha_billing_outbox(created_at, seq)"#,
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            r#"CREATE INDEX IF NOT EXISTS idx_ha_runtime_outbox_created
+               ON ha_runtime_outbox(created_at, seq)"#,
+        )
+        .execute(&self.pool)
+        .await?;
 
         sqlx::query(
             r#"
             CREATE TABLE IF NOT EXISTS ha_peer_watermarks (
-                peer_node_id TEXT PRIMARY KEY,
+                peer_node_id TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT 'control',
                 acked_seq INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (peer_node_id, channel)
             )
             "#,
         )
         .execute(&self.pool)
         .await?;
-
-        self.ensure_ha_outbox_triggers().await?;
+        self.ensure_ha_peer_watermarks_shape().await?;
 
         Ok(())
     }

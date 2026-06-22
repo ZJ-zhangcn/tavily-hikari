@@ -371,6 +371,9 @@ pub const QUOTA_SYNC_STALE_RUNNING_SECS: i64 = 40;
 pub const DB_COMPACTION_MIN_RECLAIMABLE_BYTES: u64 = 512 * 1024 * 1024;
 pub const DB_COMPACTION_MIN_RECLAIMABLE_RATIO: f64 = 0.20;
 pub const DB_COMPACTION_COOLDOWN_SECS: u64 = 24 * 60 * 60;
+pub const HA_OUTBOX_GC_DEFAULT_BATCH_SIZE: i64 = 20_000;
+pub const HA_OUTBOX_GC_DEFAULT_MAX_BATCHES: i64 = 8;
+pub const HA_OUTBOX_GC_DEFAULT_MAX_RUNTIME_SECS: u64 = 20;
 
 pub async fn run_db_compaction_once(
     database_path: &str,
@@ -412,6 +415,92 @@ pub async fn run_db_compaction_once(
     })
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct HaOutboxGcOptions {
+    pub batch_size: i64,
+    pub max_batches: i64,
+    pub max_runtime_secs: u64,
+    pub inter_batch_sleep_ms: u64,
+}
+
+impl Default for HaOutboxGcOptions {
+    fn default() -> Self {
+        Self {
+            batch_size: HA_OUTBOX_GC_DEFAULT_BATCH_SIZE,
+            max_batches: HA_OUTBOX_GC_DEFAULT_MAX_BATCHES,
+            max_runtime_secs: HA_OUTBOX_GC_DEFAULT_MAX_RUNTIME_SECS,
+            inter_batch_sleep_ms: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HaOutboxGcChannelReport {
+    pub channel: HaSyncChannel,
+    pub retention_secs: i64,
+    pub threshold: i64,
+    pub invalid_legacy_deleted_rows: i64,
+    pub retention_deleted_rows: i64,
+    pub deleted_rows: i64,
+    pub batches: i64,
+    pub has_more: bool,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HaOutboxGcReport {
+    pub batch_size: i64,
+    pub max_batches: i64,
+    pub deleted_rows: i64,
+    pub batches: i64,
+    pub completed: bool,
+    pub has_more: bool,
+    pub channels: Vec<HaOutboxGcChannelReport>,
+    pub wal_checkpoint_busy: bool,
+    pub wal_checkpoint_log_frames: i64,
+    pub wal_checkpoint_checkpointed_frames: i64,
+    pub elapsed_ms: u128,
+}
+
+pub fn format_ha_outbox_gc_report_message(report: &HaOutboxGcReport, passes: usize) -> String {
+    format!(
+        "deleted_rows={} completed={} has_more={} channels={} batches={} passes={} wal_busy={} wal_log_frames={} wal_checkpointed_frames={} elapsed_ms={}",
+        report.deleted_rows,
+        report.completed,
+        report.has_more,
+        report
+            .channels
+            .iter()
+            .map(|channel| format!(
+                "{}:{}:{}:{}:{}:{}:{}",
+                channel.channel.as_str(),
+                channel.deleted_rows,
+                channel.invalid_legacy_deleted_rows,
+                channel.retention_deleted_rows,
+                channel.retention_secs,
+                channel.batches,
+                channel.has_more
+            ))
+            .collect::<Vec<_>>()
+            .join(","),
+        report.batches,
+        passes,
+        report.wal_checkpoint_busy,
+        report.wal_checkpoint_log_frames,
+        report.wal_checkpoint_checkpointed_frames,
+        report.elapsed_ms
+    )
+}
+
+pub async fn run_ha_outbox_gc_once(
+    database_path: &str,
+    options: HaOutboxGcOptions,
+) -> Result<HaOutboxGcReport, ProxyError> {
+    let key_store = crate::store::KeyStore::open_for_request_logs_gc(database_path).await?;
+    key_store.gc_ha_outbox_with_options(options).await
+}
+
 pub async fn run_observability_sidecar_migrate(
     database_path: &str,
     batch_size: i64,
@@ -430,6 +519,39 @@ pub async fn verify_observability_sidecar_reopen(database_path: &str) -> Result<
             ))
         })?;
     Ok(())
+}
+
+pub async fn configure_ha_write_mode(database_path: &str, mode: HaMode) -> Result<(), ProxyError> {
+    let store = crate::store::KeyStore::new_with_time(database_path, BackendTime::system()).await?;
+    store.configure_ha_event_writes(mode).await
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HaTriggerRepairChannelReport {
+    pub channel: HaSyncChannel,
+    pub legacy_triggers_dropped: i64,
+    pub current_triggers_dropped: i64,
+    pub triggers_created: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HaTriggerRepairReport {
+    pub mode: HaMode,
+    pub legacy_triggers_dropped: i64,
+    pub current_triggers_dropped: i64,
+    pub triggers_created: i64,
+    pub channels: Vec<HaTriggerRepairChannelReport>,
+    pub elapsed_ms: u128,
+}
+
+pub async fn repair_ha_triggers_once(
+    database_path: &str,
+    mode: HaMode,
+) -> Result<HaTriggerRepairReport, ProxyError> {
+    let store = crate::store::KeyStore::new_with_time(database_path, BackendTime::system()).await?;
+    store.repair_ha_triggers(mode).await
 }
 
 impl ForwardProxyProgressEvent {
@@ -885,6 +1007,9 @@ const META_KEY_API_KEY_USAGE_BUCKETS_REQUEST_VALUE_V2_DONE: &str =
     "api_key_usage_buckets_request_value_v2_done";
 const META_KEY_DASHBOARD_REQUEST_ROLLUP_BUCKETS_V1_DONE: &str =
     "dashboard_request_rollup_buckets_v1_done";
+const META_KEY_BILLING_LEDGER_STARTUP_HIGH_WATERMARK_V1: &str =
+    "billing_ledger_startup_high_watermark_v1";
+const META_KEY_REQUEST_STATS_LAST_FLUSHED_AT_V1: &str = "request_stats_last_flushed_at_v1";
 const META_KEY_REQUEST_LOG_CATALOG_ROLLUP_V1_DONE: &str = "request_log_catalog_rollup_v1_done";
 const META_KEY_REQUEST_LOG_CATALOG_ROLLUP_V1_RETENTION_DAYS: &str =
     "request_log_catalog_rollup_v1_retention_days";

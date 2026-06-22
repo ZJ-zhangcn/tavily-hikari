@@ -18,10 +18,44 @@ pub enum HaMode {
 }
 
 impl HaMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Single => "single",
+            Self::ActiveStandby => "active_standby",
+        }
+    }
+
     pub fn parse(raw: &str) -> Self {
         match raw.trim().to_ascii_lowercase().as_str() {
             "active_standby" | "active-standby" | "ha" => Self::ActiveStandby,
             _ => Self::Single,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HaSyncChannel {
+    Control,
+    Billing,
+    Runtime,
+}
+
+impl HaSyncChannel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Control => "control",
+            Self::Billing => "billing",
+            Self::Runtime => "runtime",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "control" => Some(Self::Control),
+            "billing" => Some(Self::Billing),
+            "runtime" => Some(Self::Runtime),
+            _ => None,
         }
     }
 }
@@ -661,6 +695,11 @@ impl HaRuntime {
             recovery_status: state.recovery_status.clone(),
             message: state.message.clone(),
         }
+    }
+
+    pub async fn mark_sync_success(&self) {
+        let mut state = self.state.write().await;
+        state.last_sync_at = Some(self.backend_time.now_ts());
     }
 
     pub async fn set_local_source_settings_view(

@@ -10,7 +10,59 @@
 - Added per-node HA source settings persistence and admin API so the current instance can store a private source override, switch between direct origin and source group, and optionally apply the saved source to EdgeOne immediately. The startup config now also accepts `HA_SOURCE_KIND` and `HA_SOURCE_ORIGIN_GROUP_ID` as per-node defaults, while `EDGEONE_EXPECTED_ORIGIN_*` stays direct-origin only.
 - Locked the HA source settings request/response wire contract to lowercase `directOriginScheme` values (`http|https|follow`) by adding serde lowercase support on the shared Rust enum, while preserving the existing uppercase conversion for outbound EdgeOne payloads.
 - Added standby pull-based sync controlled by `HA_SYNC_SOURCE_URL`, `HA_INTERNAL_TOKEN`, and `HA_SYNC_INTERVAL_SECS`; active nodes no longer push snapshots.
-- Added `ha_outbox` and peer watermark storage so standby nodes can apply small, whitelisted state changes by seq.
+- Replaced the old implicit single-channel HA contract with explicit `control` / `billing` /
+  `runtime` channels carried over the same `/api/admin/ha/baseline`, `/api/admin/ha/events`, and
+  `/api/admin/ha/events/ack` endpoints via a required `channel` contract.
+- Narrowed `ha_outbox` to the `control` channel only. `billing_ledger` now emits into
+  `ha_billing_outbox`, while minimal runtime state emits into `ha_runtime_outbox`.
+- `HA_MODE=single` now drops all HA replication triggers at startup and does not emit new HA
+  events, while preserving schema compatibility for future `active_standby` cold start.
+- Added per-channel peer watermark storage keyed by `(peer_node_id, channel)` and a compatibility
+  rebuild for old single-column `ha_peer_watermarks` schemas.
+- Added bounded `ha_outbox_gc` maintenance with scheduler/manual-job support. The online path only
+  deletes expired rows from `control` / `billing` / `runtime` outboxes within their own retention
+  windows, then runs `PRAGMA wal_checkpoint(PASSIVE)`; it never runs full `VACUUM`.
+- Added offline `ha_outbox_cleanup_once` and `scripts/ha-outbox-maintenance.sh` so large retained
+  historical `ha_outbox` rows can be cleaned explicitly during a maintenance window before an
+  optional `db_compaction_once`.
+- Added a dedicated `ha_trigger_repair_once` one-shot CLI and upgraded HA trigger reconcile so an
+  upgraded database no longer relies on the current whitelist alone when dropping triggers.
+  Startup/manual repair now enumerates `sqlite_master`, removes legacy `trg_ha_outbox_*` leftovers
+  that no longer belong to `control/billing/runtime`, then rebuilds only the current three-channel
+  contract.
+- Added `scripts/export-live-db-snapshot-to-testbox.sh` so operators can export the full live
+  SQLite validation input from 101 into an isolated `codex-testbox` run directory. The script is
+  intentionally sidecar-aware and treats the validation input as a set:
+  - core DB snapshot for `tavily_proxy.db`
+  - observability sibling snapshot for `tavily_proxy-observability.db`
+  - per-run manifest with source paths, byte counts, SHA-256 sums, and integrity-check results
+- The accepted offline validation sequence is now explicit:
+  1. create a full read-only snapshot set on 101
+  2. upload that full set into one `codex-testbox` run directory
+  3. run `ha_trigger_repair_once` or `ha_outbox_cleanup_once --repair-triggers` there
+  4. run `ha_outbox_cleanup_once` / `scripts/ha-outbox-maintenance.sh` there
+  5. run `db_compaction_once` only if the threshold gate says reclaimable space is large enough
+- `ha_outbox_cleanup_once` now distinguishes immediate invalid-legacy cleanup from normal retention
+  cleanup in its JSON/plain reports, so operators can prove whether the pass is shrinking a stale
+  upgraded backlog or only trimming aged rows.
+- Shared-testbox validation against a full 101 snapshot confirmed the upgraded-database failure
+  mode and the repair-first fix:
+  - `ha_trigger_repair_once --ha-mode active_standby` dropped `30` legacy single-channel triggers
+    before recreating the current `control/billing/runtime` trigger set.
+  - `ha_outbox_cleanup_once --repair-triggers --run-until-complete --json` deleted `29,143,494`
+    rows in total, including `27,770,036` invalid legacy `ha_outbox` rows and `1,373,458` normal
+    retention rows.
+  - After cleanup, `ha_outbox` contained only current control resources and shrank to `163,357`
+    rows, while `ha_billing_outbox` / `ha_runtime_outbox` stayed at `265,496` / `19,822` rows.
+  - The same validation run left `freelist_count=2,951,432`, proving roughly `12 GiB` of
+    reclaimable space and confirming that a follow-up compaction is worth running in the real
+    maintenance window.
+  - `db_compaction_once` on the shared testbox failed with `database or disk is full` because the
+    host root filesystem had only about `3.5 GiB` free. That is an environment-capacity blocker,
+    not a repair-path failure; production compaction still needs adequate temporary free space.
+- “Full live DB validation input” does not mean “copy the main `.db` file only.” For this service
+  it means the core DB plus the observability sibling sidecar; otherwise offline verification can
+  silently miss the production request-log/read-model layout.
 - Added recovery batch idempotency, HA sync watermarks, failover operation persistence, EdgeOne request/response audit persistence, and node state persistence.
 - Adjusted EdgeOne origin switching to require explicit origin protocol, host, and port configuration, send them as top-level EdgeOne API fields, and normalize EdgeOne describe responses that omit default ports.
 - Added full-master fencing for system settings, upstream key creation, user token management, user quota changes, registration settings, OAuth login start, recharge order creation, and payment notify.
@@ -41,9 +93,9 @@
 
 - `cargo fmt --check`
 - `cargo check`
-- `cargo clippy --all-targets --all-features -- -D warnings`
-- `cargo test ha_ -- --nocapture`
+- `cargo test alerts_and_ha -- --nocapture`
 - `cargo test ha_source_endpoint_accepts_lowercase_direct_origin_scheme`
+- `cargo test standalone_ha_outbox_gc_deletes_expired_rows_across_channels_in_bounded_batches -- --nocapture`
 - `cd web && bun run build`
 - `cd web && bun test src/admin/HaSourceSettingsDialog.interaction.test.tsx src/components/HaStatusBanner.stories.test.tsx`
 - `python3 -m py_compile tests/ha/scripts/*.py`
