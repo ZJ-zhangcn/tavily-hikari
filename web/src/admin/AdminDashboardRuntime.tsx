@@ -64,6 +64,8 @@ import SegmentedTabs from '../components/ui/SegmentedTabs'
 import { ArrowDown, ArrowUp, ArrowUpDown, ChartColumnIncreasing } from 'lucide-react'
 import { UserTagBindingControls } from './UserTagBindingControls'
 import { AdminUserDetailQuotaWorkspace } from './AdminUserDetailQuotaWorkspace'
+import { UsersUsageScreen } from './screens/UsersUsageScreen'
+import { UnboundTokenUsageScreen } from './screens/UnboundTokenUsageScreen'
 import AdminShell, { AdminShellSidebarUtility, type AdminNavItem, type AdminNavTarget } from './AdminShell'
 import AdminOverlayHost from './AdminOverlayHost'
 import DashboardOverview, { type DashboardQuotaChargeCardData } from './DashboardOverview'
@@ -8631,6 +8633,16 @@ function AdminDashboard(): JSX.Element {
     />
   )
 
+  const isStackedAdminLayout = useAdminStackedLayout()
+  const openDashboardRecentAlerts = useCallback(() => {
+    const now = new Date()
+    navigateToPath(alertsPath({
+      view: 'groups',
+      since: formatIso8601WithOffset(new Date(now.getTime() - 24 * 60 * 60 * 1000)),
+      until: formatIso8601WithOffset(now),
+    }))
+  }, [navigateToPath])
+
 
   if (route.name === 'key') {
     return renderAdminPageWithGlobalOverlays(
@@ -9074,11 +9086,8 @@ function AdminDashboard(): JSX.Element {
   )
 
   if (route.name === 'user-usage') {
-    const usageDailyRateLabel = language === 'zh' ? usersStrings.usage.table.dailySuccessRate : 'Daily'
-    const usageMonthlyRateLabel = language === 'zh' ? usersStrings.usage.table.monthlySuccessRate : 'Monthly'
-    const userUsageUpdatedTime = lastUpdated ? timeOnlyFormatter.format(lastUpdated) : null
-    const globalIpLimit = systemSettings?.globalIpLimit ?? 5
-    const userUsageDesktopUtility = (
+    const userUsageUpdatedTimeForScreen = lastUpdated ? timeOnlyFormatter.format(lastUpdated) : null
+    const userUsageSidebarUtility = (
       <AdminShellSidebarUtility>
         <AdminSidebarUtilityStack>
           <AdminSidebarUtilityCard>
@@ -9093,7 +9102,7 @@ function AdminDashboard(): JSX.Element {
                   <span>{displayName}</span>
                 </div>
               )}
-              {userUsageUpdatedTime && (
+              {userUsageUpdatedTimeForScreen && (
                 <span className="admin-panel-header-time" aria-live="polite">
                   <Icon
                     icon="mdi:clock-time-four-outline"
@@ -9103,12 +9112,11 @@ function AdminDashboard(): JSX.Element {
                     aria-hidden="true"
                   />
                   <span className="admin-panel-header-time-label">{headerStrings.updatedPrefix}</span>
-                  <span className="admin-panel-header-time-value">{userUsageUpdatedTime}</span>
+                  <span className="admin-panel-header-time-value">{userUsageUpdatedTimeForScreen}</span>
                 </span>
               )}
             </div>
           </AdminSidebarUtilityCard>
-
           <AdminSidebarUtilityCard>
             <div className="admin-sidebar-utility-actions">
               <AdminReturnToConsoleLink
@@ -9138,7 +9146,6 @@ function AdminDashboard(): JSX.Element {
         </AdminSidebarUtilityStack>
       </AdminShellSidebarUtility>
     )
-
     return renderAdminPageWithGlobalOverlays(
       <AdminShell
         activeItem={activeNavItem}
@@ -9146,12 +9153,12 @@ function AdminDashboard(): JSX.Element {
         skipToContentLabel={adminStrings.accessibility.skipToContent}
         onSelectItem={navigateModule}
       >
-        {userUsageDesktopUtility}
-
-        {renderUsagePageIntro({
-          title: usersStrings.usage.title,
-          description: usersStrings.usage.description,
-          searchControls: (
+        {userUsageSidebarUtility}
+        <UsersUsageScreen
+          users={users}
+          language={language}
+          usersStrings={usersStrings}
+          searchControls={
             <div style={{ display: 'grid', gap: 6 }}>
               <div className="users-search-controls users-search-controls--header">
                 <Input
@@ -9179,316 +9186,56 @@ function AdminDashboard(): JSX.Element {
                 )}
               </div>
             </div>
-          ),
-          filterStatusText: usersFilterStatusText,
-          filterStatusTestId: 'users-filter-status',
-        })}
-
-        <section className="surface panel">
-          <AdminTableShell
-            className="jobs-table-wrapper admin-users-usage-table-wrapper admin-responsive-up"
-            tableClassName="jobs-table admin-users-table admin-users-usage-table"
-            loadState={usersLoadState}
-            loadingLabel={usersRefreshing ? loadingStateStrings.refreshing : usersStrings.empty.loading}
-            errorLabel={usersError ?? loadingStateStrings.error}
-            minHeight={360}
-          >
-            {users.length === 0 ? (
-              <tbody>
-                <tr>
-                  <td colSpan={12}>
-                    <div className="empty-state alert">{usersStrings.empty.none}</div>
-                  </td>
-                </tr>
-              </tbody>
-            ) : (
-              <>
-                <thead>
-                  <tr>
-                    <th>{usersStrings.usage.table.user}</th>
-                    <th>{usersStrings.usage.table.status}</th>
-                    <AdminUsersSortableHeader
-                      label={usersStrings.usage.table.hourlyAny}
-                      field="hourlyAnyUsed"
-                      activeField={effectiveUsersSort}
-                      activeOrder={effectiveUsersSortOrder}
-                      onToggle={toggleUsersSort}
-                    />
-                    <AdminUsersSortableHeader
-                      label={usersStrings.usage.table.hourly}
-                      field="quotaHourlyUsed"
-                      activeField={effectiveUsersSort}
-                      activeOrder={effectiveUsersSortOrder}
-                      onToggle={toggleUsersSort}
-                    />
-                    <th>{usersStrings.usage.table.businessOneHour}</th>
-                    <AdminUsersSortableHeader
-                      label={usersStrings.usage.table.daily}
-                      field="quotaDailyUsed"
-                      activeField={effectiveUsersSort}
-                      activeOrder={effectiveUsersSortOrder}
-                      onToggle={toggleUsersSort}
-                    />
-                    <AdminUsersSortableHeader
-                      label={usersStrings.usage.table.monthly}
-                      field="quotaMonthlyUsed"
-                      activeField={effectiveUsersSort}
-                      activeOrder={effectiveUsersSortOrder}
-                      onToggle={toggleUsersSort}
-                    />
-                    <AdminUsersSortableHeader
-                      label={usersStrings.usage.table.monthlyBroken}
-                      field="monthlyBrokenCount"
-                      activeField={effectiveUsersSort}
-                      activeOrder={effectiveUsersSortOrder}
-                      onToggle={toggleUsersSort}
-                    />
-                    <AdminUsersSortableHeader
-                      label={usersStrings.usage.table.ipCount}
-                      field="recentIpCount7d"
-                      activeField={effectiveUsersSort}
-                      activeOrder={effectiveUsersSortOrder}
-                      onToggle={toggleUsersSort}
-                    />
-                    <AdminUsersSortableHeader
-                      label={usersStrings.usage.table.dailySuccessRate}
-                      displayLabel={usageDailyRateLabel}
-                      field="dailySuccessRate"
-                      activeField={effectiveUsersSort}
-                      activeOrder={effectiveUsersSortOrder}
-                      onToggle={toggleUsersSort}
-                    />
-                    <AdminUsersSortableHeader
-                      label={usersStrings.usage.table.monthlySuccessRate}
-                      displayLabel={usageMonthlyRateLabel}
-                      field="monthlySuccessRate"
-                      activeField={effectiveUsersSort}
-                      activeOrder={effectiveUsersSortOrder}
-                      onToggle={toggleUsersSort}
-                    />
-                    <AdminUsersSortableHeader
-                      label={usersStrings.usage.table.lastUsed}
-                      field="lastActivity"
-                      activeField={effectiveUsersSort}
-                      activeOrder={effectiveUsersSortOrder}
-                      onToggle={toggleUsersSort}
-                    />
-                  </tr>
-                </thead>
-                <tbody>
-                  {users.map((item) => {
-                    const requestRate = resolveRequestRate(item, 'user')
-                    return (
-                    <tr key={item.userId}>
-                      <td className="admin-users-identity-cell">
-                        <button
-                          type="button"
-                          className="link-button admin-users-identity-button"
-                          aria-label={usersStrings.actions.view}
-                          onClick={() => navigateUser(item.userId, { preserveUsersContext: true })}
-                        >
-                          <strong>{formatAdminUserListPrimary(item)}</strong>
-                        </button>
-                        {formatAdminUserListMeta(item) && (
-                          <div className="panel-description admin-users-identity-meta">
-                            {formatAdminUserListMeta(item)}
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        <StatusBadge tone={item.active ? 'success' : 'neutral'}>
-                          {item.active ? usersStrings.status.active : usersStrings.status.inactive}
-                        </StatusBadge>
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <AdminTableValueStack {...formatQuotaStackValue(requestRate.used, requestRate.limit)} />
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <AdminTableValueStack {...formatQuotaStackValue(item.quotaHourlyUsed, item.quotaHourlyLimit)} />
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <AdminTableValueStack
-                          {...formatBusinessCalls1hStackValue(
-                            item.businessCalls1h.successCount,
-                            item.businessCalls1h.failureCount,
-                            language,
-                          )}
-                        />
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <AdminTableValueStack {...formatQuotaStackValue(item.quotaDailyUsed, item.quotaDailyLimit)} />
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <AdminTableValueStack {...formatQuotaStackValue(item.quotaMonthlyUsed, item.quotaMonthlyLimit)} />
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        {(() => {
-                          const metric = formatMonthlyBrokenStackValue(
-                            item.monthlyBrokenCount,
-                            item.monthlyBrokenLimit,
-                          )
-                          const label = item.displayName || item.username || item.userId
-                          return (
-                            <div className="admin-table-value-stack">
-                              <MonthlyBrokenCountTrigger
-                                count={item.monthlyBrokenCount}
-                                onOpen={() => openMonthlyBrokenDrawer('user', item.userId, label)}
-                                ariaLabel={usersStrings.brokenKeys.openDetails.replace('{label}', label)}
-                                className={metric.primaryClassName}
-                              />
-                              <span className="admin-table-value-secondary">{metric.secondary}</span>
-                            </div>
-                          )
-                        })()}
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <strong>{formatNumber(item.recentIpCount7d)}</strong>
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <AdminTableValueStack {...formatSuccessRateStackValue(item.dailySuccess, item.dailyFailure, language)} />
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <AdminTableValueStack {...formatSuccessRateStackValue(item.monthlySuccess, item.monthlyFailure, language)} />
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <AdminTableValueStack {...formatStackedTimestamp(item.lastActivity, language)} />
-                      </td>
-                    </tr>
-                  )})}
-                </tbody>
-              </>
-            )}
-          </AdminTableShell>
-
-          <AdminLoadingRegion
-            className="admin-mobile-list admin-responsive-down"
-            loadState={usersLoadState}
-            loadingLabel={usersRefreshing ? loadingStateStrings.refreshing : usersStrings.empty.loading}
-            errorLabel={usersError ?? loadingStateStrings.error}
-            minHeight={260}
-          >
-            {users.length === 0 ? (
-              <div className="empty-state alert">{usersStrings.empty.none}</div>
-            ) : (
-              users.map((item) => {
-                const requestRate = resolveRequestRate(item, 'user')
-                return (
-                <article key={item.userId} className="admin-mobile-card">
-                  <div className="admin-mobile-kv">
-                    <span>{usersStrings.usage.table.user}</span>
-                    <button
-                      type="button"
-                      className="link-button admin-users-mobile-link"
-                      aria-label={usersStrings.actions.view}
-                      onClick={() => navigateUser(item.userId, { preserveUsersContext: true })}
-                    >
-                      <strong>{formatAdminUserListPrimary(item)}</strong>
-                    </button>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{usersStrings.usage.table.status}</span>
-                    <StatusBadge tone={item.active ? 'success' : 'neutral'}>
-                      {item.active ? usersStrings.status.active : usersStrings.status.inactive}
-                    </StatusBadge>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{formatRequestRateSummary(requestRate, language)}</span>
-                    <strong>{formatQuotaUsagePair(requestRate.used, requestRate.limit)}</strong>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{usersStrings.usage.table.hourly}</span>
-                    <strong>{formatQuotaUsagePair(item.quotaHourlyUsed, item.quotaHourlyLimit)}</strong>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{usersStrings.usage.table.businessOneHour}</span>
-                    <strong>
-                      {formatNumber(item.businessCalls1h.totalCount)} ·
-                      {' '}
-                      {language === 'zh'
-                        ? `成 ${formatNumber(item.businessCalls1h.successCount)} / 败 ${formatNumber(item.businessCalls1h.failureCount)}`
-                        : `S ${formatNumber(item.businessCalls1h.successCount)} / F ${formatNumber(item.businessCalls1h.failureCount)}`}
-                    </strong>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{usersStrings.usage.table.daily}</span>
-                    <strong>{formatQuotaUsagePair(item.quotaDailyUsed, item.quotaDailyLimit)}</strong>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{usersStrings.usage.table.monthly}</span>
-                    <strong>{formatQuotaUsagePair(item.quotaMonthlyUsed, item.quotaMonthlyLimit)}</strong>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{usersStrings.usage.table.monthlyBroken}</span>
-                    {item.monthlyBrokenCount > 0 ? (
-                      <button
-                        type="button"
-                        className="link-button"
-                        onClick={() =>
-                          openMonthlyBrokenDrawer(
-                            'user',
-                            item.userId,
-                            item.displayName || item.username || item.userId,
-                          )
-                        }
-                      >
-                        <strong>{formatQuotaUsagePair(item.monthlyBrokenCount, item.monthlyBrokenLimit)}</strong>
-                      </button>
-                    ) : (
-                      <strong>{formatQuotaUsagePair(item.monthlyBrokenCount, item.monthlyBrokenLimit)}</strong>
-                    )}
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{usersStrings.usage.table.ipCount}</span>
-                    <strong>{formatNumber(item.recentIpCount7d)}</strong>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{usersStrings.usage.table.dailySuccessRate}</span>
-                    <strong>{formatCompactSuccessRateValue(item.dailySuccess, item.dailyFailure, language)}</strong>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{usersStrings.usage.table.monthlySuccessRate}</span>
-                    <strong>{formatCompactSuccessRateValue(item.monthlySuccess, item.monthlyFailure, language)}</strong>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{usersStrings.usage.table.lastUsed}</span>
-                    <strong>{formatTimestamp(item.lastActivity)}</strong>
-                  </div>
-                </article>
-              )})
-            )}
-          </AdminLoadingRegion>
-
-          {usersTotal > USERS_PER_PAGE && (
-            <AdminTablePagination
-              page={usersPage}
-              totalPages={usersTotalPages}
-              pageSummary={
-                <span className="panel-description">
-                  {usersStrings.pagination
-                    .replace('{page}', String(usersPage))
-                    .replace('{total}', String(usersTotalPages))}
-                </span>
-              }
-              previousLabel={tokenStrings.pagination.prev}
-              nextLabel={tokenStrings.pagination.next}
-              previousDisabled={usersPage <= 1}
-              nextDisabled={usersPage >= usersTotalPages}
-              disabled={usersBlocking}
-              onPrevious={goPrevUsersPage}
-              onNext={goNextUsersPage}
-            />
-          )}
-        </section>
+          }
+          filterStatusText={usersFilterStatusText}
+          loadState={usersLoadState}
+          loadingLabel={usersRefreshing ? loadingStateStrings.refreshing : usersStrings.empty.loading}
+          errorLabel={usersError ?? loadingStateStrings.error}
+          activeSortField={effectiveUsersSort}
+          activeSortOrder={effectiveUsersSortOrder}
+          onToggleSort={toggleUsersSort}
+          onOpenUser={(userId) => navigateUser(userId, { preserveUsersContext: true })}
+          onOpenMonthlyBrokenDrawer={(userId, label) => openMonthlyBrokenDrawer('user', userId, label)}
+          formatNumber={formatNumber}
+          formatTimestamp={formatTimestamp}
+          formatQuotaUsagePair={formatQuotaUsagePair}
+          formatQuotaStackValue={formatQuotaStackValue}
+          formatBusinessCalls1hStackValue={formatBusinessCalls1hStackValue}
+          formatSuccessRateStackValue={formatSuccessRateStackValue}
+          formatCompactSuccessRateValue={formatCompactSuccessRateValue}
+          formatStackedTimestamp={formatStackedTimestamp}
+          formatAdminUserListPrimary={formatAdminUserListPrimary}
+          formatAdminUserListMeta={formatAdminUserListMeta}
+          formatMonthlyBrokenStackValue={formatMonthlyBrokenStackValue}
+          pagination={
+            usersTotal > USERS_PER_PAGE ? (
+              <AdminTablePagination
+                page={usersPage}
+                totalPages={usersTotalPages}
+                pageSummary={
+                  <span className="panel-description">
+                    {usersStrings.pagination
+                      .replace('{page}', String(usersPage))
+                      .replace('{total}', String(usersTotalPages))}
+                  </span>
+                }
+                previousLabel={tokenStrings.pagination.prev}
+                nextLabel={tokenStrings.pagination.next}
+                previousDisabled={usersPage <= 1}
+                nextDisabled={usersPage >= usersTotalPages}
+                disabled={usersBlocking}
+                onPrevious={goPrevUsersPage}
+                onNext={goNextUsersPage}
+              />
+            ) : null
+          }
+        />
         {appFooter}
       </AdminShell>
     )
   }
 
   if (route.name === 'unbound-token-usage') {
-    const usageDailyRateLabel = language === 'zh' ? unboundTokenUsageStrings.table.dailySuccessRate : 'Daily'
-    const usageMonthlyRateLabel =
-      language === 'zh' ? unboundTokenUsageStrings.table.monthlySuccessRate : 'Monthly'
-
     return renderAdminPageWithGlobalOverlays(
       <AdminShell
         activeItem={activeNavItem}
@@ -9513,10 +9260,13 @@ function AdminDashboard(): JSX.Element {
           </AdminSidebarUtilityStack>
         </AdminShellSidebarUtility>
 
-        {renderUsagePageIntro({
-          title: unboundTokenUsageStrings.title,
-          description: unboundTokenUsageStrings.description,
-          searchControls: (
+        <UnboundTokenUsageScreen
+          items={unboundTokenUsage}
+          language={language}
+          usersStrings={usersStrings}
+          unboundTokenUsageStrings={unboundTokenUsageStrings}
+          tokenStrings={tokenStrings}
+          searchControls={
             <div className="users-search-controls users-search-controls--header">
               <Input
                 type="text"
@@ -9552,280 +9302,47 @@ function AdminDashboard(): JSX.Element {
                 </Button>
               )}
             </div>
-          ),
-        })}
-
-        <section className="surface panel">
-          <AdminTableShell
-            className="jobs-table-wrapper admin-users-usage-table-wrapper admin-responsive-up"
-            tableClassName="jobs-table admin-users-table admin-users-usage-table"
-            loadState={unboundTokenUsageLoadState}
-            loadingLabel={
-              unboundTokenUsageRefreshing
-                ? loadingStateStrings.refreshing
-                : unboundTokenUsageStrings.empty.loading
-            }
-            errorLabel={unboundTokenUsageError ?? loadingStateStrings.error}
-            minHeight={360}
-          >
-            {unboundTokenUsage.length === 0 ? (
-              <tbody>
-                <tr>
-                  <td colSpan={10}>
-                    <div className="empty-state alert">{unboundTokenUsageStrings.empty.none}</div>
-                  </td>
-                </tr>
-              </tbody>
-            ) : (
-              <>
-                <thead>
-                  <tr>
-                    <th>{unboundTokenUsageStrings.table.identity}</th>
-                    <th>{unboundTokenUsageStrings.table.status}</th>
-                    <AdminUsersSortableHeader
-                      label={unboundTokenUsageStrings.table.hourlyAny}
-                      field="hourlyAnyUsed"
-                      activeField={effectiveUnboundTokenUsageSort}
-                      activeOrder={effectiveUnboundTokenUsageSortOrder}
-                      onToggle={toggleUnboundTokenUsageSort}
-                    />
-                    <AdminUsersSortableHeader
-                      label={unboundTokenUsageStrings.table.hourly}
-                      field="quotaHourlyUsed"
-                      activeField={effectiveUnboundTokenUsageSort}
-                      activeOrder={effectiveUnboundTokenUsageSortOrder}
-                      onToggle={toggleUnboundTokenUsageSort}
-                    />
-                    <AdminUsersSortableHeader
-                      label={unboundTokenUsageStrings.table.daily}
-                      field="quotaDailyUsed"
-                      activeField={effectiveUnboundTokenUsageSort}
-                      activeOrder={effectiveUnboundTokenUsageSortOrder}
-                      onToggle={toggleUnboundTokenUsageSort}
-                    />
-                    <AdminUsersSortableHeader
-                      label={unboundTokenUsageStrings.table.monthly}
-                      field="quotaMonthlyUsed"
-                      activeField={effectiveUnboundTokenUsageSort}
-                      activeOrder={effectiveUnboundTokenUsageSortOrder}
-                      onToggle={toggleUnboundTokenUsageSort}
-                    />
-                    <AdminUsersSortableHeader
-                      label={unboundTokenUsageStrings.table.monthlyBroken}
-                      field="monthlyBrokenCount"
-                      activeField={effectiveUnboundTokenUsageSort}
-                      activeOrder={effectiveUnboundTokenUsageSortOrder}
-                      onToggle={toggleUnboundTokenUsageSort}
-                    />
-                    <AdminUsersSortableHeader
-                      label={unboundTokenUsageStrings.table.dailySuccessRate}
-                      displayLabel={usageDailyRateLabel}
-                      field="dailySuccessRate"
-                      activeField={effectiveUnboundTokenUsageSort}
-                      activeOrder={effectiveUnboundTokenUsageSortOrder}
-                      onToggle={toggleUnboundTokenUsageSort}
-                    />
-                    <AdminUsersSortableHeader
-                      label={unboundTokenUsageStrings.table.monthlySuccessRate}
-                      displayLabel={usageMonthlyRateLabel}
-                      field="monthlySuccessRate"
-                      activeField={effectiveUnboundTokenUsageSort}
-                      activeOrder={effectiveUnboundTokenUsageSortOrder}
-                      onToggle={toggleUnboundTokenUsageSort}
-                    />
-                    <AdminUsersSortableHeader
-                      label={unboundTokenUsageStrings.table.lastUsed}
-                      field="lastUsedAt"
-                      activeField={effectiveUnboundTokenUsageSort}
-                      activeOrder={effectiveUnboundTokenUsageSortOrder}
-                      onToggle={toggleUnboundTokenUsageSort}
-                    />
-                  </tr>
-                </thead>
-                <tbody>
-                  {unboundTokenUsage.map((item) => {
-                    const requestRate = resolveRequestRate(item, 'token')
-                    return (
-                    <tr key={item.tokenId}>
-                      <td className="admin-users-identity-cell">
-                        <button
-                          type="button"
-                          className="link-button admin-users-identity-button"
-                          aria-label={keyStrings.actions.details}
-                          onClick={() => navigateToken(item.tokenId, { preserveUnboundUsageContext: true })}
-                        >
-                          <strong>{item.tokenId}</strong>
-                        </button>
-                        <div className="panel-description admin-users-identity-meta">
-                          {formatUnboundTokenIdentityMeta(item.note, item.group, tokenStrings.groups.label)}
-                        </div>
-                      </td>
-                      <td>
-                        <StatusBadge tone={item.enabled ? 'success' : 'neutral'}>
-                          {item.enabled ? usersStrings.status.enabled : usersStrings.status.disabled}
-                        </StatusBadge>
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <AdminTableValueStack {...formatQuotaStackValue(requestRate.used, requestRate.limit)} />
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <AdminTableValueStack {...formatQuotaStackValue(item.quotaHourlyUsed, item.quotaHourlyLimit)} />
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <AdminTableValueStack {...formatQuotaStackValue(item.quotaDailyUsed, item.quotaDailyLimit)} />
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <AdminTableValueStack {...formatQuotaStackValue(item.quotaMonthlyUsed, item.quotaMonthlyLimit)} />
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        {item.monthlyBrokenCount == null || item.monthlyBrokenLimit == null ? (
-                          <AdminTableValueStack primary="—" />
-                        ) : (
-                          (() => {
-                            const metric = formatMonthlyBrokenStackValue(
-                              item.monthlyBrokenCount,
-                              item.monthlyBrokenLimit,
-                            )
-                            return (
-                              <div className="admin-table-value-stack">
-                                <MonthlyBrokenCountTrigger
-                                  count={item.monthlyBrokenCount}
-                                  onOpen={() => openMonthlyBrokenDrawer('token', item.tokenId, item.tokenId)}
-                                  ariaLabel={usersStrings.brokenKeys.openDetails.replace('{label}', item.tokenId)}
-                                  className={metric.primaryClassName}
-                                />
-                                <span className="admin-table-value-secondary">{metric.secondary}</span>
-                              </div>
-                            )
-                          })()
-                        )}
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <AdminTableValueStack {...formatSuccessRateStackValue(item.dailySuccess, item.dailyFailure, language)} />
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <AdminTableValueStack {...formatSuccessRateStackValue(item.monthlySuccess, item.monthlyFailure, language)} />
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <AdminTableValueStack {...formatStackedTimestamp(item.lastUsedAt, language)} />
-                      </td>
-                    </tr>
-                  )})}
-                </tbody>
-              </>
-            )}
-          </AdminTableShell>
-
-          <AdminLoadingRegion
-            className="admin-mobile-list admin-responsive-down"
-            loadState={unboundTokenUsageLoadState}
-            loadingLabel={
-              unboundTokenUsageRefreshing
-                ? loadingStateStrings.refreshing
-                : unboundTokenUsageStrings.empty.loading
-            }
-            errorLabel={unboundTokenUsageError ?? loadingStateStrings.error}
-            minHeight={260}
-          >
-            {unboundTokenUsage.length === 0 ? (
-              <div className="empty-state alert">{unboundTokenUsageStrings.empty.none}</div>
-            ) : (
-              unboundTokenUsage.map((item) => {
-                const requestRate = resolveRequestRate(item, 'token')
-                return (
-                <article key={item.tokenId} className="admin-mobile-card">
-                  <div className="admin-mobile-identity-block">
-                    <div className="admin-mobile-identity-row">
-                      <span className="admin-mobile-identity-label">{unboundTokenUsageStrings.table.identity}</span>
-                      <button
-                        type="button"
-                        className="link-button admin-users-mobile-link"
-                        aria-label={keyStrings.actions.details}
-                        onClick={() => navigateToken(item.tokenId, { preserveUnboundUsageContext: true })}
-                      >
-                        <strong>{item.tokenId}</strong>
-                      </button>
-                    </div>
-                    <div className="panel-description admin-mobile-identity-meta">
-                      {formatUnboundTokenIdentityMeta(item.note, item.group, tokenStrings.groups.label)}
-                    </div>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{unboundTokenUsageStrings.table.status}</span>
-                    <StatusBadge tone={item.enabled ? 'success' : 'neutral'}>
-                      {item.enabled ? usersStrings.status.enabled : usersStrings.status.disabled}
-                    </StatusBadge>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{formatRequestRateSummary(requestRate, language)}</span>
-                    <strong>{formatQuotaUsagePair(requestRate.used, requestRate.limit)}</strong>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{unboundTokenUsageStrings.table.hourly}</span>
-                    <strong>{formatQuotaUsagePair(item.quotaHourlyUsed, item.quotaHourlyLimit)}</strong>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{unboundTokenUsageStrings.table.daily}</span>
-                    <strong>{formatQuotaUsagePair(item.quotaDailyUsed, item.quotaDailyLimit)}</strong>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{unboundTokenUsageStrings.table.monthly}</span>
-                    <strong>{formatQuotaUsagePair(item.quotaMonthlyUsed, item.quotaMonthlyLimit)}</strong>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{unboundTokenUsageStrings.table.monthlyBroken}</span>
-                    {item.monthlyBrokenCount == null || item.monthlyBrokenLimit == null ? (
-                      <strong>—</strong>
-                    ) : item.monthlyBrokenCount > 0 ? (
-                      <button
-                        type="button"
-                        className="link-button"
-                        onClick={() => openMonthlyBrokenDrawer('token', item.tokenId, item.tokenId)}
-                      >
-                        <strong>{formatQuotaUsagePair(item.monthlyBrokenCount, item.monthlyBrokenLimit)}</strong>
-                      </button>
-                    ) : (
-                      <strong>{formatQuotaUsagePair(item.monthlyBrokenCount, item.monthlyBrokenLimit)}</strong>
-                    )}
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{unboundTokenUsageStrings.table.dailySuccessRate}</span>
-                    <strong>{formatCompactSuccessRateValue(item.dailySuccess, item.dailyFailure, language)}</strong>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{unboundTokenUsageStrings.table.monthlySuccessRate}</span>
-                    <strong>{formatCompactSuccessRateValue(item.monthlySuccess, item.monthlyFailure, language)}</strong>
-                  </div>
-                  <div className="admin-mobile-kv">
-                    <span>{unboundTokenUsageStrings.table.lastUsed}</span>
-                    <strong>{formatTimestamp(item.lastUsedAt)}</strong>
-                  </div>
-                </article>
-              )})
-            )}
-          </AdminLoadingRegion>
-
-          {unboundTokenUsageTotal > USERS_PER_PAGE && (
-            <AdminTablePagination
-              page={unboundTokenUsagePage}
-              totalPages={unboundTokenUsageTotalPages}
-              pageSummary={
-                <span className="panel-description">
-                  {usersStrings.pagination
-                    .replace('{page}', String(unboundTokenUsagePage))
-                    .replace('{total}', String(unboundTokenUsageTotalPages))}
-                </span>
-              }
-              previousLabel={tokenStrings.pagination.prev}
-              nextLabel={tokenStrings.pagination.next}
-              previousDisabled={unboundTokenUsagePage <= 1}
-              nextDisabled={unboundTokenUsagePage >= unboundTokenUsageTotalPages}
-              disabled={unboundTokenUsageBlocking}
-              onPrevious={goPrevUnboundTokenUsagePage}
-              onNext={goNextUnboundTokenUsagePage}
-            />
-          )}
-        </section>
+          }
+          loadState={unboundTokenUsageLoadState}
+          loadingLabel={
+            unboundTokenUsageRefreshing ? loadingStateStrings.refreshing : unboundTokenUsageStrings.empty.loading
+          }
+          errorLabel={unboundTokenUsageError ?? loadingStateStrings.error}
+          activeSortField={effectiveUnboundTokenUsageSort}
+          activeSortOrder={effectiveUnboundTokenUsageSortOrder}
+          onToggleSort={toggleUnboundTokenUsageSort}
+          onOpenToken={(tokenId) => navigateToken(tokenId, { preserveUnboundUsageContext: true })}
+          onOpenMonthlyBrokenDrawer={(tokenId, label) => openMonthlyBrokenDrawer('token', tokenId, label)}
+          formatNumber={formatNumber}
+          formatTimestamp={formatTimestamp}
+          formatQuotaUsagePair={formatQuotaUsagePair}
+          formatQuotaStackValue={formatQuotaStackValue}
+          formatCompactSuccessRateValue={formatCompactSuccessRateValue}
+          formatStackedTimestamp={formatStackedTimestamp}
+          formatMonthlyBrokenStackValue={formatMonthlyBrokenStackValue}
+          pagination={
+            unboundTokenUsageTotal > USERS_PER_PAGE ? (
+              <AdminTablePagination
+                page={unboundTokenUsagePage}
+                totalPages={unboundTokenUsageTotalPages}
+                pageSummary={
+                  <span className="panel-description">
+                    {usersStrings.pagination
+                      .replace('{page}', String(unboundTokenUsagePage))
+                      .replace('{total}', String(unboundTokenUsageTotalPages))}
+                  </span>
+                }
+                previousLabel={tokenStrings.pagination.prev}
+                nextLabel={tokenStrings.pagination.next}
+                previousDisabled={unboundTokenUsagePage <= 1}
+                nextDisabled={unboundTokenUsagePage >= unboundTokenUsageTotalPages}
+                disabled={unboundTokenUsageBlocking}
+                onPrevious={goPrevUnboundTokenUsagePage}
+                onNext={goNextUnboundTokenUsagePage}
+              />
+            ) : null
+          }
+        />
         {appFooter}
       </AdminShell>
     )
@@ -9850,7 +9367,6 @@ function AdminDashboard(): JSX.Element {
   const showSystemSettingsHa = showSystemSettings && systemSettingsView === 'ha'
   const showProxySettings = activeModule === 'proxy-settings'
   const headerUpdatedTime = lastUpdated ? timeOnlyFormatter.format(lastUpdated) : null
-  const isStackedAdminLayout = useAdminStackedLayout()
 
   const moduleDesktopUtility = (
     <AdminShellSidebarUtility>
@@ -10010,14 +9526,6 @@ function AdminDashboard(): JSX.Element {
       ariaLabel={moduleDesktopIntro.title}
     />
   )
-  const openDashboardRecentAlerts = useCallback(() => {
-    const now = new Date()
-    navigateToPath(alertsPath({
-      view: 'groups',
-      since: formatIso8601WithOffset(new Date(now.getTime() - 24 * 60 * 60 * 1000)),
-      until: formatIso8601WithOffset(now),
-    }))
-  }, [navigateToPath])
   const renderUsersSearchControls = (className?: string) => (
     <div style={{ display: 'grid', gap: 6 }}>
       <div className={['users-search-controls', className].filter(Boolean).join(' ')}>

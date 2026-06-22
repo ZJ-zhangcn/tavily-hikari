@@ -604,9 +604,19 @@ function createDemoUser(
     dailyFailure: number
     monthlySuccess: number
     monthlyFailure: number
+    businessCalls1h: {
+      successCount: number
+      failureCount: number
+      totalCount: number
+      windowMinutes: number
+    }
     lastLoginAt: number
   }> = {},
 ) {
+  const dailySuccess = overrides.dailySuccess ?? Math.max(1, dailyUsed - 18)
+  const dailyFailure = overrides.dailyFailure ?? 18
+  const monthlySuccess = overrides.monthlySuccess ?? Math.max(1, monthlyUsed - 140)
+  const monthlyFailure = overrides.monthlyFailure ?? 140
   return {
     userId,
     displayName,
@@ -637,10 +647,16 @@ function createDemoUser(
     quotaDailyLimit: dailyLimit,
     quotaMonthlyUsed: monthlyUsed,
     quotaMonthlyLimit: monthlyLimit,
-    dailySuccess: overrides.dailySuccess ?? Math.max(1, dailyUsed - 18),
-    dailyFailure: overrides.dailyFailure ?? 18,
-    monthlySuccess: overrides.monthlySuccess ?? Math.max(1, monthlyUsed - 140),
-    monthlyFailure: overrides.monthlyFailure ?? 140,
+    dailySuccess,
+    dailyFailure,
+    monthlySuccess,
+    monthlyFailure,
+    businessCalls1h: overrides.businessCalls1h ?? {
+      successCount: Math.max(0, Math.min(hourlyUsed, dailySuccess)),
+      failureCount: Math.max(0, Math.min(2, dailyFailure)),
+      totalCount: Math.max(0, Math.min(hourlyUsed, dailySuccess) + Math.max(0, Math.min(2, dailyFailure))),
+      windowMinutes: 60,
+    },
     monthlyBrokenCount: userId === 'user-ops' ? 3 : 1,
     monthlyBrokenLimit: 5,
     recentIpCount24h: overrides.recentIpCount24h ?? 3,
@@ -1901,6 +1917,7 @@ function handleUserRoute(path: string, url: URL, method: string, init?: RequestI
     quotaBase: { hourlyAnyLimit: 100, hourlyLimit: 100, dailyLimit: 1000, monthlyLimit: 10000, inheritsDefaults: true },
     effectiveQuota: { hourlyAnyLimit: user.hourlyAnyLimit, hourlyLimit: user.quotaHourlyLimit, dailyLimit: user.quotaDailyLimit, monthlyLimit: user.quotaMonthlyLimit, inheritsDefaults: false },
     quotaBreakdown: [],
+    businessCalls1h: user.businessCalls1h,
     recentIpAddresses24h: ['198.51.100.24', '203.0.113.45'],
     recentIpAddresses7d: ['198.51.100.24', '203.0.113.45', '192.0.2.14'],
     recentIpTimeline7d: range(3).map((index) => ({ ipAddress: `198.51.100.${20 + index}`, firstSeenAt: nowSeconds(-(index + 1) * 86400), lastSeenAt: nowSeconds(-index * 2400), requestCount: 20 + index })),
