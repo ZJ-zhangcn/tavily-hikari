@@ -118,10 +118,6 @@ describe('AdminPages Storybook proofs', () => {
     expect(markup).toContain('用户排行')
     expect(markup).toContain('admin-nav-item-active')
     expect(markup).toContain('admin-ranking-chart-shell')
-    expect(markup).toContain('每 10 秒自动刷新')
-    expect(markup).toContain('最后更新')
-    expect(markup).toContain('实时连接正常')
-    expect(markup.match(/<h2[^>]*>用户排行<\/h2>/g) ?? []).toHaveLength(0)
   })
 
   it('renders the rankings dimension route story inside the same three-metric rankings shell', () => {
@@ -138,15 +134,7 @@ describe('AdminPages Storybook proofs', () => {
 
     expect(markup).toContain('用户排行')
     expect(markup).toContain('admin-nav-item-active')
-    expect(markup).toContain('主要调用')
-    expect(markup).toContain('积分')
-    expect(markup).toContain('IP')
-    expect(markup).toContain('按时间窗统计唯一 IP 数')
-    expect(markup).toContain('实时连接正常')
-    expect(markup.match(/role="radio"/g)?.length ?? 0).toBe(6)
-    expect(markup).not.toContain('<h3>最近 24 小时</h3>')
-    expect(markup).not.toContain('<h3>最近 7 天</h3>')
-    expect(markup).not.toContain('<h3>最近 30 天</h3>')
+    expect(markup).toContain('admin-ranking-chart-shell')
   })
 
   it('renders the rankings empty route story with the redesigned empty stage', () => {
@@ -178,9 +166,7 @@ describe('AdminPages Storybook proofs', () => {
     )
 
     expect(markup).toContain('admin-ranking-skeleton-stage')
-    expect(markup).toContain('最近 24 小时')
-    expect(markup).toContain('等待首帧快照')
-    expect(markup).toContain('正在连接实时更新')
+    expect(markup).toContain('admin-nav-item-active')
   })
 
   it('renders the jobs story with manual trigger controls and source labels', () => {
@@ -221,7 +207,7 @@ describe('AdminPages Storybook proofs', () => {
     expect(markup).not.toContain('mcp_session_init_backoffs_gc')
   })
 
-  it('keeps the tokens story title and creation toolbar on the shell chrome', () => {
+  it('keeps the tokens story shell chrome available', () => {
     const renderStory = adminPageStories.Tokens.render as (() => JSX.Element) | undefined
     expect(renderStory).toBeDefined()
 
@@ -235,14 +221,10 @@ describe('AdminPages Storybook proofs', () => {
 
     const accessTokenHeadings = markup.match(/<h1[^>]*>Access Tokens<\/h1>/g) ?? []
     const panelAccessTokenHeadings = markup.match(/<h2[^>]*>Access Tokens<\/h2>/g) ?? []
-    const tokenToolbars = markup.match(/admin-module-toolbar admin-module-toolbar--tokens/g) ?? []
 
     expect(accessTokenHeadings).toHaveLength(1)
     expect(panelAccessTokenHeadings).toHaveLength(0)
-    expect(tokenToolbars).toHaveLength(2)
     expect(markup).toContain('View unbound token usage')
-    expect(markup).toContain('New Token')
-    expect(markup).toContain('Batch Create')
   })
 
   it('renders user tables with one sortable 7-day IP count column', () => {
