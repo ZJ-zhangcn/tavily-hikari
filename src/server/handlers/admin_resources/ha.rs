@@ -305,7 +305,7 @@ async fn build_ha_baseline_reader(
         .await
         .map_err(internal_error)?;
     let export = preflight.export_info().await.map_err(internal_error)?;
-    {
+    let compressed_bytes = {
         let mut writer = CountingAsyncWriter::new();
         let mut encoder =
             ZstdEncoder::with_quality(&mut writer, async_compression::Level::Precise(3));
@@ -319,33 +319,29 @@ async fn build_ha_baseline_reader(
             .await
             .map_err(internal_error)?;
         encoder.shutdown().await.map_err(internal_error)?;
-        let compressed_bytes = writer.bytes();
+        writer.bytes()
+    };
+    if compressed_bytes > ha_baseline_max_compressed_bytes() {
         preflight.rollback().await.map_err(internal_error)?;
-        if compressed_bytes > ha_baseline_max_compressed_bytes() {
-            return Err((
-                StatusCode::PAYLOAD_TOO_LARGE,
-                format!(
-                    "HA payload exceeds compressed limit: {compressed_bytes} > {}",
-                    ha_baseline_max_compressed_bytes()
-                ),
-            ));
-        }
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            format!(
+                "HA payload exceeds compressed limit: {compressed_bytes} > {}",
+                ha_baseline_max_compressed_bytes()
+            ),
+        ));
     }
-    let mut session = proxy
-        .begin_ha_baseline_read(channel)
-        .await
-        .map_err(internal_error)?;
     let (writer, reader) = tokio::io::duplex(64 * 1024);
     let node_id = node_id.to_string();
     tokio::spawn(async move {
         let mut encoder = ZstdEncoder::with_quality(writer, async_compression::Level::Precise(3));
-        let result = session
+        let result = preflight
             .write_ndjson(&node_id, export.high_watermark, export.row_count, &mut encoder)
             .await;
         if result.is_ok() {
             let _ = encoder.shutdown().await;
         }
-        let _ = session.rollback().await;
+        let _ = preflight.rollback().await;
     });
     Ok(HaBaselineReader {
         reader,
@@ -390,17 +386,14 @@ async fn build_ha_events_reader(
         }
         event_count = event_count.div_ceil(2);
     };
-    preflight.rollback().await.map_err(internal_error)?;
-
-    let mut session = proxy.begin_ha_events_read(channel).await.map_err(map_ha_export_error)?;
     let (writer, reader) = tokio::io::duplex(64 * 1024);
     tokio::spawn(async move {
         let mut encoder = ZstdEncoder::with_quality(writer, async_compression::Level::Precise(3));
-        let result = session.write_ndjson(after, limit, event_count, &mut encoder).await;
+        let result = preflight.write_ndjson(after, limit, event_count, &mut encoder).await;
         if result.is_ok() {
             let _ = encoder.shutdown().await;
         }
-        let _ = session.rollback().await;
+        let _ = preflight.rollback().await;
     });
     Ok(HaEventsReader { reader, export })
 }
