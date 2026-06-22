@@ -10,6 +10,21 @@
 - Added per-node HA source settings persistence and admin API so the current instance can store a private source override, switch between direct origin and source group, and optionally apply the saved source to EdgeOne immediately. The startup config now also accepts `HA_SOURCE_KIND` and `HA_SOURCE_ORIGIN_GROUP_ID` as per-node defaults, while `EDGEONE_EXPECTED_ORIGIN_*` stays direct-origin only.
 - Locked the HA source settings request/response wire contract to lowercase `directOriginScheme` values (`http|https|follow`) by adding serde lowercase support on the shared Rust enum, while preserving the existing uppercase conversion for outbound EdgeOne payloads.
 - Added standby pull-based sync controlled by `HA_SYNC_SOURCE_URL`, `HA_INTERNAL_TOKEN`, and `HA_SYNC_INTERVAL_SECS`; active nodes no longer push snapshots.
+- Reworked HA baseline export so active nodes stream zstd NDJSON directly from SQLite rows instead
+  of materializing one giant baseline string before compression. The same active baseline route is
+  now used for `billing_ledger`, so repeated billing baseline exports do not recreate the previous
+  multi-GiB memory spike on the primary.
+- Reworked standby baseline/events import so node-to-node sync consumes `reqwest` byte streams
+  through async zstd decoders and applies records line-by-line inside explicit HA apply sessions.
+  Standby no longer buffers the whole response body, decoded blob, or a full in-memory event/baseline
+  vector before touching SQLite.
+- Split HA apply into session-based incremental baseline/events transactions. This keeps the channel
+  transaction semantics while avoiding the previous “parse everything into Vec, then apply” memory
+  pattern.
+- Added HA-role-aware forward-proxy runtime gating. `HA_MODE=single` keeps the existing eager
+  startup behavior, but `active_standby` now defers forward-proxy/xray initialization until the node
+  role allows business traffic. `standby`/`recovery` also skip the periodic forward-proxy maintenance
+  loop and report `/health=ok` without requiring xray readiness.
 - Replaced the old implicit single-channel HA contract with explicit `control` / `billing` /
   `runtime` channels carried over the same `/api/admin/ha/baseline`, `/api/admin/ha/events`, and
   `/api/admin/ha/events/ack` endpoints via a required `channel` contract.

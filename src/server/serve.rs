@@ -56,6 +56,15 @@ pub async fn serve(
     {
         tracing::warn!(component = "ha", event = "startup_node_state_persist_failed", err = %err, "HA startup node state persist warning");
     }
+    if let Err(err) = sync_forward_proxy_runtime_for_role(proxy.clone(), startup_ha_status.role).await {
+        tracing::warn!(
+            component = "forward_proxy",
+            event = "startup_runtime_role_sync_failed",
+            role = startup_ha_status.role.as_str(),
+            err = %err,
+            "forward-proxy startup runtime role sync failed"
+        );
+    }
     let state = Arc::new(AppState {
         proxy,
         static_dir: static_dir.clone(),
@@ -542,6 +551,24 @@ async fn reconcile_ha_startup_role(
     status
 }
 
+async fn sync_forward_proxy_runtime_for_role(
+    proxy: TavilyProxy,
+    role: tavily_hikari::HaNodeRole,
+) -> Result<(), ProxyError> {
+    let handle = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        handle.block_on(async move {
+            if role.allows_basic_business() {
+                proxy.ensure_forward_proxy_runtime_started().await
+            } else {
+                proxy.shutdown_forward_proxy_runtime().await
+            }
+        })
+    })
+    .await
+    .map_err(|err| ProxyError::Other(format!("forward-proxy runtime role sync join failed: {err}")))?
+}
+
 fn spawn_ha_standby_sync_task(state: Arc<AppState>) {
     let Some(source_url) = state.ha.sync_source_url() else {
         return;
@@ -624,10 +651,7 @@ async fn run_ha_standby_sync_once(
                 )
                 .into());
             }
-            let compressed = response.bytes().await?;
-            let decoded = zstd::stream::decode_all(compressed.as_ref())?;
-            let ndjson = String::from_utf8(decoded)?;
-            let result = state.proxy.apply_ha_baseline_ndjson(channel, &ndjson).await?;
+            let result = apply_ha_baseline_response_stream(&state.proxy, channel, response).await?;
             next_seq = result.high_watermark;
             state
                 .proxy
@@ -711,10 +735,7 @@ async fn run_ha_standby_sync_once(
             )
             .into());
         }
-        let compressed = response.bytes().await?;
-        let decoded = zstd::stream::decode_all(compressed.as_ref())?;
-        let ndjson = String::from_utf8(decoded)?;
-        let result = state.proxy.apply_ha_events_ndjson(channel, &ndjson).await?;
+        let result = apply_ha_events_response_stream(&state.proxy, channel, response).await?;
         if result.high_watermark > next_seq {
             next_seq = result.high_watermark;
             state
@@ -745,6 +766,76 @@ async fn run_ha_standby_sync_once(
     Ok(())
 }
 
+async fn apply_ha_baseline_response_stream(
+    proxy: &TavilyProxy,
+    channel: tavily_hikari::HaSyncChannel,
+    response: reqwest::Response,
+) -> Result<tavily_hikari::HaApplyResult, Box<dyn std::error::Error + Send + Sync>> {
+    let stream = response
+        .bytes_stream()
+        .map(|chunk| chunk.map_err(std::io::Error::other));
+    let reader = StreamReader::new(stream);
+    let decoder = ZstdDecoder::new(BufReader::new(reader));
+    let mut lines = BufReader::new(decoder).lines();
+    let mut session = proxy.begin_ha_baseline_apply(channel).await?;
+    loop {
+        let next_line = match lines.next_line().await {
+            Ok(next_line) => next_line,
+            Err(err) => {
+                let _ = session.abort().await;
+                return Err(err.into());
+            }
+        };
+        let Some(line) = next_line else {
+            break;
+        };
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Err(err) = session.apply_line(trimmed).await {
+            let _ = session.abort().await;
+            return Err(err.into());
+        }
+    }
+    session.finish().await.map_err(Into::into)
+}
+
+async fn apply_ha_events_response_stream(
+    proxy: &TavilyProxy,
+    channel: tavily_hikari::HaSyncChannel,
+    response: reqwest::Response,
+) -> Result<tavily_hikari::HaApplyResult, Box<dyn std::error::Error + Send + Sync>> {
+    let stream = response
+        .bytes_stream()
+        .map(|chunk| chunk.map_err(std::io::Error::other));
+    let reader = StreamReader::new(stream);
+    let decoder = ZstdDecoder::new(BufReader::new(reader));
+    let mut lines = BufReader::new(decoder).lines();
+    let mut session = proxy.begin_ha_events_apply(channel).await?;
+    loop {
+        let next_line = match lines.next_line().await {
+            Ok(next_line) => next_line,
+            Err(err) => {
+                let _ = session.abort().await;
+                return Err(err.into());
+            }
+        };
+        let Some(line) = next_line else {
+            break;
+        };
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Err(err) = session.apply_line(trimmed).await {
+            let _ = session.abort().await;
+            return Err(err.into());
+        }
+    }
+    session.finish().await.map_err(Into::into)
+}
+
 fn spawn_ha_edgeone_authority_task(state: Arc<AppState>) {
     if !state.ha.edgeone_authority_enabled() {
         return;
@@ -758,21 +849,39 @@ fn spawn_ha_edgeone_authority_task(state: Arc<AppState>) {
                 .await;
             match state.ha.refresh_authoritative_role().await {
                 Ok(status) => {
-                    if let Err(err) = async {
-                        state
-                            .proxy
-                            .persist_ha_node_state(
-                                &status.node_id,
-                                status.role,
-                                status.edgeone_origin.as_deref(),
-                                status.ha_source_effective.as_ref(),
-                                status.message.as_deref(),
-                            )
-                            .await?;
-                        state.proxy.flush_ha_state_writes().await
-                    }
-                    .await
+                    if let Err(err) =
+                        sync_forward_proxy_runtime_for_role(state.proxy.clone(), status.role).await
                     {
+                        tracing::warn!(
+                            component = "forward_proxy",
+                            event = "authority_runtime_role_sync_failed",
+                            role = status.role.as_str(),
+                            err = %err,
+                            "forward-proxy authority runtime role sync failed"
+                        );
+                    }
+                    let node_id = status.node_id.clone();
+                    let edgeone_origin = status.edgeone_origin.clone();
+                    let source_effective = status.ha_source_effective.clone();
+                    let message = status.message.clone();
+                    if let Err(err) = state
+                        .proxy
+                        .persist_ha_node_state(
+                            &node_id,
+                            status.role,
+                            edgeone_origin.as_deref(),
+                            source_effective.as_ref(),
+                            message.as_deref(),
+                        )
+                        .await
+                    {
+                        tracing::warn!(
+                            component = "ha",
+                            event = "authority_state_persist_failed",
+                            err = %err,
+                            "HA authority state persist failed"
+                        );
+                    } else if let Err(err) = state.proxy.flush_ha_state_writes().await {
                         tracing::warn!(
                             component = "ha",
                             event = "authority_state_persist_failed",

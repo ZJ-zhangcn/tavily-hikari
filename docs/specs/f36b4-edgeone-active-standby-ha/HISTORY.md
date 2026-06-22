@@ -100,3 +100,19 @@ HA source settings originally drifted across layers: the frontend, demo fixtures
 ## Source Settings Failure UX Hardening
 
 The HA source settings dialog previously dumped raw backend failure text straight into the modal body, which was both visually inconsistent and hard to scan. The accepted interaction keeps local input validation beside the affected field and reserves form-level remote failures for a formal destructive alert with operator-friendly copy plus a default-collapsed technical-details disclosure.
+
+## Streaming HA Memory Contract Revision
+
+Observed 101 memory growth showed that HA sync still had one large-object pipeline even after the
+channel split: active baseline export built a full NDJSON string for `billing_ledger`, then
+compressed it as one blob; standby baseline/events import downloaded and decoded whole zstd
+payloads before applying them. That behavior produced the `hinet-lam` standby OOM and also made
+the 101 primary look like it had a leak whenever billing baseline export repeated.
+
+- The accepted fix is to make HA baseline/export/import line-streaming end-to-end while preserving
+  the current zstd NDJSON wire contract.
+- `HA_MODE=single` keeps the old eager forward-proxy runtime startup semantics, but
+  `active_standby` standby/recovery roles now intentionally avoid prewarming xray/runtime before
+  they are promoted back into business-serving roles.
+- Readiness semantics split accordingly: active/full-business roles still treat xray readiness as a
+  health requirement, while standby/recovery roles do not.

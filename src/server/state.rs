@@ -892,6 +892,10 @@ async fn debug_is_admin(
 }
 
 async fn health_check(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let status = state.ha.status().await;
+    if status.mode == tavily_hikari::HaMode::ActiveStandby && !status.role.allows_basic_business() {
+        return (StatusCode::OK, "ok");
+    }
     if state.proxy.is_forward_proxy_xray_ready().await {
         (StatusCode::OK, "ok")
     } else {
