@@ -966,6 +966,42 @@ async fn ha_baseline_uses_zstd_and_excludes_call_records() {
 }
 
 #[tokio::test]
+async fn ha_baseline_returns_500_when_export_generation_fails() {
+    let _env = EnvVarGuard::set("TAVILY_TEST_FAIL_HA_BASELINE_EXPORT", "control");
+    let active_db = temp_db_path("ha-baseline-export-failure");
+    let active_db_str = active_db.to_string_lossy().to_string();
+    let active_proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-baseline-export-failure".to_string()],
+        DEFAULT_UPSTREAM,
+        &active_db_str,
+    )
+    .await
+    .expect("active proxy created");
+    let active_ha = tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig {
+        node_id: "node-active".to_string(),
+        database_path: Some(active_db_str.clone()),
+        ..tavily_hikari::HaConfig::default()
+    });
+    let active_addr = spawn_ha_admin_server(active_proxy, active_ha, true).await;
+
+    let response = Client::new()
+        .get(format!(
+            "http://{active_addr}/api/admin/ha/baseline?channel=control"
+        ))
+        .send()
+        .await
+        .expect("baseline request");
+    assert_eq!(response.status(), reqwest::StatusCode::INTERNAL_SERVER_ERROR);
+    let body = response.text().await.expect("baseline error body");
+    assert!(
+        body.contains("forced HA baseline export failure"),
+        "unexpected baseline error body: {body}"
+    );
+
+    let _ = std::fs::remove_file(active_db);
+}
+
+#[tokio::test]
 async fn ha_events_endpoint_returns_zstd_ndjson() {
     let db_path = temp_db_path("ha-events");
     let db_str = db_path.to_string_lossy().to_string();

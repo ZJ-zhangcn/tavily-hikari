@@ -589,24 +589,15 @@ impl HaRuntime {
         let now = self.backend_time.now_ts();
         {
             let mut state = self.state.write().await;
-            let previous_edgeone_origin = state.edgeone_origin.clone();
             state.edgeone_origin = target.as_ref().map(|target| target.target());
             state.last_edgeone_check_at = Some(now);
             match (self_is_origin, state.role) {
                 (true, HaNodeRole::Standby | HaNodeRole::Recovery) => {
-                    state.role = if previous_edgeone_origin.is_some() {
-                        HaNodeRole::ProvisionalMaster
-                    } else {
-                        HaNodeRole::FullMaster
-                    };
+                    state.role = HaNodeRole::ProvisionalMaster;
                     state.recovery_status = None;
-                    state.message = if previous_edgeone_origin.is_some() {
-                        Some(
-                            "EdgeOne origin now points to this node; finalize required".to_string(),
-                        )
-                    } else {
-                        None
-                    };
+                    state.message = Some(
+                        "EdgeOne origin now points to this node; finalize required".to_string(),
+                    );
                 }
                 (true, HaNodeRole::FullMaster) => {
                     state.recovery_status = None;
@@ -1434,7 +1425,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn authority_refresh_promotes_unknown_startup_origin_directly_to_full_master() {
+    async fn authority_refresh_promotes_unknown_startup_origin_to_provisional_master() {
         let edgeone_app = axum::Router::new().fallback(axum::routing::post(|| async {
             axum::Json(serde_json::json!({
                 "Response": {
@@ -1479,9 +1470,12 @@ mod tests {
             .refresh_authoritative_role()
             .await
             .expect("refresh role");
-        assert_eq!(status.role, HaNodeRole::FullMaster);
+        assert_eq!(status.role, HaNodeRole::ProvisionalMaster);
         assert_eq!(status.edgeone_origin.as_deref(), Some("node-a:8787"));
-        assert_eq!(status.message, None);
+        assert_eq!(
+            status.message.as_deref(),
+            Some("EdgeOne origin now points to this node; finalize required")
+        );
     }
 
     #[tokio::test]

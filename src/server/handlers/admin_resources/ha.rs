@@ -234,25 +234,9 @@ async fn get_admin_ha_baseline(
         .count_ha_baseline_rows(channel)
         .await
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-    let proxy = state.proxy.clone();
-    let node_id = status.node_id.clone();
-    let (writer, reader) = duplex(64 * 1024);
-    tokio::spawn(async move {
-        let mut encoder = ZstdEncoder::with_quality(writer, async_compression::Level::Precise(3));
-        if let Err(err) = proxy
-            .write_ha_baseline_ndjson(channel, &node_id, &mut encoder)
-            .await
-        {
-            tracing::warn!(
-                component = "ha",
-                event = "baseline_stream_write_failed",
-                channel = channel.as_str(),
-                err = %err,
-                "HA baseline stream write failed"
-            );
-        }
-        let _ = encoder.shutdown().await;
-    });
+    let reader = build_ha_baseline_reader(&state.proxy, channel, &status.node_id)
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
     Response::builder()
         .status(StatusCode::OK)
         .header(CONTENT_TYPE, "application/x-ndjson")
@@ -263,6 +247,38 @@ async fn get_admin_ha_baseline(
         .header("x-ha-row-count", row_count.to_string())
         .body(Body::from_stream(ReaderStream::new(reader)))
         .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
+}
+
+async fn build_ha_baseline_reader(
+    proxy: &TavilyProxy,
+    channel: tavily_hikari::HaSyncChannel,
+    node_id: &str,
+) -> Result<tokio::fs::File, ProxyError> {
+    #[cfg(test)]
+    if std::env::var("TAVILY_TEST_FAIL_HA_BASELINE_EXPORT")
+        .ok()
+        .as_deref()
+        .is_some_and(|value| value == "1" || value.eq_ignore_ascii_case(channel.as_str()))
+    {
+        return Err(ProxyError::Other(
+            "forced HA baseline export failure".to_string(),
+        ));
+    }
+    let std_file = tempfile::tempfile().map_err(|err| ProxyError::Other(err.to_string()))?;
+    let file = tokio::fs::File::from_std(std_file);
+    let mut encoder = ZstdEncoder::with_quality(file, async_compression::Level::Precise(3));
+    proxy
+        .write_ha_baseline_ndjson(channel, node_id, &mut encoder)
+        .await?;
+    encoder
+        .shutdown()
+        .await
+        .map_err(|err| ProxyError::Other(err.to_string()))?;
+    let mut file = encoder.into_inner();
+    file.seek(SeekFrom::Start(0))
+        .await
+        .map_err(|err| ProxyError::Other(err.to_string()))?;
+    Ok(file)
 }
 
 async fn get_admin_ha_events(
