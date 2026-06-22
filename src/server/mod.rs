@@ -39,7 +39,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::path::Component;
-use tokio::io::{AsyncBufReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, SeekFrom};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use url::form_urlencoded;
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SummarySig {

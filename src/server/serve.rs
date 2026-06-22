@@ -555,9 +555,8 @@ async fn sync_forward_proxy_runtime_for_role(
     proxy: TavilyProxy,
     role: tavily_hikari::HaNodeRole,
 ) -> Result<(), ProxyError> {
-    let handle = tokio::runtime::Handle::current();
-    tokio::task::spawn_blocking(move || {
-        handle.block_on(async move {
+    tokio::task::block_in_place(move || {
+        tokio::runtime::Handle::current().block_on(async move {
             if role.allows_basic_business() {
                 proxy.ensure_forward_proxy_runtime_started().await
             } else {
@@ -565,8 +564,6 @@ async fn sync_forward_proxy_runtime_for_role(
             }
         })
     })
-    .await
-    .map_err(|err| ProxyError::Other(format!("forward-proxy runtime role sync task failed: {err}")))?
 }
 
 fn spawn_ha_standby_sync_task(state: Arc<AppState>) {

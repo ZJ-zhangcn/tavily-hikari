@@ -38,6 +38,13 @@ pub struct HaBaselineApplySession {
 }
 
 #[derive(Debug)]
+pub struct HaBaselineReadSession {
+    channel: HaSyncChannel,
+    conn: sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    generated_at: i64,
+}
+
+#[derive(Debug)]
 pub struct HaEventsApplySession {
     channel: HaSyncChannel,
     conn: sqlx::pool::PoolConnection<sqlx::Sqlite>,
@@ -414,151 +421,41 @@ impl KeyStore {
     where
         W: AsyncWrite + Unpin + Send,
     {
-        let high_watermark = self.ha_channel_high_watermark(channel).await?;
-        let mut row_count = 0_usize;
-        let start_line = serde_json::to_string(&serde_json::json!({
-            "schemaVersion": HA_SCHEMA_VERSION,
-            "kind": "baseline_start",
-            "channel": channel,
-            "nodeId": node_id,
-            "generatedAt": self.backend_time.now_ts(),
-            "highWatermark": high_watermark,
-            "encoding": "zstd-ndjson"
-        }))
-        .map_err(|err| ProxyError::Other(err.to_string()))?;
-        writer
-            .write_all(start_line.as_bytes())
-            .await
-            .map_err(|err| ProxyError::Other(err.to_string()))?;
-        writer
-            .write_all(b"\n")
-            .await
-            .map_err(|err| ProxyError::Other(err.to_string()))?;
-
-        for table in ha_baseline_tables(channel) {
-            if !self.table_exists(table).await? {
-                continue;
-            }
-            let columns = self.table_columns(table).await?;
-            if columns.is_empty() {
-                continue;
-            }
-            let json_args = columns
-                .iter()
-                .map(|column| {
-                    format!(
-                        "{}, {}",
-                        quote_sqlite_string(column),
-                        quote_sqlite_identifier(column)
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            let sql = if *table == "meta" {
-                format!(
-                    "SELECT json_object({json_args}) AS row_json FROM {} WHERE key IN ({}) ORDER BY key ASC",
-                    quote_sqlite_identifier(table),
-                    ha_meta_key_list_sql()
-                )
-            } else {
-                format!(
-                    "SELECT json_object({json_args}) AS row_json FROM {} ORDER BY rowid ASC",
-                    quote_sqlite_identifier(table)
-                )
-            };
-            let mut rows = sqlx::query_scalar::<_, String>(&sql).fetch(&self.pool);
-            while let Some(raw_row) = rows.try_next().await? {
-                let row: serde_json::Value = serde_json::from_str(&raw_row).map_err(|err| {
-                    ProxyError::Other(format!("invalid HA baseline row: {err}"))
-                })?;
-                let row = sanitize_ha_resource_payload(table, row);
-                let line = serde_json::to_string(&serde_json::json!({
-                    "schemaVersion": HA_SCHEMA_VERSION,
-                    "kind": "resource",
-                    "channel": channel,
-                    "resource": table,
-                    "op": "upsert",
-                    "data": row
-                }))
-                .map_err(|err| ProxyError::Other(err.to_string()))?;
-                writer
-                    .write_all(line.as_bytes())
-                    .await
-                    .map_err(|err| ProxyError::Other(err.to_string()))?;
-                writer
-                    .write_all(b"\n")
-                    .await
-                    .map_err(|err| ProxyError::Other(err.to_string()))?;
-                row_count += 1;
-            }
-        }
-
-        let end_line = serde_json::to_string(&serde_json::json!({
-            "schemaVersion": HA_SCHEMA_VERSION,
-            "kind": "baseline_end",
-            "channel": channel,
-            "nodeId": node_id,
-            "highWatermark": high_watermark,
-            "rowCount": row_count
-        }))
-        .map_err(|err| ProxyError::Other(err.to_string()))?;
-        writer
-            .write_all(end_line.as_bytes())
-            .await
-            .map_err(|err| ProxyError::Other(err.to_string()))?;
-        writer
-            .write_all(b"\n")
-            .await
-            .map_err(|err| ProxyError::Other(err.to_string()))?;
-        writer
-            .flush()
-            .await
-            .map_err(|err| ProxyError::Other(err.to_string()))?;
-        Ok(HaApplyResult {
-            channel,
-            high_watermark,
-            row_count,
-        })
+        let mut session = self.begin_ha_baseline_read(channel).await?;
+        let export = session.export_info().await?;
+        session
+            .write_ndjson(node_id, export.high_watermark, export.row_count, writer)
+            .await?;
+        Ok(export)
     }
 
     pub(crate) async fn count_ha_baseline_rows(
         &self,
         channel: HaSyncChannel,
     ) -> Result<usize, ProxyError> {
-        let mut total = 0_i64;
-        for table in ha_baseline_tables(channel) {
-            if !self.table_exists(table).await? {
-                continue;
-            }
-            let sql = if *table == "meta" {
-                format!(
-                    "SELECT COUNT(*) FROM {} WHERE key IN ({})",
-                    quote_sqlite_identifier(table),
-                    ha_meta_key_list_sql()
-                )
-            } else {
-                format!("SELECT COUNT(*) FROM {}", quote_sqlite_identifier(table))
-            };
-            total += sqlx::query_scalar::<_, i64>(&sql)
-                .fetch_one(&self.pool)
-                .await?;
-        }
-        Ok(total.max(0) as usize)
+        let mut conn = self.pool.acquire().await?;
+        Self::count_ha_baseline_rows_on_conn(&mut conn, channel).await
     }
 
     pub(crate) async fn ha_channel_high_watermark(
         &self,
         channel: HaSyncChannel,
     ) -> Result<i64, ProxyError> {
-        Ok(
-            sqlx::query_scalar::<_, Option<i64>>(&format!(
-                "SELECT MAX(seq) FROM {}",
-                quote_sqlite_identifier(ha_channel_event_table(channel))
-            ))
-                .fetch_one(&self.pool)
-                .await?
-                .unwrap_or(0),
-        )
+        let mut conn = self.pool.acquire().await?;
+        Self::ha_channel_high_watermark_on_conn(&mut conn, channel).await
+    }
+
+    pub(crate) async fn begin_ha_baseline_read(
+        &self,
+        channel: HaSyncChannel,
+    ) -> Result<HaBaselineReadSession, ProxyError> {
+        let mut conn = self.pool.acquire().await?;
+        sqlx::query("BEGIN").execute(&mut *conn).await?;
+        Ok(HaBaselineReadSession {
+            channel,
+            conn,
+            generated_at: self.backend_time.now_ts(),
+        })
     }
 
     pub(crate) async fn get_ha_sync_watermark(
@@ -930,6 +827,63 @@ impl KeyStore {
         Self::table_columns_on_conn(&mut conn, table).await
     }
 
+    async fn table_exists_on_conn(
+        conn: &mut sqlx::pool::PoolConnection<Sqlite>,
+        table: &str,
+    ) -> Result<bool, ProxyError> {
+        let sql = if is_observability_table(table) {
+            "SELECT EXISTS(SELECT 1 FROM observability.sqlite_master WHERE type = 'table' AND name = ?)"
+        } else {
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?)"
+        };
+        Ok(sqlx::query_scalar::<_, i64>(sql)
+            .bind(table)
+            .fetch_one(&mut **conn)
+            .await?
+            != 0)
+    }
+
+    async fn count_ha_baseline_rows_on_conn(
+        conn: &mut sqlx::pool::PoolConnection<Sqlite>,
+        channel: HaSyncChannel,
+    ) -> Result<usize, ProxyError> {
+        let mut total = 0_i64;
+        for table in ha_baseline_tables(channel) {
+            if !Self::table_exists_on_conn(conn, table).await? {
+                continue;
+            }
+            let sql = if *table == "meta" {
+                format!(
+                    "SELECT COUNT(*) FROM {} WHERE key IN ({})",
+                    quote_sqlite_identifier(table),
+                    ha_meta_key_list_sql()
+                )
+            } else {
+                format!("SELECT COUNT(*) FROM {}", quote_sqlite_identifier(table))
+            };
+            total += sqlx::query_scalar::<_, i64>(&sql)
+                .fetch_one(&mut **conn)
+                .await?;
+        }
+        Ok(total.max(0) as usize)
+    }
+
+    async fn ha_channel_high_watermark_on_conn(
+        conn: &mut sqlx::pool::PoolConnection<Sqlite>,
+        channel: HaSyncChannel,
+    ) -> Result<i64, ProxyError> {
+        Ok(
+            sqlx::query_scalar::<_, Option<i64>>(&format!(
+                "SELECT MAX(seq) FROM {}",
+                quote_sqlite_identifier(ha_channel_event_table(channel))
+            ))
+            .fetch_one(&mut **conn)
+            .await?
+            .unwrap_or(0),
+        )
+    }
+
+
     pub(crate) async fn configure_ha_event_writes(&self, mode: HaMode) -> Result<(), ProxyError> {
         self.repair_ha_triggers(mode).await.map(|_| ())
     }
@@ -1202,6 +1156,130 @@ fn ensure_ha_resource_whitelisted(
             "HA {} resource is not whitelisted: {resource}",
             channel.as_str()
         )))
+    }
+}
+
+impl HaBaselineReadSession {
+    pub async fn export_info(&mut self) -> Result<HaApplyResult, ProxyError> {
+        Ok(HaApplyResult {
+            channel: self.channel,
+            high_watermark: KeyStore::ha_channel_high_watermark_on_conn(&mut self.conn, self.channel)
+                .await?,
+            row_count: KeyStore::count_ha_baseline_rows_on_conn(&mut self.conn, self.channel).await?,
+        })
+    }
+
+    pub async fn rollback(mut self) -> Result<(), ProxyError> {
+        sqlx::query("ROLLBACK").execute(&mut *self.conn).await?;
+        Ok(())
+    }
+
+    pub async fn write_ndjson<W>(
+        &mut self,
+        node_id: &str,
+        high_watermark: i64,
+        row_count: usize,
+        writer: &mut W,
+    ) -> Result<(), ProxyError>
+    where
+        W: AsyncWrite + Unpin + Send,
+    {
+        let start_line = serde_json::to_string(&serde_json::json!({
+            "schemaVersion": HA_SCHEMA_VERSION,
+            "kind": "baseline_start",
+            "channel": self.channel,
+            "nodeId": node_id,
+            "generatedAt": self.generated_at,
+            "highWatermark": high_watermark,
+            "encoding": "zstd-ndjson"
+        }))
+        .map_err(|err| ProxyError::Other(err.to_string()))?;
+        writer
+            .write_all(start_line.as_bytes())
+            .await
+            .map_err(|err| ProxyError::Other(err.to_string()))?;
+        writer
+            .write_all(b"\n")
+            .await
+            .map_err(|err| ProxyError::Other(err.to_string()))?;
+
+        for table in ha_baseline_tables(self.channel) {
+            if !KeyStore::table_exists_on_conn(&mut self.conn, table).await? {
+                continue;
+            }
+            let columns = KeyStore::table_columns_on_conn(&mut self.conn, table).await?;
+            if columns.is_empty() {
+                continue;
+            }
+            let json_args = columns
+                .iter()
+                .map(|column| {
+                    format!(
+                        "{}, {}",
+                        quote_sqlite_string(column),
+                        quote_sqlite_identifier(column)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let sql = if *table == "meta" {
+                format!(
+                    "SELECT json_object({json_args}) AS row_json FROM {} WHERE key IN ({}) ORDER BY key ASC",
+                    quote_sqlite_identifier(table),
+                    ha_meta_key_list_sql()
+                )
+            } else {
+                format!(
+                    "SELECT json_object({json_args}) AS row_json FROM {} ORDER BY rowid ASC",
+                    quote_sqlite_identifier(table)
+                )
+            };
+            let mut rows = sqlx::query_scalar::<_, String>(&sql).fetch(&mut *self.conn);
+            while let Some(raw_row) = rows.try_next().await? {
+                let row: serde_json::Value = serde_json::from_str(&raw_row)
+                    .map_err(|err| ProxyError::Other(format!("invalid HA baseline row: {err}")))?;
+                let row = sanitize_ha_resource_payload(table, row);
+                let line = serde_json::to_string(&serde_json::json!({
+                    "schemaVersion": HA_SCHEMA_VERSION,
+                    "kind": "resource",
+                    "channel": self.channel,
+                    "resource": table,
+                    "op": "upsert",
+                    "data": row
+                }))
+                .map_err(|err| ProxyError::Other(err.to_string()))?;
+                writer
+                    .write_all(line.as_bytes())
+                    .await
+                    .map_err(|err| ProxyError::Other(err.to_string()))?;
+                writer
+                    .write_all(b"\n")
+                    .await
+                    .map_err(|err| ProxyError::Other(err.to_string()))?;
+            }
+        }
+
+        let end_line = serde_json::to_string(&serde_json::json!({
+            "schemaVersion": HA_SCHEMA_VERSION,
+            "kind": "baseline_end",
+            "channel": self.channel,
+            "nodeId": node_id,
+            "highWatermark": high_watermark,
+            "rowCount": row_count
+        }))
+        .map_err(|err| ProxyError::Other(err.to_string()))?;
+        writer
+            .write_all(end_line.as_bytes())
+            .await
+            .map_err(|err| ProxyError::Other(err.to_string()))?;
+        writer
+            .write_all(b"\n")
+            .await
+            .map_err(|err| ProxyError::Other(err.to_string()))?;
+        writer
+            .flush()
+            .await
+            .map_err(|err| ProxyError::Other(err.to_string()))
     }
 }
 

@@ -242,8 +242,47 @@ async fn get_admin_ha_baseline(
 }
 
 struct HaBaselineReader {
-    reader: tokio::fs::File,
+    reader: tokio::io::DuplexStream,
     export: tavily_hikari::HaApplyResult,
+}
+
+struct CountingAsyncWriter {
+    bytes: u64,
+}
+
+impl CountingAsyncWriter {
+    fn new() -> Self {
+        Self { bytes: 0 }
+    }
+
+    fn bytes(&self) -> u64 {
+        self.bytes
+    }
+}
+
+impl tokio::io::AsyncWrite for CountingAsyncWriter {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> std::task::Poll<Result<usize, std::io::Error>> {
+        self.bytes = self.bytes.saturating_add(buf.len() as u64);
+        std::task::Poll::Ready(Ok(buf.len()))
+    }
+
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Result<(), std::io::Error>> {
+        std::task::Poll::Ready(Ok(()))
+    }
 }
 
 async fn build_ha_baseline_reader(
@@ -262,33 +301,55 @@ async fn build_ha_baseline_reader(
             "forced HA baseline export failure".to_string(),
         ));
     }
-    let std_file = tempfile::tempfile().map_err(internal_error)?;
-    let file = tokio::fs::File::from_std(std_file);
-    let mut encoder = ZstdEncoder::with_quality(file, async_compression::Level::Precise(3));
-    let export = proxy
-        .write_ha_baseline_ndjson(channel, node_id, &mut encoder)
+    let mut preflight = proxy
+        .begin_ha_baseline_read(channel)
         .await
         .map_err(internal_error)?;
-    encoder
-        .shutdown()
-        .await
-        .map_err(internal_error)?;
-    let mut file = encoder.into_inner();
-    let compressed_bytes = file.metadata().await.map_err(internal_error)?.len();
-    if compressed_bytes > ha_baseline_max_compressed_bytes() {
-        return Err((
-            StatusCode::PAYLOAD_TOO_LARGE,
-            format!(
-                "HA payload exceeds compressed limit: {compressed_bytes} > {}",
-                ha_baseline_max_compressed_bytes()
-            ),
-        ));
+    let export = preflight.export_info().await.map_err(internal_error)?;
+    {
+        let mut writer = CountingAsyncWriter::new();
+        let mut encoder =
+            ZstdEncoder::with_quality(&mut writer, async_compression::Level::Precise(3));
+        preflight
+            .write_ndjson(
+                node_id,
+                export.high_watermark,
+                export.row_count,
+                &mut encoder,
+            )
+            .await
+            .map_err(internal_error)?;
+        encoder.shutdown().await.map_err(internal_error)?;
+        let compressed_bytes = writer.bytes();
+        preflight.rollback().await.map_err(internal_error)?;
+        if compressed_bytes > ha_baseline_max_compressed_bytes() {
+            return Err((
+                StatusCode::PAYLOAD_TOO_LARGE,
+                format!(
+                    "HA payload exceeds compressed limit: {compressed_bytes} > {}",
+                    ha_baseline_max_compressed_bytes()
+                ),
+            ));
+        }
     }
-    file.seek(SeekFrom::Start(0))
+    let mut session = proxy
+        .begin_ha_baseline_read(channel)
         .await
         .map_err(internal_error)?;
+    let (writer, reader) = tokio::io::duplex(64 * 1024);
+    let node_id = node_id.to_string();
+    tokio::spawn(async move {
+        let mut encoder = ZstdEncoder::with_quality(writer, async_compression::Level::Precise(3));
+        let result = session
+            .write_ndjson(&node_id, export.high_watermark, export.row_count, &mut encoder)
+            .await;
+        if result.is_ok() {
+            let _ = encoder.shutdown().await;
+        }
+        let _ = session.rollback().await;
+    });
     Ok(HaBaselineReader {
-        reader: file,
+        reader,
         export,
     })
 }
