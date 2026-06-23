@@ -41,9 +41,13 @@ pub use ha::*;
 pub use linuxdo_credit_recharge::*;
 pub use models::*;
 pub use runtime_logging::{
-    LegacyStdIoLevel, RuntimeLogFormat, emit_legacy_stdio_event, init_runtime_logging,
+    LegacyStdIoLevel, RuntimeLogFormat, RuntimeMemorySnapshot, RuntimePerfScope,
+    capture_runtime_memory_snapshot, emit_legacy_stdio_event, init_runtime_logging,
 };
-pub use store::{HaApplyResult, HaBaselineApplySession, HaEventsApplySession, HaEventsReadSession};
+pub use store::{
+    HaApplyResult, HaBaselineApplySession, HaEventsApplySession, HaEventsReadSession, PerfLogScope,
+    emit_low_memory_protection_decision,
+};
 pub use tavily_proxy::*;
 
 use std::{

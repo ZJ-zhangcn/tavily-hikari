@@ -44,6 +44,35 @@ struct HaEventsAckRequest {
 const HA_EVENTS_MAX_COMPRESSED_BYTES: usize = 4 * 1024 * 1024;
 const HA_BASELINE_MAX_COMPRESSED_BYTES: u64 = 64 * 1024 * 1024;
 
+fn emit_ha_perf_event(
+    event: &'static str,
+    elapsed: Duration,
+    channel: tavily_hikari::HaSyncChannel,
+    row_count: usize,
+    payload_bytes: usize,
+    compressed_bytes: u64,
+) {
+    let memory = tavily_hikari::capture_runtime_memory_snapshot();
+    tracing::info!(
+        component = "ha",
+        event,
+        elapsed_ms = elapsed.as_millis() as u64,
+        channel = channel.as_str(),
+        row_count = row_count as u64,
+        payload_bytes = payload_bytes as u64,
+        compressed_bytes,
+        memory_current_bytes = memory.memory_current_bytes.unwrap_or_default(),
+        memory_limit_bytes = memory.memory_limit_bytes.unwrap_or_default(),
+        headroom_bytes = memory.headroom_bytes.unwrap_or_default(),
+        process_rss_bytes = memory.process_rss_bytes.unwrap_or_default(),
+        child_process_rss_bytes = memory.child_process_rss_bytes.unwrap_or_default(),
+        process_group_rss_bytes = memory.process_group_rss_bytes.unwrap_or_default(),
+        process_hwm_bytes = memory.process_hwm_bytes.unwrap_or_default(),
+        process_swap_bytes = memory.process_swap_bytes.unwrap_or_default(),
+        "ha perf"
+    );
+}
+
 fn parse_ha_channel(raw: Option<&str>) -> Result<tavily_hikari::HaSyncChannel, (StatusCode, String)> {
     let Some(value) = raw else {
         return Err((
@@ -265,6 +294,7 @@ async fn build_ha_baseline_reader(
     channel: tavily_hikari::HaSyncChannel,
     node_id: &str,
 ) -> Result<HaBaselineReader, (StatusCode, String)> {
+    let started = Instant::now();
     #[cfg(test)]
     if std::env::var("TAVILY_TEST_FAIL_HA_BASELINE_EXPORT")
         .ok()
@@ -280,7 +310,7 @@ async fn build_ha_baseline_reader(
         .begin_ha_baseline_read(channel)
         .await
         .map_err(internal_error)?;
-    let export = preflight.export_info().await.map_err(internal_error)?;
+    let mut export = preflight.export_info().await.map_err(internal_error)?;
     let mut reader = create_ha_temp_output_file()?;
     let encode_result = {
         let mut encoder =
@@ -295,12 +325,15 @@ async fn build_ha_baseline_reader(
             .await
             .map_err(internal_error);
         match export_result {
-            Ok(()) => encoder.shutdown().await.map_err(internal_error),
+            Ok(payload_bytes) => match encoder.shutdown().await.map_err(internal_error) {
+                Ok(()) => Ok(payload_bytes),
+                Err(err) => Err(err),
+            },
             Err(err) => Err(err),
         }
     };
     let close_result = preflight.close().await.map_err(internal_error);
-    encode_result?;
+    export.payload_bytes = encode_result?;
     close_result?;
     let compressed_bytes = reader.metadata().await.map_err(internal_error)?.len();
     if compressed_bytes > ha_baseline_max_compressed_bytes() {
@@ -313,6 +346,14 @@ async fn build_ha_baseline_reader(
         ));
     }
     rewind_ha_temp_output_file(&mut reader).await?;
+    emit_ha_perf_event(
+        "baseline_export_completed",
+        started.elapsed(),
+        channel,
+        export.row_count,
+        export.payload_bytes,
+        compressed_bytes,
+    );
     Ok(HaBaselineReader { reader, export })
 }
 
@@ -322,6 +363,7 @@ async fn build_ha_events_reader(
     after: i64,
     limit: i64,
 ) -> Result<HaEventsReader, (StatusCode, String)> {
+    let started = Instant::now();
     let max_compressed_bytes = ha_events_max_compressed_bytes();
     let mut preflight = proxy.begin_ha_events_read(channel).await.map_err(map_ha_export_error)?;
     let available = preflight
@@ -354,6 +396,14 @@ async fn build_ha_events_reader(
         if compressed_bytes <= max_compressed_bytes {
             preflight.close().await.map_err(internal_error)?;
             rewind_ha_temp_output_file(&mut reader).await?;
+            emit_ha_perf_event(
+                "events_export_completed",
+                started.elapsed(),
+                channel,
+                export.row_count,
+                export.payload_bytes,
+                compressed_bytes,
+            );
             return Ok(HaEventsReader { reader, export });
         }
         if event_count <= 1 {

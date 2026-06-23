@@ -648,6 +648,7 @@ async fn run_ha_standby_sync_once(
         let mut next_seq = applied_seq;
 
         if !baseline_applied {
+            let baseline_started = Instant::now();
             let target = format!(
                 "{}/api/admin/ha/baseline?channel={}",
                 source_url.trim_end_matches('/'),
@@ -666,8 +667,29 @@ async fn run_ha_standby_sync_once(
                 )
                 .into());
             }
-        let result = apply_ha_baseline_response_stream(&state.proxy, channel, response).await?;
-        next_seq = result.high_watermark;
+            let result = apply_ha_baseline_response_stream(&state.proxy, channel, response).await?;
+            next_seq = result.high_watermark;
+            let memory = tavily_hikari::capture_runtime_memory_snapshot();
+            tracing::info!(
+                component = "ha",
+                event = "standby_sync_baseline_completed",
+                elapsed_ms = baseline_started.elapsed().as_millis() as u64,
+                source_url,
+                channel = channel.as_str(),
+                row_count = result.row_count as u64,
+                payload_bytes = result.payload_bytes as u64,
+                high_watermark = result.high_watermark,
+                baseline_applied = true,
+                memory_current_bytes = memory.memory_current_bytes.unwrap_or_default(),
+                memory_limit_bytes = memory.memory_limit_bytes.unwrap_or_default(),
+                headroom_bytes = memory.headroom_bytes.unwrap_or_default(),
+                process_rss_bytes = memory.process_rss_bytes.unwrap_or_default(),
+                child_process_rss_bytes = memory.child_process_rss_bytes.unwrap_or_default(),
+                process_group_rss_bytes = memory.process_group_rss_bytes.unwrap_or_default(),
+                process_hwm_bytes = memory.process_hwm_bytes.unwrap_or_default(),
+                process_swap_bytes = memory.process_swap_bytes.unwrap_or_default(),
+                "ha perf"
+            );
             state
                 .proxy
                 .persist_ha_sync_watermark(
@@ -707,6 +729,7 @@ async fn run_ha_standby_sync_once(
             channel.as_str(),
             next_seq
         );
+        let events_started = Instant::now();
         let response = client
             .get(target)
             .header("x-ha-internal-token", internal_token)
@@ -796,6 +819,28 @@ async fn run_ha_standby_sync_once(
                 .await?;
             state.proxy.flush_ha_state_writes().await?;
         }
+        let memory = tavily_hikari::capture_runtime_memory_snapshot();
+        tracing::info!(
+            component = "ha",
+            event = "standby_sync_events_completed",
+            elapsed_ms = events_started.elapsed().as_millis() as u64,
+            source_url,
+            channel = channel.as_str(),
+            row_count = result.row_count as u64,
+            payload_bytes = result.payload_bytes as u64,
+            high_watermark = result.high_watermark,
+            after_seq = applied_seq,
+            next_seq,
+            memory_current_bytes = memory.memory_current_bytes.unwrap_or_default(),
+            memory_limit_bytes = memory.memory_limit_bytes.unwrap_or_default(),
+            headroom_bytes = memory.headroom_bytes.unwrap_or_default(),
+            process_rss_bytes = memory.process_rss_bytes.unwrap_or_default(),
+            child_process_rss_bytes = memory.child_process_rss_bytes.unwrap_or_default(),
+            process_group_rss_bytes = memory.process_group_rss_bytes.unwrap_or_default(),
+            process_hwm_bytes = memory.process_hwm_bytes.unwrap_or_default(),
+            process_swap_bytes = memory.process_swap_bytes.unwrap_or_default(),
+            "ha perf"
+        );
         let ack_target = format!("{}/api/admin/ha/events/ack", source_url.trim_end_matches('/'));
         let _ = client
             .post(ack_target)
@@ -844,6 +889,7 @@ async fn apply_ha_baseline_response_stream(
     channel: tavily_hikari::HaSyncChannel,
     response: reqwest::Response,
 ) -> Result<tavily_hikari::HaApplyResult, Box<dyn std::error::Error + Send + Sync>> {
+    let started = Instant::now();
     let stream = response
         .bytes_stream()
         .map(|chunk| chunk.map_err(std::io::Error::other));
@@ -871,7 +917,26 @@ async fn apply_ha_baseline_response_stream(
             return Err(err.into());
         }
     }
-    session.finish().await.map_err(Into::into)
+    let result = session.finish().await.map_err(Box::<dyn std::error::Error + Send + Sync>::from)?;
+    let memory = tavily_hikari::capture_runtime_memory_snapshot();
+    tracing::info!(
+        component = "ha",
+        event = "baseline_import_completed",
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        channel = channel.as_str(),
+        row_count = result.row_count as u64,
+        payload_bytes = result.payload_bytes as u64,
+        memory_current_bytes = memory.memory_current_bytes.unwrap_or_default(),
+        memory_limit_bytes = memory.memory_limit_bytes.unwrap_or_default(),
+        headroom_bytes = memory.headroom_bytes.unwrap_or_default(),
+        process_rss_bytes = memory.process_rss_bytes.unwrap_or_default(),
+        child_process_rss_bytes = memory.child_process_rss_bytes.unwrap_or_default(),
+        process_group_rss_bytes = memory.process_group_rss_bytes.unwrap_or_default(),
+        process_hwm_bytes = memory.process_hwm_bytes.unwrap_or_default(),
+        process_swap_bytes = memory.process_swap_bytes.unwrap_or_default(),
+        "ha perf"
+    );
+    Ok(result)
 }
 
 async fn apply_ha_events_response_stream(
@@ -879,6 +944,7 @@ async fn apply_ha_events_response_stream(
     channel: tavily_hikari::HaSyncChannel,
     response: reqwest::Response,
 ) -> Result<tavily_hikari::HaApplyResult, Box<dyn std::error::Error + Send + Sync>> {
+    let started = Instant::now();
     let stream = response
         .bytes_stream()
         .map(|chunk| chunk.map_err(std::io::Error::other));
@@ -906,7 +972,26 @@ async fn apply_ha_events_response_stream(
             return Err(err.into());
         }
     }
-    session.finish().await.map_err(Into::into)
+    let result = session.finish().await.map_err(Box::<dyn std::error::Error + Send + Sync>::from)?;
+    let memory = tavily_hikari::capture_runtime_memory_snapshot();
+    tracing::info!(
+        component = "ha",
+        event = "events_import_completed",
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        channel = channel.as_str(),
+        row_count = result.row_count as u64,
+        payload_bytes = result.payload_bytes as u64,
+        memory_current_bytes = memory.memory_current_bytes.unwrap_or_default(),
+        memory_limit_bytes = memory.memory_limit_bytes.unwrap_or_default(),
+        headroom_bytes = memory.headroom_bytes.unwrap_or_default(),
+        process_rss_bytes = memory.process_rss_bytes.unwrap_or_default(),
+        child_process_rss_bytes = memory.child_process_rss_bytes.unwrap_or_default(),
+        process_group_rss_bytes = memory.process_group_rss_bytes.unwrap_or_default(),
+        process_hwm_bytes = memory.process_hwm_bytes.unwrap_or_default(),
+        process_swap_bytes = memory.process_swap_bytes.unwrap_or_default(),
+        "ha perf"
+    );
+    Ok(result)
 }
 
 fn spawn_ha_edgeone_authority_task(state: Arc<AppState>) {

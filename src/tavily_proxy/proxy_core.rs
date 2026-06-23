@@ -621,6 +621,20 @@ impl TavilyProxy {
     async fn initialize_forward_proxy_runtime_inner(&self) -> Result<(), ProxyError> {
         let init_result: Result<(), ProxyError> = async {
             let startup_started = Instant::now();
+            let startup_memory = capture_runtime_memory_snapshot();
+            info!(
+                component = "forward_proxy",
+                event = "startup_runtime_begin",
+                memory_current_bytes = startup_memory.memory_current_bytes.unwrap_or_default(),
+                memory_limit_bytes = startup_memory.memory_limit_bytes.unwrap_or_default(),
+                headroom_bytes = startup_memory.headroom_bytes.unwrap_or_default(),
+                process_rss_bytes = startup_memory.process_rss_bytes.unwrap_or_default(),
+                child_process_rss_bytes = startup_memory.child_process_rss_bytes.unwrap_or_default(),
+                process_group_rss_bytes = startup_memory.process_group_rss_bytes.unwrap_or_default(),
+                process_hwm_bytes = startup_memory.process_hwm_bytes.unwrap_or_default(),
+                process_swap_bytes = startup_memory.process_swap_bytes.unwrap_or_default(),
+                "forward-proxy runtime startup begin"
+            );
             let restored_subscription_endpoints = {
                 let manager = self.forward_proxy.lock().await;
                 manager.restored_subscription_endpoint_count()
@@ -683,19 +697,34 @@ impl TavilyProxy {
                 }
                 self.sync_forward_proxy_runtime_state(&mut manager).await?;
             }
+            let persisted_memory = capture_runtime_memory_snapshot();
             info!(
                 component = "forward_proxy",
                 event = "startup_runtime_snapshot_persisted",
                 elapsed_ms = persist_started.elapsed().as_millis() as u64,
+                memory_current_bytes = persisted_memory.memory_current_bytes.unwrap_or_default(),
+                memory_limit_bytes = persisted_memory.memory_limit_bytes.unwrap_or_default(),
+                headroom_bytes = persisted_memory.headroom_bytes.unwrap_or_default(),
                 "forward-proxy startup persisted xray sync and runtime snapshot"
             );
             let manager = self.forward_proxy.lock().await;
+            let manager_endpoint_count = manager.endpoints.len() as u64;
             forward_proxy::sync_manager_runtime_to_store(&self.key_store, &manager).await?;
+            let final_memory = capture_runtime_memory_snapshot();
             info!(
                 component = "forward_proxy",
                 event = "startup_runtime_store_synced",
                 phase_elapsed_ms = xray_started.elapsed().as_millis() as u64,
                 total_elapsed_ms = startup_started.elapsed().as_millis() as u64,
+                endpoint_count = manager_endpoint_count,
+                memory_current_bytes = final_memory.memory_current_bytes.unwrap_or_default(),
+                memory_limit_bytes = final_memory.memory_limit_bytes.unwrap_or_default(),
+                headroom_bytes = final_memory.headroom_bytes.unwrap_or_default(),
+                process_rss_bytes = final_memory.process_rss_bytes.unwrap_or_default(),
+                child_process_rss_bytes = final_memory.child_process_rss_bytes.unwrap_or_default(),
+                process_group_rss_bytes = final_memory.process_group_rss_bytes.unwrap_or_default(),
+                process_hwm_bytes = final_memory.process_hwm_bytes.unwrap_or_default(),
+                process_swap_bytes = final_memory.process_swap_bytes.unwrap_or_default(),
                 "forward-proxy startup synced runtime store"
             );
             Ok(())

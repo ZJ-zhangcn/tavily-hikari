@@ -14,6 +14,9 @@
   of materializing one giant baseline string before compression. The same active baseline route is
   now used for `billing_ledger`, so repeated billing baseline exports do not recreate the previous
   multi-GiB memory spike on the primary.
+- Added default structured HA perf events around baseline/events export + import + standby sync so
+  operators can read `elapsed_ms`, `row_count`, `payload_bytes`, `compressed_bytes`, and runtime
+  memory headroom directly from the default stderr logs without enabling a second telemetry system.
 - Reworked standby baseline/events import so node-to-node sync consumes `reqwest` byte streams
   through async zstd decoders and applies records line-by-line inside explicit HA apply sessions.
   Standby no longer buffers the whole response body, decoded blob, or a full in-memory event/baseline

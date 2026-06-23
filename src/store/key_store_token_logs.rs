@@ -300,11 +300,35 @@ impl KeyStore {
         until: Option<i64>,
         filters: TokenLogsCatalogFilters<'_>,
     ) -> Result<RequestLogsCatalog, ProxyError> {
+        let started = Instant::now();
         let cache_key = Self::token_logs_catalog_filters_are_empty(filters)
             .then(|| Self::token_logs_catalog_cache_key(token_id, since, until));
         if let Some(cache_key) = cache_key.as_deref()
             && let Some(cached) = self.cached_request_logs_catalog(cache_key).await
         {
+            emit_low_memory_protection_decision(
+                "admin_read",
+                PerfLogScope {
+                    route: Some("/api/tokens/:id/logs/catalog"),
+                    scope: Some("token"),
+                    row_count: Some(cached.request_kind_options.len()),
+                    degraded: Some("cache_hit"),
+                    ..Default::default()
+                },
+            );
+            emit_perf_log(
+                DbLogStatus::Info,
+                "admin_read",
+                "token_logs_catalog_completed",
+                started.elapsed(),
+                PerfLogScope {
+                    route: Some("/api/tokens/:id/logs/catalog"),
+                    scope: Some("token"),
+                    row_count: Some(cached.request_kind_options.len()),
+                    degraded: Some("cache_hit"),
+                    ..Default::default()
+                },
+            );
             return Ok(cached);
         }
 
@@ -316,6 +340,29 @@ impl KeyStore {
         if let Some(cache_key) = cache_key.as_deref()
             && let Some(cached) = self.cached_request_logs_catalog(cache_key).await
         {
+            emit_low_memory_protection_decision(
+                "admin_read",
+                PerfLogScope {
+                    route: Some("/api/tokens/:id/logs/catalog"),
+                    scope: Some("token"),
+                    row_count: Some(cached.request_kind_options.len()),
+                    degraded: Some("cache_hit"),
+                    ..Default::default()
+                },
+            );
+            emit_perf_log(
+                DbLogStatus::Info,
+                "admin_read",
+                "token_logs_catalog_completed",
+                started.elapsed(),
+                PerfLogScope {
+                    route: Some("/api/tokens/:id/logs/catalog"),
+                    scope: Some("token"),
+                    row_count: Some(cached.request_kind_options.len()),
+                    degraded: Some("cache_hit"),
+                    ..Default::default()
+                },
+            );
             return Ok(cached);
         }
 
@@ -373,6 +420,28 @@ impl KeyStore {
         if let Some(cache_key) = cache_key {
             self.cache_request_logs_catalog(cache_key, &catalog).await;
         }
+        emit_low_memory_protection_decision(
+            "admin_read",
+            PerfLogScope {
+                route: Some("/api/tokens/:id/logs/catalog"),
+                scope: Some("token"),
+                degraded: Some("full"),
+                ..Default::default()
+            },
+        );
+        emit_perf_log(
+            DbLogStatus::Info,
+            "admin_read",
+            "token_logs_catalog_completed",
+            started.elapsed(),
+            PerfLogScope {
+                route: Some("/api/tokens/:id/logs/catalog"),
+                scope: Some("token"),
+                row_count: Some(catalog.request_kind_options.len()),
+                degraded: Some("full"),
+                ..Default::default()
+            },
+        );
         Ok(catalog)
     }
 
@@ -393,6 +462,7 @@ impl KeyStore {
         cursor: Option<&RequestLogsCursor>,
         direction: RequestLogsCursorDirection,
     ) -> Result<TokenLogsCursorPage, ProxyError> {
+        let started = Instant::now();
         let page_size = page_size.clamp(1, 200);
         let query_limit = page_size + 1;
         let normalized_request_kinds = Self::normalize_request_kind_filters(request_kinds);
@@ -537,7 +607,7 @@ impl KeyStore {
         };
         let recovery_cursor = cursor.cloned();
 
-        Ok(TokenLogsCursorPage {
+        let result = TokenLogsCursorPage {
             next_cursor: has_older
                 .then(|| {
                     items
@@ -566,7 +636,32 @@ impl KeyStore {
             page_size,
             has_older,
             has_newer,
-        })
+        };
+        emit_low_memory_protection_decision(
+            "admin_read",
+            PerfLogScope {
+                route: Some("/api/tokens/:id/logs/list"),
+                scope: Some("token"),
+                page_size: Some(page_size),
+                degraded: Some("full"),
+                ..Default::default()
+            },
+        );
+        emit_perf_log(
+            DbLogStatus::Info,
+            "admin_read",
+            "token_logs_list_completed",
+            started.elapsed(),
+            PerfLogScope {
+                route: Some("/api/tokens/:id/logs/list"),
+                scope: Some("token"),
+                page_size: Some(page_size),
+                row_count: Some(result.items.len()),
+                degraded: Some("full"),
+                ..Default::default()
+            },
+        );
+        Ok(result)
     }
 
     #[allow(clippy::too_many_arguments)]

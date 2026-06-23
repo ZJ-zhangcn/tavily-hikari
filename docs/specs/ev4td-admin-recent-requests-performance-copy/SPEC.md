@@ -222,3 +222,6 @@
 - 2026-04-06：admin recent requests 的 retention-aware 文案、list/catalog 拆分、cursor 分页、路由懒加载与共享 Storybook 证据已完成，PR #219 已创建进入收敛阶段。
 - 2026-04-07：PR merge gate 跟进时发现 GitHub Actions `Docs Pages` 的 `build-storybook` hosted runner 在依赖安装后、进入构建步骤前异常卡死；已将 Storybook 的 install/build 合并为同一 CI step，补上 job timeout，并改用 Node CLI 执行静态构建以降低 runner 卡死面。该 follow-up 不改变本 spec 的产品范围与验收口径。
 - 2026-04-30：线上慢查询排查显示 `/api/logs` 与 catalog facets 可在高写入下重复触发 SQLite 长读；未过滤 catalog 改为 TTL 优先、legacy logs 默认 retention-bounded 且不选 body，并为日志重读增加有界并发保护。
+- 2026-06-23：为 global `/api/logs/list|catalog` 与 token-scoped `/api/tokens/:id/logs/list|catalog`
+  补齐默认 structured perf events，稳定输出 `elapsed_ms`、作用域、page size、row count 与 runtime
+  memory headroom，作为 owner-facing heavy-read 低内存保护与性能定位的默认证据面。

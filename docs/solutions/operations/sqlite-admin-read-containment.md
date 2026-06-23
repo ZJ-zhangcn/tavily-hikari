@@ -68,6 +68,9 @@ reads:
   immediately when summary totals, request-log signature, exhausted-key subset, disabled-token
   coverage, recent jobs, recent alerts, forward-proxy counts, quota-sync freshness, or current-hour
   anchor changes.
+- Keep default structured perf logs on the owner-facing read path itself. Dashboard overview/shared
+  snapshot and recent-request list/catalog endpoints should emit stable `component=admin_read event=...` records with `elapsed_ms`, route/scope metadata, and runtime memory headroom so low
+  memory protection can be triggered and diagnosed without ad-hoc debug builds.
 - For public metrics or SSE surfaces backed by request-stat rollups, gate synchronous flushes on
   persisted freshness plus the oldest pending coalesced write. Do not force a flush on every public
   read once the rollup window is already current enough.

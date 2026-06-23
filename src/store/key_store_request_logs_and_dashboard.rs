@@ -1096,6 +1096,7 @@ impl KeyStore {
         include_key_facets: bool,
         filters: RequestLogsCatalogFilters<'_>,
     ) -> Result<RequestLogsCatalog, ProxyError> {
+        let started = Instant::now();
         self.flush_request_stats_writes().await?;
         let since = Self::clamp_request_logs_rollup_since_at(
             since,
@@ -1115,6 +1116,29 @@ impl KeyStore {
         if let Some(cache_key) = cache_key.as_deref()
             && let Some(cached) = self.cached_request_logs_catalog(cache_key).await
         {
+            emit_low_memory_protection_decision(
+                "admin_read",
+                PerfLogScope {
+                    route: Some("/api/logs/catalog"),
+                    scope: Some(if scoped_key_id.is_some() { "key" } else { "global" }),
+                    row_count: Some(cached.request_kind_options.len()),
+                    degraded: Some("cache_hit"),
+                    ..Default::default()
+                },
+            );
+            emit_perf_log(
+                DbLogStatus::Info,
+                "admin_read",
+                "request_logs_catalog_completed",
+                started.elapsed(),
+                PerfLogScope {
+                    route: Some("/api/logs/catalog"),
+                    scope: Some(if scoped_key_id.is_some() { "key" } else { "global" }),
+                    row_count: Some(cached.request_kind_options.len()),
+                    degraded: Some("cache_hit"),
+                    ..Default::default()
+                },
+            );
             return Ok(cached);
         }
 
@@ -1161,6 +1185,28 @@ impl KeyStore {
         if let Some(cache_key) = cache_key {
             self.cache_request_logs_catalog(cache_key, &catalog).await;
         }
+        emit_low_memory_protection_decision(
+            "admin_read",
+            PerfLogScope {
+                route: Some("/api/logs/catalog"),
+                scope: Some(if scoped_key_id.is_some() { "key" } else { "global" }),
+                degraded: Some("full"),
+                ..Default::default()
+            },
+        );
+        emit_perf_log(
+            DbLogStatus::Info,
+            "admin_read",
+            "request_logs_catalog_completed",
+            started.elapsed(),
+            PerfLogScope {
+                route: Some("/api/logs/catalog"),
+                scope: Some(if scoped_key_id.is_some() { "key" } else { "global" }),
+                row_count: Some(catalog.request_kind_options.len()),
+                degraded: Some("full"),
+                ..Default::default()
+            },
+        );
         Ok(catalog)
     }
 
@@ -1183,6 +1229,7 @@ impl KeyStore {
         direction: RequestLogsCursorDirection,
         page_size: i64,
     ) -> Result<RequestLogsCursorPage, ProxyError> {
+        let started = Instant::now();
         let retention_days = self
             .get_system_settings()
             .await?
@@ -1393,7 +1440,7 @@ impl KeyStore {
         };
         let recovery_cursor = cursor.cloned();
 
-        Ok(RequestLogsCursorPage {
+        let result = RequestLogsCursorPage {
             next_cursor: has_older
                 .then(|| {
                     items
@@ -1422,7 +1469,32 @@ impl KeyStore {
             page_size,
             has_older,
             has_newer,
-        })
+        };
+        emit_low_memory_protection_decision(
+            "admin_read",
+            PerfLogScope {
+                route: Some("/api/logs/list"),
+                scope: Some(if scoped_key_id.is_some() { "key" } else { "global" }),
+                page_size: Some(page_size),
+                degraded: Some("full"),
+                ..Default::default()
+            },
+        );
+        emit_perf_log(
+            DbLogStatus::Info,
+            "admin_read",
+            "request_logs_list_completed",
+            started.elapsed(),
+            PerfLogScope {
+                route: Some("/api/logs/list"),
+                scope: Some(if scoped_key_id.is_some() { "key" } else { "global" }),
+                page_size: Some(page_size),
+                row_count: Some(result.items.len()),
+                degraded: Some("full"),
+                ..Default::default()
+            },
+        );
+        Ok(result)
     }
 
     #[allow(clippy::too_many_arguments)]
