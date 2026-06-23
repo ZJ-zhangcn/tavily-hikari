@@ -947,10 +947,20 @@ async fn get_dashboard_overview(
     if !is_admin_request(state.as_ref(), &headers) {
         return Err(StatusCode::FORBIDDEN);
     }
-
     load_dashboard_overview_snapshot(&state)
         .await
-        .map(|snapshot| Json(snapshot.payload))
+        .map(|snapshot| {
+            tavily_hikari::emit_low_memory_protection_decision(
+                "admin_read",
+                tavily_hikari::PerfLogScope {
+                    route: Some("/api/dashboard/overview"),
+                    scope: Some("dashboard"),
+                    degraded: Some("full"),
+                    ..Default::default()
+                },
+            );
+            Json(snapshot.payload)
+        })
         .map_err(|err| {
             eprintln!("dashboard overview error: {err}");
             StatusCode::INTERNAL_SERVER_ERROR
@@ -1387,6 +1397,7 @@ async fn compute_dashboard_overview_freshness(
 async fn load_dashboard_overview_snapshot(
     state: &Arc<AppState>,
 ) -> Result<DashboardOverviewSnapshot, ProxyError> {
+    let perf = tavily_hikari::RuntimePerfScope::start();
     loop {
         let cache_handle = dashboard_overview_cache_for_state(state.as_ref());
         let waiter = {
@@ -1410,6 +1421,33 @@ async fn load_dashboard_overview_snapshot(
             if let Some(cached) = cache.cached.as_ref()
                 && cached.freshness == freshness
             {
+                tavily_hikari::emit_low_memory_protection_decision(
+                    "admin_read",
+                    tavily_hikari::PerfLogScope {
+                        route: Some("dashboard_shared_snapshot"),
+                        scope: Some("dashboard"),
+                        degraded: Some("cache_hit"),
+                        ..Default::default()
+                    },
+                );
+                let memory = perf.memory();
+                tracing::info!(
+                    component = "admin_read",
+                    event = "dashboard_snapshot_cache_hit",
+                    elapsed_ms = perf.elapsed_ms(),
+                    route = "dashboard_shared_snapshot",
+                    scope = "dashboard",
+                    degraded = "cache_hit",
+                    memory_current_bytes = memory.memory_current_bytes.unwrap_or_default(),
+                    memory_limit_bytes = memory.memory_limit_bytes.unwrap_or_default(),
+                    headroom_bytes = memory.headroom_bytes.unwrap_or_default(),
+                    process_rss_bytes = memory.process_rss_bytes.unwrap_or_default(),
+                    child_process_rss_bytes = memory.child_process_rss_bytes.unwrap_or_default(),
+                    process_group_rss_bytes = memory.process_group_rss_bytes.unwrap_or_default(),
+                    process_hwm_bytes = memory.process_hwm_bytes.unwrap_or_default(),
+                    process_swap_bytes = memory.process_swap_bytes.unwrap_or_default(),
+                    "admin read perf"
+                );
                 return Ok(cached.snapshot.clone());
             }
             if cache.loading {
@@ -1433,6 +1471,35 @@ async fn load_dashboard_overview_snapshot(
                 snapshot: snapshot.clone(),
                 freshness: snapshot.freshness.clone(),
             });
+            tavily_hikari::emit_low_memory_protection_decision(
+                "admin_read",
+                tavily_hikari::PerfLogScope {
+                    route: Some("dashboard_shared_snapshot"),
+                    scope: Some("dashboard"),
+                    row_count: Some(snapshot.payload.recent_logs.len()),
+                    degraded: Some("rebuilt"),
+                    ..Default::default()
+                },
+            );
+            let memory = perf.memory();
+            tracing::info!(
+                component = "admin_read",
+                event = "dashboard_snapshot_rebuilt",
+                elapsed_ms = perf.elapsed_ms(),
+                route = "dashboard_shared_snapshot",
+                scope = "dashboard",
+                degraded = "rebuilt",
+                row_count = snapshot.payload.recent_logs.len() as u64,
+                memory_current_bytes = memory.memory_current_bytes.unwrap_or_default(),
+                memory_limit_bytes = memory.memory_limit_bytes.unwrap_or_default(),
+                headroom_bytes = memory.headroom_bytes.unwrap_or_default(),
+                process_rss_bytes = memory.process_rss_bytes.unwrap_or_default(),
+                child_process_rss_bytes = memory.child_process_rss_bytes.unwrap_or_default(),
+                process_group_rss_bytes = memory.process_group_rss_bytes.unwrap_or_default(),
+                process_hwm_bytes = memory.process_hwm_bytes.unwrap_or_default(),
+                process_swap_bytes = memory.process_swap_bytes.unwrap_or_default(),
+                "admin read perf"
+            );
         }
         cache.notify.notify_waiters();
         return result;

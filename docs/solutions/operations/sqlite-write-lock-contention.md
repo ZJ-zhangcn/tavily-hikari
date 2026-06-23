@@ -54,6 +54,11 @@ month-tail public metrics scan.
   grep-oriented local workflows. Runtime DB phases must still emit stable fields for
   `component=db`, `event=operation_slow|operation_error`, `operation`, `elapsed_ms`, optional
   `context`, and optional `err`.
+- Extend that same default runtime logging contract to the HA replication path. Baseline/events
+  export/import and standby sync should emit stable `component=ha event=...` perf records with
+  `elapsed_ms`, `channel`, `row_count`, `payload_bytes`, optional `compressed_bytes`, and runtime
+  memory headroom fields. Do not require a second metrics pipeline just to answer “which HA leg is
+  holding memory right now?”
 - Enable SQL-level slow statement logging directly on runtime `sqlx` SQLite connect options. The
   default threshold is `250ms` for SQL statements and `1s` for explicit DB operation phases such as
   startup pool open, schema init, request-stats flush, scheduler enqueue, OAuth upsert, and

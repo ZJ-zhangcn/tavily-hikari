@@ -25,6 +25,7 @@ pub struct HaApplyResult {
     pub channel: HaSyncChannel,
     pub high_watermark: i64,
     pub row_count: usize,
+    pub payload_bytes: usize,
 }
 
 #[derive(Debug)]
@@ -33,6 +34,7 @@ pub struct HaBaselineApplySession {
     conn: sqlx::pool::PoolConnection<sqlx::Sqlite>,
     high_watermark: i64,
     row_count: usize,
+    payload_bytes: usize,
     saw_start: bool,
     saw_end: bool,
 }
@@ -57,6 +59,7 @@ pub struct HaEventsApplySession {
     conn: sqlx::pool::PoolConnection<sqlx::Sqlite>,
     high_watermark: i64,
     row_count: usize,
+    payload_bytes: usize,
     saw_start: bool,
     saw_end: bool,
 }
@@ -439,11 +442,14 @@ impl KeyStore {
         W: AsyncWrite + Unpin + Send,
     {
         let mut session = self.begin_ha_baseline_read(channel).await?;
-        let export = session.export_info().await?;
+        let mut export = session.export_info().await?;
         let write_result = session
             .write_ndjson(node_id, export.high_watermark, export.row_count, writer)
             .await;
         let close_result = session.close().await;
+        if let Ok(payload_bytes) = write_result.as_ref() {
+            export.payload_bytes = *payload_bytes;
+        }
         write_result?;
         close_result?;
         Ok(export)
@@ -1002,6 +1008,7 @@ impl KeyStore {
             conn,
             high_watermark: 0,
             row_count: 0,
+            payload_bytes: 0,
             saw_start: false,
             saw_end: false,
         })
@@ -1022,6 +1029,7 @@ impl KeyStore {
             conn,
             high_watermark: 0,
             row_count: 0,
+            payload_bytes: 0,
             saw_start: false,
             saw_end: false,
         })
@@ -1242,6 +1250,7 @@ impl HaBaselineReadSession {
             high_watermark: KeyStore::ha_channel_high_watermark_on_conn(&mut self.conn, self.channel)
                 .await?,
             row_count: KeyStore::count_ha_baseline_rows_on_conn(&mut self.conn, self.channel).await?,
+            payload_bytes: 0,
         })
     }
 
@@ -1261,10 +1270,11 @@ impl HaBaselineReadSession {
         high_watermark: i64,
         row_count: usize,
         writer: &mut W,
-    ) -> Result<(), ProxyError>
+    ) -> Result<usize, ProxyError>
     where
         W: AsyncWrite + Unpin + Send,
     {
+        let mut payload_bytes = 0usize;
         let start_line = serde_json::to_string(&serde_json::json!({
             "schemaVersion": HA_SCHEMA_VERSION,
             "kind": "baseline_start",
@@ -1275,6 +1285,7 @@ impl HaBaselineReadSession {
             "encoding": "zstd-ndjson"
         }))
         .map_err(|err| ProxyError::Other(err.to_string()))?;
+        payload_bytes += start_line.len();
         writer
             .write_all(start_line.as_bytes())
             .await
@@ -1329,6 +1340,7 @@ impl HaBaselineReadSession {
                     "data": row
                 }))
                 .map_err(|err| ProxyError::Other(err.to_string()))?;
+                payload_bytes += line.len();
                 writer
                     .write_all(line.as_bytes())
                     .await
@@ -1349,6 +1361,7 @@ impl HaBaselineReadSession {
             "rowCount": row_count
         }))
         .map_err(|err| ProxyError::Other(err.to_string()))?;
+        payload_bytes += end_line.len();
         writer
             .write_all(end_line.as_bytes())
             .await
@@ -1360,7 +1373,8 @@ impl HaBaselineReadSession {
         writer
             .flush()
             .await
-            .map_err(|err| ProxyError::Other(err.to_string()))
+            .map_err(|err| ProxyError::Other(err.to_string()))?;
+        Ok(payload_bytes)
     }
 }
 
@@ -1402,6 +1416,7 @@ impl HaEventsReadSession {
     where
         W: AsyncWrite + Unpin + Send,
     {
+        let mut payload_bytes = 0usize;
         let threshold = self.generated_at - ha_channel_retention_secs(self.channel);
         KeyStore::validate_ha_events_cursor_on_conn(&mut self.conn, self.channel, after_seq, threshold)
             .await?;
@@ -1414,6 +1429,7 @@ impl HaEventsReadSession {
             "limit": limit
         }))
         .map_err(|err| ProxyError::Other(err.to_string()))?;
+        payload_bytes += start_line.len();
         writer
             .write_all(start_line.as_bytes())
             .await
@@ -1467,6 +1483,7 @@ impl HaEventsReadSession {
                 }
             }))
             .map_err(|err| ProxyError::Other(err.to_string()))?;
+            payload_bytes += line.len();
             writer
                 .write_all(line.as_bytes())
                 .await
@@ -1487,6 +1504,7 @@ impl HaEventsReadSession {
             "eventCount": row_count
         }))
         .map_err(|err| ProxyError::Other(err.to_string()))?;
+        payload_bytes += end_line.len();
         writer
             .write_all(end_line.as_bytes())
             .await
@@ -1503,6 +1521,7 @@ impl HaEventsReadSession {
             channel: self.channel,
             high_watermark: last_seq,
             row_count,
+            payload_bytes,
         })
     }
 }
@@ -1764,6 +1783,7 @@ fn parse_ha_node_role(value: &str) -> Option<HaNodeRole> {
 
 impl HaBaselineApplySession {
     pub async fn apply_line(&mut self, line: &str) -> Result<(), ProxyError> {
+        self.payload_bytes += line.len();
         let value: serde_json::Value = serde_json::from_str(line)
             .map_err(|err| ProxyError::Other(format!("invalid HA baseline NDJSON: {err}")))?;
         match value.get("kind").and_then(serde_json::Value::as_str) {
@@ -1786,6 +1806,9 @@ impl HaBaselineApplySession {
                     .cloned()
                     .ok_or_else(|| ProxyError::Other("HA baseline resource data is missing".to_string()))?;
                 let data = sanitize_ha_resource_payload(resource, data);
+                self.payload_bytes += serde_json::to_vec(&data)
+                    .map(|bytes| bytes.len())
+                    .unwrap_or_default();
                 insert_json_row_on_conn(&mut self.conn, self.channel, resource, &data).await?;
                 self.row_count += 1;
             }
@@ -1831,6 +1854,7 @@ impl HaBaselineApplySession {
             channel: self.channel,
             high_watermark: self.high_watermark,
             row_count: self.row_count,
+            payload_bytes: self.payload_bytes,
         })
     }
 
@@ -1849,6 +1873,7 @@ impl HaBaselineApplySession {
 
 impl HaEventsApplySession {
     pub async fn apply_line(&mut self, line: &str) -> Result<(), ProxyError> {
+        self.payload_bytes += line.len();
         let value: serde_json::Value = serde_json::from_str(line)
             .map_err(|err| ProxyError::Other(format!("invalid HA events NDJSON: {err}")))?;
         match value.get("kind").and_then(serde_json::Value::as_str) {
@@ -1879,6 +1904,9 @@ impl HaEventsApplySession {
                         .cloned()
                         .unwrap_or(serde_json::Value::Null),
                 );
+                self.payload_bytes += serde_json::to_vec(&payload)
+                    .map(|bytes| bytes.len())
+                    .unwrap_or_default();
                 self.high_watermark = event
                     .get("seq")
                     .and_then(serde_json::Value::as_i64)
@@ -1940,6 +1968,7 @@ impl HaEventsApplySession {
             channel: self.channel,
             high_watermark: self.high_watermark,
             row_count: self.row_count,
+            payload_bytes: self.payload_bytes,
         })
     }
 

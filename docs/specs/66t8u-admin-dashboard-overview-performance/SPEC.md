@@ -201,3 +201,6 @@
   `metrics` 读取，并将 alerts 事件/分组/summary 改为 SQL 侧有界读取，避免管理端和公共首页分别
   重新引入宽时间窗扫描。
 - 2026-06-21: 将 dashboard overview / SSE 收敛到 freshness-aware shared snapshot，显式把 `recentLogs / jobs / alerts / disabledTokens / exhaustedKeys / quota-sync sample` 纳入失效条件，并为本月 comparison 修复补齐 shared-path 回归测试。
+- 2026-06-23: 为 `/api/dashboard/overview` 与 shared snapshot cache-hit/rebuild 补齐默认
+  structured perf events，稳定输出 `elapsed_ms`、runtime memory headroom 与 snapshot 结果范围，作为
+  低内存回归与线上定位的默认证据面。
