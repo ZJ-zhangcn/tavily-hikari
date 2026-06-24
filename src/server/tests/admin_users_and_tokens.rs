@@ -2150,7 +2150,7 @@ use super::upstream_support_and_manual_jobs::*;
             .get(format!(
                 "http://{}/api/tokens/unbound-usage?page=1&per_page=20&q={}",
                 addr,
-                urlencoding::encode("ops")
+                urlencoding::encode("grouped-unbound")
             ))
             .send()
             .await
