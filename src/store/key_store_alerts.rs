@@ -1645,7 +1645,7 @@ impl KeyStore {
         {
             let mut separated = query.separated(" OR ");
             for (alert_type, subject_kind, subject_id, first_seen, last_seen) in &selected_subjects {
-                separated.push_unseparated("(");
+                separated.push("(");
                 separated
                     .push_unseparated("alerts.alert_type = ")
                     .push_bind_unseparated(alert_type);
@@ -2684,5 +2684,89 @@ mod alert_grouping_tests {
             compat.request_kind.as_ref().map(|value| value.key.as_str()),
             Some("api:search")
         );
+    }
+
+    #[tokio::test]
+    async fn fetch_alert_groups_page_supports_multiple_mother_groups_without_sqlite_syntax_errors() {
+        let temp_dir = tempdir().expect("create temp dir");
+        let db_path = temp_dir.path().join("alerts-groups-multi-mother.db");
+        let db_str = db_path.to_string_lossy().to_string();
+        let store = KeyStore::new_with_time(&db_str, BackendTime::system())
+            .await
+            .expect("create key store");
+
+        for (user_id, token_id, created_at) in [
+            ("usr_alerts_multi_a", "tok_alerts_multi_a", 1_700_000_000_i64),
+            ("usr_alerts_multi_b", "tok_alerts_multi_b", 1_700_010_000_i64),
+        ] {
+            seed_bound_user_and_token(
+                &store,
+                user_id,
+                token_id,
+                "SQLite Alerts",
+                "sqlite-alerts",
+                created_at.saturating_sub(120),
+            )
+            .await;
+        }
+
+        for (token_id, created_at, request_kind_key, request_kind_label) in [
+            (
+                "tok_alerts_multi_a",
+                1_700_000_000_i64,
+                "mcp_initialize",
+                "MCP initialize",
+            ),
+            (
+                "tok_alerts_multi_a",
+                1_700_000_060_i64,
+                "mcp_tools_list",
+                "MCP tools/list",
+            ),
+            (
+                "tok_alerts_multi_b",
+                1_700_010_000_i64,
+                "mcp_initialize",
+                "MCP initialize",
+            ),
+            (
+                "tok_alerts_multi_b",
+                1_700_010_060_i64,
+                "mcp_tools_list",
+                "MCP tools/list",
+            ),
+        ] {
+            insert_request_rate_alert(
+                &store,
+                token_id,
+                created_at,
+                request_kind_key,
+                request_kind_label,
+            )
+            .await;
+        }
+
+        let page = store
+            .fetch_alert_groups_page(
+                Some(ALERT_TYPE_USER_REQUEST_RATE_LIMITED),
+                None,
+                None,
+                None,
+                None,
+                None,
+                &[],
+                1,
+                20,
+            )
+            .await
+            .expect("fetch grouped alerts page with multiple mother groups");
+
+        let mother_groups = page
+            .items
+            .iter()
+            .filter(|item| item.grouping_kind == "mother")
+            .collect::<Vec<_>>();
+        assert_eq!(mother_groups.len(), 2);
+        assert!(mother_groups.iter().all(|group| group.children.len() == 1));
     }
 }
