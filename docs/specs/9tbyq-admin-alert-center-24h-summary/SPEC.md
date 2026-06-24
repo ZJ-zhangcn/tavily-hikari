@@ -258,6 +258,7 @@
   - `请求类型`、`用户`、`令牌`、`Key`、`应用时间`、`清空筛选` 与 `datetime-local` 输入现在共享同一套高度、圆角、pressed surface、padding 与 focus ring。
   - grouped 读侧已改为 SQLite 兼容写法，`/api/alerts/groups` 在 101 上不再依赖命名 `WINDOW` 语法。
   - grouped 读侧的 request-kind canonicalization 也必须避免为 `COALESCE`、`COUNT(DISTINCT ...)`、`MIN(...)` 包裹旧版 SQLite 会在 `near "("` 处拒绝的多余 `CASE` 外层括号；`/api/alerts/groups` 的外部接口契约保持不变。
+  - grouped 读侧在补全 mother group 子事件时，面向多个 mother group 的 `OR` 条件块必须通过 `QueryBuilder::separated(" OR ")` 正确插入分隔符；若把整段条件块都写成 `push_unseparated(...)`，SQLite 会收到 `(...)(...)` 这种非法谓词并在 `/api/alerts/groups` 上报 `near "("`。
 
 - Web demo 真实页面视口：
   - `/admin/alerts?demo=1&view=groups`：direct-open 默认进入 `聚合告警`，`用户请求限流` 以 `母 -> 子 -> 原始事件明细` 两层半结构展示，子窗口不再按 `request_kind` 拆主结构。

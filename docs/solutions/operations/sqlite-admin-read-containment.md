@@ -81,6 +81,10 @@ reads:
   partition logic can be expressed inline. Keep the grouped projection in SQL, but prefer inline
   `OVER (...)` windows plus a final `group_rank = 1` collapse over `WINDOW ... AS (...)` syntax on
   the production read path.
+- When expanding a selected mother-group page back into raw alert events, ensure every
+  subject/time predicate block is added through the `separated(" OR ")` boundary itself. If the
+  whole block is emitted with `push_unseparated(...)`, SQLite receives adjacent predicates like
+  `(...)(...)` and `/api/alerts/groups` fails with `near "("`.
 - Canonicalize alert `request_kind` inside the SQL projection before filtering or grouping rows.
   Mixed legacy keys such as `tavily_search` / `mcp_search` otherwise drift from the canonical
   request-kind keys returned by the HTTP contract and can make filtered pages appear empty.
