@@ -109,11 +109,8 @@ export default function AdminShell({
           <div className="admin-sidebar-topbar">
             <BrandLockup
               title="Tavily Hikari"
-              subtitle="Relay Mesh"
               compact
               className="admin-sidebar-brand"
-              titleClassName="admin-sidebar-brand-title"
-              subtitleClassName="admin-sidebar-brand-subtitle"
               markClassName="admin-sidebar-brand-mark"
             />
             {isStackedSidebar && (

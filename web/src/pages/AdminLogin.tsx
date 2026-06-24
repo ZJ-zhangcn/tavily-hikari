@@ -86,10 +86,7 @@ function AdminLogin(): JSX.Element {
           <div className="space-y-1">
             <BrandLockup
               title="Tavily Hikari"
-              subtitle="Relay Mesh"
               className="auth-brand-lockup"
-              titleClassName="auth-brand-title"
-              subtitleClassName="auth-brand-subtitle"
               markClassName="auth-brand-mark"
             />
             <h1 className="auth-title text-3xl font-semibold tracking-tight">{ui.title}</h1>

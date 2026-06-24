@@ -14,11 +14,8 @@ export default function NotFoundFallbackPreview({
       <main className="not-found-shell" role="main">
         <BrandLockup
           title="Tavily Hikari Proxy"
-          subtitle="Relay Mesh"
           compact
           className="not-found-brand"
-          titleClassName="not-found-brand-title"
-          subtitleClassName="not-found-brand-subtitle"
           markClassName="not-found-brand-mark"
         />
         <p className="not-found-code">404</p>

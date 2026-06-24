@@ -10,7 +10,6 @@ const meta = {
   },
   args: {
     title: 'Tavily Hikari',
-    subtitle: 'Relay Mesh',
   },
 } satisfies Meta<typeof BrandLockup>
 

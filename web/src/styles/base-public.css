@@ -54,26 +54,12 @@
 }
 
 .public-home-brand-lockup {
-  gap: 16px;
+  width: min(100%, 360px);
 }
 
 .public-home-brand-mark {
-  width: 64px;
-  height: 64px;
-}
-
-.public-home-brand-title {
-  font-family: 'Nunito', 'Noto Sans SC', sans-serif;
-  font-size: clamp(1.24rem, 1.1rem + 0.52vw, 1.56rem);
-  font-weight: 800;
-  letter-spacing: -0.025em;
-}
-
-.public-home-brand-subtitle {
-  font-size: 0.76rem;
-  font-weight: 700;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
+  width: min(100%, 360px);
+  height: auto;
 }
 
 .public-home-tagline {

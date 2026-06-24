@@ -9,7 +9,7 @@
 
 - 采用现有 Vite multipage 构建，新增 build manifest 输出与 post-build 脚本。
 - 通过生成脚本构造 public/admin 两套 asset graph、manifest、service worker 与图标，不引入单 manifest 注入式 PWA 插件。
-- 品牌资产采用 `SVG 源资产 + 位图导出` 双轨：仓库保留 Relay Mesh 主 logo/icon 源文件，构建后稳定导出 favicon、touch icon 与 public/admin PWA PNG。
+- 品牌资产采用“批准稿裁切源 + 位图导出”双轨：仓库保留经批准的 Relay Mesh 原稿裁切 PNG，并通过构建稳定导出 favicon、touch icon 与 public/admin PWA PNG；SVG 仅作为静态包装入口。
 - 继续沿用服务端对 `/admin` 与 `/console` 的既有鉴权入口；PWA 不改变认证契约。
 - 页面离线失败语义优先复用现有 unavailable/error surface，不引入离线成功假象。
 - 为避免 public root service worker 抢占已安装 admin app 的离线入口，admin 入口在运行时归一到 `/admin/`，并让 admin manifest/scope 与 SW 都锁定 `/admin/`。
@@ -54,9 +54,10 @@
   - `AdminLogin`
 - `web/src/api/runtime.ts` 统一将浏览器裸网络失败归一为离线错误消息，减少 `Failed to fetch` 直出。
 - Relay Mesh 品牌接入包括：
-  - `web/public/relay-mesh-logo.svg` / `relay-mesh-icon.svg` 作为站点与 PWA 品牌源资产
-  - `web/scripts/generate_pwa_assets.py` 从同一视觉方向导出 public/admin 两套 PNG、touch icon 与 manifest 主题字段
-  - `BrandLockup` 组件统一 public home、console header、admin shell、login、registration-paused 与 404 fallback 的显式品牌位
+  - `web/public/relay-mesh-lockup.png`、`relay-mesh-mark.png`、`relay-mesh-wordmark.png`、`relay-mesh-icon.png` 作为经批准原稿的裁切源
+  - `web/public/*.svg` 与 `docs-site/docs/public/*.svg` 作为对应 PNG 的静态包装入口
+  - `web/scripts/generate_pwa_assets.py` 从同一批准稿图标裁切导出 public/admin 两套 PNG、touch icon 与 manifest 主题字段
+  - `BrandLockup` 组件统一 public home、console header、admin shell、login、registration-paused 与 404 fallback 的显式品牌位，并直接渲染批准稿 lockup
   - `docs-site/rspress.config.ts` 与 `docs-site/docs/public/*` 接入同一套文档站品牌入口
 - Chromium 离线 proof 已覆盖：
   - 公共首页离线壳可打开，并显示 `Offline shell loaded`
@@ -81,7 +82,7 @@
 ## 后续微调
 
 - 2026-06-24: 统一离线提示 banner 的图标从 `mdi:earth-off` 微调为 `mdi:web-off`，以匹配“经纬线地球 + 无网络斜杠”的语义预期。
-- 2026-06-25: 品牌层切换到 Relay Mesh 方案，图标颜色重映射到 light tropical clay 主题，并复用既有 public/admin 双身份 PWA 产线导出所有安装资产。
+- 2026-06-25: 品牌层切换到经批准的 Relay Mesh 原稿裁切资产，并复用既有 public/admin 双身份 PWA 产线导出所有安装资产。
 - 2026-06-25: 修正 `web/package.json` 中 `test:e2e:pwa-offline` 的仓库相对路径，恢复按命令名直接执行的离线 PWA E2E 验证链。
 
 ## 已知未完成验证

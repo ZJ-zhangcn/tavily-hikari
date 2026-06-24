@@ -578,56 +578,25 @@
 .brand-lockup {
   display: inline-flex;
   align-items: center;
-  gap: 12px;
   min-width: 0;
 }
 
-.brand-lockup-compact {
-  gap: 10px;
+.brand-lockup-image {
+  display: block;
+  width: min(100%, 220px);
+  height: auto;
+  object-fit: contain;
 }
 
-.brand-lockup-mark {
-  display: inline-flex;
-  width: 52px;
-  height: 52px;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
+.brand-lockup-image-compact {
+  width: min(100%, 168px);
 }
 
-.brand-lockup-mark-compact {
-  width: 40px;
-  height: 40px;
-}
-
-.brand-mark-svg {
+.brand-mark-image {
+  display: block;
   width: 100%;
   height: 100%;
-  display: block;
-}
-
-.brand-lockup-copy {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.brand-lockup-title {
-  font-family: 'Nunito', 'Noto Sans SC', sans-serif;
-  font-size: 1.05rem;
-  font-weight: 800;
-  line-height: 1;
-  letter-spacing: -0.025em;
-  color: hsl(var(--foreground));
-}
-
-.brand-lockup-subtitle {
-  font-size: 0.7rem;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: hsl(var(--muted-foreground));
+  object-fit: contain;
 }
 
 body.not-found-page-body,
@@ -670,16 +639,8 @@ body.not-found-page-body,
 }
 
 .not-found-brand-mark {
-  width: 48px;
-  height: 48px;
-}
-
-.not-found-brand-title {
-  font-size: 0.98rem;
-}
-
-.not-found-brand-subtitle {
-  font-size: 0.66rem;
+  width: min(100%, 200px);
+  height: auto;
 }
 
 .not-found-code {
@@ -801,16 +762,8 @@ body.not-found-page-body,
 }
 
 .admin-sidebar-brand-mark {
-  width: 38px;
-  height: 38px;
-}
-
-.admin-sidebar-brand-title {
-  font-size: 0.98rem;
-}
-
-.admin-sidebar-brand-subtitle {
-  font-size: 0.66rem;
+  width: min(100%, 170px);
+  height: auto;
 }
 
 .auth-brand-lockup,
@@ -820,18 +773,8 @@ body.not-found-page-body,
 
 .auth-brand-mark,
 .registration-paused-brand-mark {
-  width: 46px;
-  height: 46px;
-}
-
-.auth-brand-title,
-.registration-paused-brand-title {
-  font-size: 1rem;
-}
-
-.auth-brand-subtitle,
-.registration-paused-brand-subtitle {
-  font-size: 0.68rem;
+  width: min(100%, 220px);
+  height: auto;
 }
 
 .admin-menu-toggle {

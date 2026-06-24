@@ -75,10 +75,7 @@ function PublicHomeHeroCard({
       <div className="public-home-brand-wrap">
         <BrandLockup
           title="Tavily Hikari"
-          subtitle="Relay Mesh"
           className="public-home-brand-lockup"
-          titleClassName="public-home-brand-title"
-          subtitleClassName="public-home-brand-subtitle"
           markClassName="public-home-brand-mark"
         />
       </div>

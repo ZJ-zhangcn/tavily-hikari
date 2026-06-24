@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageDraw
+from PIL import Image
 
 
 WEB_ROOT = Path(__file__).resolve().parent.parent
@@ -64,57 +64,15 @@ def ensure_not_empty(name: str, values: list[str]) -> None:
         raise RuntimeError(f"PWA asset graph '{name}' is empty")
 
 
-def make_gradient(size: int, top: tuple[int, int, int], bottom: tuple[int, int, int]) -> Image.Image:
-    image = Image.new("RGBA", (size, size))
-    for y in range(size):
-        ratio = y / max(size - 1, 1)
-        color = tuple(int(top[i] * (1 - ratio) + bottom[i] * ratio) for i in range(3))
-        ImageDraw.Draw(image).line([(0, y), (size, y)], fill=color + (255,))
-    return image
-
-
-def draw_icon(
-    prefix: str,
-    top: tuple[int, int, int],
-    bottom: tuple[int, int, int],
-    halo: tuple[int, int, int, int],
-    stroke_start: tuple[int, int, int],
-    stroke_end: tuple[int, int, int],
-    accent_start: tuple[int, int, int],
-    accent_end: tuple[int, int, int],
-) -> dict[str, str]:
-    base = make_gradient(512, top, bottom)
-    draw = ImageDraw.Draw(base)
-    stroke_gradient = make_gradient(512, stroke_start, stroke_end)
-    accent_gradient = make_gradient(512, accent_start, accent_end)
-
-    draw.ellipse((64, 64, 448, 448), fill=halo)
-
-    stroke_mask = Image.new("L", (512, 512), 0)
-    stroke_draw = ImageDraw.Draw(stroke_mask)
-    stroke_draw.arc((96, 96, 416, 416), start=182, end=354, fill=255, width=42)
-    stroke_draw.arc((96, 96, 416, 416), start=2, end=174, fill=255, width=42)
-    stroke_draw.line((278, 96, 356, 96), fill=255, width=42)
-    stroke_draw.line((96, 272, 96, 348), fill=255, width=42)
-    stroke_draw.line((356, 96, 404, 144), fill=255, width=42)
-    stroke_draw.line((96, 348, 144, 396), fill=255, width=42)
-    stroke_draw.ellipse((372, 84, 436, 148), fill=255)
-    stroke_draw.ellipse((100, 372, 164, 436), fill=255)
-    base.paste(stroke_gradient, mask=stroke_mask)
-
-    accent_mask = Image.new("L", (512, 512), 0)
-    accent_draw = ImageDraw.Draw(accent_mask)
-    accent_draw.rectangle((186, 164, 334, 210), fill=255)
-    accent_draw.rectangle((236, 164, 282, 330), fill=255)
-    base.paste(accent_gradient, mask=accent_mask)
-
+def draw_icon(prefix: str, source_file: Path) -> dict[str, str]:
+    base = Image.open(source_file).convert("RGBA")
     output: dict[str, str] = {}
     pwa_dir = DIST_DIR / "pwa"
     pwa_dir.mkdir(parents=True, exist_ok=True)
     for size in (192, 512):
-      rel = f"pwa/{prefix}-{size}.png"
-      base.resize((size, size), Image.Resampling.LANCZOS).save(DIST_DIR / rel)
-      output[str(size)] = rel
+        rel = f"pwa/{prefix}-{size}.png"
+        base.resize((size, size), Image.Resampling.LANCZOS).save(DIST_DIR / rel)
+        output[str(size)] = rel
     touch_rel = f"pwa/{prefix}-touch-icon.png"
     base.resize((180, 180), Image.Resampling.LANCZOS).save(DIST_DIR / touch_rel)
     output["touch"] = touch_rel
@@ -260,26 +218,9 @@ def main() -> None:
     ensure_not_empty("public", public_files)
     ensure_not_empty("admin", admin_files)
 
-    public_icons = draw_icon(
-        prefix="public",
-        top=(244, 241, 250),
-        bottom=(232, 226, 247),
-        halo=(231, 224, 247, 255),
-        stroke_start=(51, 47, 58),
-        stroke_end=(124, 58, 237),
-        accent_start=(219, 39, 119),
-        accent_end=(124, 58, 237),
-    )
-    admin_icons = draw_icon(
-        prefix="admin",
-        top=(236, 241, 250),
-        bottom=(219, 229, 245),
-        halo=(218, 227, 247, 255),
-        stroke_start=(51, 47, 58),
-        stroke_end=(14, 165, 233),
-        accent_start=(219, 39, 119),
-        accent_end=(124, 58, 237),
-    )
+    source_icon = WEB_ROOT / "public" / "relay-mesh-icon.png"
+    public_icons = draw_icon(prefix="public", source_file=source_icon)
+    admin_icons = draw_icon(prefix="admin", source_file=source_icon)
 
     write_json(
         "manifest.webmanifest",

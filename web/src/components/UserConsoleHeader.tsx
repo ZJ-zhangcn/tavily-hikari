@@ -95,11 +95,8 @@ export default function UserConsoleHeader(props: UserConsoleHeaderProps): JSX.El
         <div className="user-console-header-context" title={contextSummary}>
           <BrandLockup
             title="Tavily Hikari"
-            subtitle="Relay Mesh"
             compact
             className="user-console-header-brand"
-            titleClassName="user-console-header-brand-title"
-            subtitleClassName="user-console-header-brand-subtitle"
             markClassName="user-console-header-brand-mark"
           />
           <span className="user-console-header-eyebrow">{props.eyebrow}</span>

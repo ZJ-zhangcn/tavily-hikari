@@ -149,17 +149,8 @@
 }
 
 .user-console-header-brand-mark {
-  width: 34px;
-  height: 34px;
-}
-
-.user-console-header-brand-title {
-  font-size: 0.84rem;
-}
-
-.user-console-header-brand-subtitle {
-  font-size: 0.58rem;
-  letter-spacing: 0.14em;
+  width: 150px;
+  height: auto;
 }
 
 .user-console-header-eyebrow {
