@@ -1,4 +1,7 @@
 fn response_content_type(file_name: &str) -> String {
+    if file_name.ends_with(".webmanifest") {
+        return "application/manifest+json".to_string();
+    }
     let guess = mime_guess::from_path(file_name).first_or_octet_stream();
     if guess.essence_str() == "text/html" {
         "text/html; charset=utf-8".to_string()
@@ -98,6 +101,39 @@ async fn serve_version_json(State(state): State<Arc<AppState>>) -> Result<Respon
     load_spa_response(state.as_ref(), "version.json").await
 }
 
+async fn serve_public_manifest(
+    State(state): State<Arc<AppState>>,
+) -> Result<Response<Body>, StatusCode> {
+    load_spa_response(state.as_ref(), "manifest.webmanifest").await
+}
+
+async fn serve_admin_manifest(
+    State(state): State<Arc<AppState>>,
+) -> Result<Response<Body>, StatusCode> {
+    load_spa_response(state.as_ref(), "manifest-admin.webmanifest").await
+}
+
+async fn serve_public_sw(State(state): State<Arc<AppState>>) -> Result<Response<Body>, StatusCode> {
+    load_spa_response(state.as_ref(), "sw-public.js").await
+}
+
+async fn serve_admin_sw(State(state): State<Arc<AppState>>) -> Result<Response<Body>, StatusCode> {
+    load_spa_response(state.as_ref(), "sw-admin.js").await
+}
+
+async fn serve_pwa_asset(
+    State(state): State<Arc<AppState>>,
+    Path(path): Path<String>,
+) -> Result<Response<Body>, StatusCode> {
+    let asset_path = path.trim_start_matches('/');
+    if !is_safe_static_path(asset_path) {
+        return Err(StatusCode::NOT_FOUND);
+    }
+
+    let file_name = format!("pwa/{asset_path}");
+    load_spa_response(state.as_ref(), &file_name).await
+}
+
 async fn serve_index(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -120,6 +156,12 @@ async fn serve_index(
     load_spa_response(state.as_ref(), "index.html").await
 }
 
+async fn serve_public_index_shell(
+    State(state): State<Arc<AppState>>,
+) -> Result<Response<Body>, StatusCode> {
+    load_spa_response(state.as_ref(), "index.html").await
+}
+
 async fn serve_admin_index(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -131,6 +173,12 @@ async fn serve_admin_index(
         return Ok(Redirect::temporary("/login").into_response());
     }
     Err(StatusCode::FORBIDDEN)
+}
+
+async fn serve_admin_shell(
+    State(state): State<Arc<AppState>>,
+) -> Result<Response<Body>, StatusCode> {
+    load_spa_response(state.as_ref(), "admin.html").await
 }
 
 async fn serve_login(
@@ -146,7 +194,27 @@ async fn serve_login(
     load_spa_response(state.as_ref(), "login.html").await
 }
 
+async fn serve_login_shell(
+    State(state): State<Arc<AppState>>,
+) -> Result<Response<Body>, StatusCode> {
+    load_spa_response(state.as_ref(), "login.html").await
+}
+
 async fn serve_registration_paused_index(
+    State(state): State<Arc<AppState>>,
+) -> Result<Response<Body>, StatusCode> {
+    if state.static_dir.is_some()
+        && !local_static_file_exists(state.as_ref(), "registration-paused.html").await
+    {
+        return load_spa_response(state.as_ref(), "index.html").await;
+    }
+    if !spa_file_exists(state.as_ref(), "registration-paused.html").await {
+        return load_spa_response(state.as_ref(), "index.html").await;
+    }
+    load_spa_response(state.as_ref(), "registration-paused.html").await
+}
+
+async fn serve_registration_paused_shell(
     State(state): State<Arc<AppState>>,
 ) -> Result<Response<Body>, StatusCode> {
     if state.static_dir.is_some()
@@ -173,6 +241,12 @@ async fn serve_console_index(
     {
         return Ok(Redirect::temporary("/").into_response());
     }
+    load_spa_response(state.as_ref(), "console.html").await
+}
+
+async fn serve_console_shell(
+    State(state): State<Arc<AppState>>,
+) -> Result<Response<Body>, StatusCode> {
     load_spa_response(state.as_ref(), "console.html").await
 }
 

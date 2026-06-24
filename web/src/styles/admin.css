@@ -1408,6 +1408,39 @@ tbody .log-details-row:hover {
   margin-top: -12px;
 }
 
+.offline-status-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.875rem;
+}
+
+.offline-status-banner-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: hsl(var(--destructive) / 0.14);
+}
+
+.offline-status-banner-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.offline-status-banner-copy strong {
+  font-size: 0.96rem;
+}
+
+.offline-status-banner-copy span {
+  font-size: 0.92rem;
+  line-height: 1.55;
+  color: hsl(var(--foreground) / 0.82);
+}
+
 .link-button {
   background: none;
   border: none;

@@ -405,16 +405,18 @@ pub async fn serve(
         .route("/api/tokens/:id/secret", get(get_token_secret))
         .route("/api/tokens/:id/secret/rotate", post(rotate_token_secret))
         .route("/", get(serve_index))
+        .route("/index.html", get(serve_public_index_shell))
         .route("/admin", get(serve_admin_index))
         .route("/admin/", get(serve_admin_index))
+        .route("/admin.html", get(serve_admin_shell))
         .route("/admin/*path", get(serve_admin_index))
         .route("/console", get(serve_console_index))
         .route("/console/", get(serve_console_index))
-        .route("/console.html", get(serve_console_index))
+        .route("/console.html", get(serve_console_shell))
         .route("/console/*path", get(serve_console_index))
         .route("/login", get(serve_login))
         .route("/login/", get(serve_login))
-        .route("/login.html", get(serve_login))
+        .route("/login.html", get(serve_login_shell))
         .route(
             "/registration-paused",
             get(serve_registration_paused_index),
@@ -425,11 +427,16 @@ pub async fn serve(
         )
         .route(
             "/registration-paused.html",
-            get(serve_registration_paused_index),
+            get(serve_registration_paused_shell),
         )
         .route("/favicon.svg", get(serve_favicon))
         .route("/linuxdo-logo.svg", get(serve_linuxdo_logo))
         .route("/version.json", get(serve_version_json))
+        .route("/manifest.webmanifest", get(serve_public_manifest))
+        .route("/manifest-admin.webmanifest", get(serve_admin_manifest))
+        .route("/sw-public.js", get(serve_public_sw))
+        .route("/sw-admin.js", get(serve_admin_sw))
+        .route("/pwa/*path", get(serve_pwa_asset))
         .route("/assets", get(serve_assets_root))
         .route("/assets/*path", get(serve_asset));
 

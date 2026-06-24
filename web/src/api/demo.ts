@@ -135,6 +135,7 @@ function createDemoLog(index: number) {
 }
 
 function createDemoState() {
+  const browserOrigin = typeof window === 'undefined' ? 'http://127.0.0.1:58087' : window.location.origin
   const logs = range(64).map(createDemoLog)
   const tokens = [
     {
@@ -219,7 +220,7 @@ function createDemoState() {
     jobs: createDemoJobs(),
     forwardProxy: createDemoForwardProxy(),
     systemSettings: createDemoSystemSettings(),
-    rechargeOrders: createDemoRechargeOrders(nowSeconds, window.location.origin),
+    rechargeOrders: createDemoRechargeOrders(nowSeconds, browserOrigin),
     userTags: [createDemoUserTag('tag-demo', {
       name: 'demo',
       displayName: 'Demo',

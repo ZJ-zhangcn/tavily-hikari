@@ -28,6 +28,7 @@ import TokenLogsPanel from './TokenLogsPanel'
 import AccessStatePanel from './AccessStatePanel'
 import { UserConsoleAnnouncementsSection } from './Announcements'
 import DebugInfoSharingToggle from './DebugInfoSharingToggle'
+import OfflineStatusBanner from '../components/OfflineStatusBanner'
 import { useDebugInfoSharing } from './useDebugInfoSharing'
 import { useUserConsoleAnnouncements } from './useAnnouncements'
 import { useLandingOverviewLive } from './useLandingOverviewLive'
@@ -111,6 +112,7 @@ import {
 } from '../lib/userConsoleRoutes'
 import { MobileGuideDropdown, buildGuideContent, resolveGuideSamples } from './guide'
 import { EN, ZH } from './text'
+import { useOfflineState } from '../pwa/useOfflineState'
 
 export const CODEX_DOC_URL = 'https://github.com/openai/codex/blob/main/docs/config.md'
 export const CLAUDE_DOC_URL = 'https://code.claude.com/docs/en/mcp'
@@ -1164,6 +1166,7 @@ export default function UserConsole(): JSX.Element {
   const [loading, setLoading] = useState(true)
   const [detailLoading, setDetailLoading] = useState(false)
   const [todayWindow, setTodayWindow] = useState(() => createBrowserTodayWindow())
+  const offline = useOfflineState()
   const [rechargeCredits, setRechargeCredits] = useState(DEFAULT_RECHARGE_UNIT_CREDITS)
   const [rechargeMonths, setRechargeMonths] = useState(1)
   const [rechargeBusy, setRechargeBusy] = useState(false)
@@ -2613,6 +2616,13 @@ export default function UserConsole(): JSX.Element {
       {consoleNeedsLogin && <AccessStatePanel state="login_required" text={text} onHome={goHome} />}
 
       <HaStatusBanner status={haStatus} audience="user" strings={useTranslate().admin.systemSettings.ha} language={language} />
+
+      {!consoleEmptyState && offline.isOffline ? (
+        <OfflineStatusBanner
+          title="Offline shell loaded"
+          description="Console structure is available, but dashboard data, token details, logs, and actions need the network."
+        />
+      ) : null}
 
       {!consoleEmptyState && error && <section className="surface error-banner">{error}</section>}
 

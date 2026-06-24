@@ -1070,8 +1070,27 @@ export function buildPublicEventsUrl(token?: string, todayWindow?: TodayWindowRa
   return `/api/public/events${params.toString() ? `?${params.toString()}` : ''}`
 }
 
+function normalizeFetchError(error: unknown): Error & { status?: number } {
+  if (error instanceof Error) {
+    const message = error.message.trim()
+    if (message === 'Failed to fetch' || message === 'Load failed' || message === 'NetworkError when attempting to fetch resource.') {
+      return new Error('Offline: network connection is unavailable') as Error & { status?: number }
+    }
+    return error as Error & { status?: number }
+  }
+  return new Error('Offline: network connection is unavailable') as Error & { status?: number }
+}
+
+async function fetchOrThrow(input: RequestInfo, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(input, init)
+  } catch (error) {
+    throw normalizeFetchError(error)
+  }
+}
+
 export async function requestJson<T>(input: RequestInfo, init?: RequestInit): Promise<T> {
-  const response = await fetch(input, init)
+  const response = await fetchOrThrow(input, init)
   if (!response.ok) {
     const message = await response.text().catch(() => response.statusText)
     const err = new Error(message || `Request failed with status ${response.status}`) as Error & {
@@ -1084,7 +1103,7 @@ export async function requestJson<T>(input: RequestInfo, init?: RequestInit): Pr
 }
 
 async function requestNoContent(input: RequestInfo, init?: RequestInit): Promise<void> {
-  const response = await fetch(input, init)
+  const response = await fetchOrThrow(input, init)
   if (!response.ok) {
     const message = await response.text().catch(() => response.statusText)
     const err = new Error(message || `Request failed with status ${response.status}`) as Error & {
@@ -1209,7 +1228,7 @@ async function requestForwardProxyProgress<T>(
     headers.set('Content-Type', 'application/json')
   }
 
-  const response = await fetch(input, { ...init, headers })
+  const response = await fetchOrThrow(input, { ...init, headers })
   const contentType = response.headers.get('Content-Type') ?? ''
 
   if (!response.ok && !contentType.includes('text/event-stream')) {
@@ -1524,7 +1543,7 @@ export function fetchTokenMetrics(
 export async function fetchPublicLogs(token: string, limit = 20, signal?: AbortSignal): Promise<PublicTokenLog[]> {
   const params = new URLSearchParams({ token, limit: String(limit) })
   const url = `/api/public/logs?${params.toString()}`
-  const res = await fetch(url, { signal })
+  const res = await fetchOrThrow(url, { signal })
   if (!res.ok) {
     const message = await res.text().catch(() => res.statusText)
     const err = new Error(message || `Request failed with status ${res.status}`) as Error & { status?: number }
@@ -1672,7 +1691,7 @@ function normalizeTriggerJobResponse(data: ServerTriggerJobResponse): TriggerJob
 
 export async function syncApiKeyUsage(id: string): Promise<void> {
   const encoded = encodeURIComponent(id)
-  const res = await fetch(`/api/keys/${encoded}/sync-usage`, { method: 'POST' })
+  const res = await fetchOrThrow(`/api/keys/${encoded}/sync-usage`, { method: 'POST' })
   if (!res.ok) {
     let message = ''
     try {
@@ -1698,7 +1717,7 @@ export async function applyApiKeyBulkAction(
   action: ApiKeyBulkAction,
   keyIds: string[],
 ): Promise<ApiKeyBulkActionResponse> {
-  const res = await fetch('/api/keys/bulk-actions', {
+  const res = await fetchOrThrow('/api/keys/bulk-actions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -1727,7 +1746,7 @@ export async function syncApiKeyBulkUsageWithProgress(
   const headers = new Headers({ 'Content-Type': 'application/json' })
   headers.set('Accept', 'text/event-stream, application/json')
 
-  const response = await fetch('/api/keys/bulk-actions', {
+  const response = await fetchOrThrow('/api/keys/bulk-actions', {
     method: 'POST',
     headers,
     body: JSON.stringify({
@@ -2193,7 +2212,7 @@ export function fetchUserToken(signal?: AbortSignal): Promise<UserTokenResponse>
 }
 
 export async function postUserLogout(signal?: AbortSignal): Promise<void> {
-  const response = await fetch('/api/user/logout', {
+  const response = await fetchOrThrow('/api/user/logout', {
     method: 'POST',
     signal,
   })
@@ -2742,7 +2761,7 @@ export async function addApiKeysBatch(
 
 export async function deleteApiKey(id: string): Promise<void> {
   const encoded = encodeURIComponent(id)
-  await fetch(`/api/keys/${encoded}`, { method: 'DELETE' }).then((res) => {
+  await fetchOrThrow(`/api/keys/${encoded}`, { method: 'DELETE' }).then((res) => {
     if (!res.ok) throw new Error(`Failed to delete key: ${res.status}`)
   })
 }
@@ -2751,7 +2770,7 @@ export type KeyAdminStatus = 'active' | 'disabled'
 
 export async function setKeyStatus(id: string, status: KeyAdminStatus): Promise<void> {
   const encoded = encodeURIComponent(id)
-  const res = await fetch(`/api/keys/${encoded}/status`, {
+  const res = await fetchOrThrow(`/api/keys/${encoded}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status }),
@@ -2763,7 +2782,7 @@ export async function setKeyStatus(id: string, status: KeyAdminStatus): Promise<
 
 export async function clearApiKeyQuarantine(id: string): Promise<void> {
   const encoded = encodeURIComponent(id)
-  const res = await fetch(`/api/keys/${encoded}/quarantine`, {
+  const res = await fetchOrThrow(`/api/keys/${encoded}/quarantine`, {
     method: 'DELETE',
   })
   if (!res.ok) {
@@ -3266,7 +3285,7 @@ export async function unbindAdminUserTag(userId: string, tagId: string): Promise
 
 export async function updateTokenNote(id: string, note: string): Promise<void> {
   const encoded = encodeURIComponent(id)
-  const res = await fetch(`/api/tokens/${encoded}/note`, {
+  const res = await fetchOrThrow(`/api/tokens/${encoded}/note`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ note }),
