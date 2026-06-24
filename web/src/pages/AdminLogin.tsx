@@ -1,19 +1,22 @@
 import { useEffect, useMemo, useState } from 'react'
 
-import { fetchProfile } from '../api'
+import { fetchProfile, requestJson } from '../api'
 import { isDemoMode } from '../api/demo'
 import LanguageSwitcher from '../components/LanguageSwitcher'
+import OfflineStatusBanner from '../components/OfflineStatusBanner'
 import ThemeToggle from '../components/ThemeToggle'
 import { Button } from '../components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { Input } from '../components/ui/input'
 import { useTranslate } from '../i18n'
+import { useOfflineState } from '../pwa/useOfflineState'
 
 type LoginState = 'checking' | 'ready' | 'submitting'
 
 function AdminLogin(): JSX.Element {
   const strings = useTranslate()
   const ui = strings.public.adminLogin
+  const offline = useOfflineState()
 
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -53,28 +56,23 @@ function AdminLogin(): JSX.Element {
     setError(null)
     setState('submitting')
     try {
-      const res = await fetch('/api/admin/login', {
+      await requestJson('/api/admin/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ password: password.trim() }),
       })
-
-      if (res.status === 404) {
-        setError(ui.errors.disabled)
-        return
-      }
-      if (res.status === 401) {
-        setError(ui.errors.invalid)
-        return
-      }
-      if (!res.ok) {
-        const msg = await res.text().catch(() => '')
-        setError(msg || ui.errors.generic)
-        return
-      }
       window.location.href = '/admin'
-    } catch {
-      setError(ui.errors.generic)
+    } catch (err) {
+      const status = typeof err === 'object' && err && 'status' in err ? (err as { status?: unknown }).status : undefined
+      if (status === 404) {
+        setError(ui.errors.disabled)
+      } else if (status === 401) {
+        setError(ui.errors.invalid)
+      } else if (err instanceof Error && err.message) {
+        setError(err.message)
+      } else {
+        setError(ui.errors.generic)
+      }
     } finally {
       setState('ready')
     }
@@ -93,6 +91,13 @@ function AdminLogin(): JSX.Element {
             <LanguageSwitcher />
           </div>
         </div>
+
+        {offline.isOffline ? (
+          <OfflineStatusBanner
+            title="Offline shell loaded"
+            description="Admin sign-in needs the network. Reconnect before submitting your password."
+          />
+        ) : null}
 
         <Card className="auth-card border-border/80 bg-card/90 backdrop-blur">
           <CardHeader>

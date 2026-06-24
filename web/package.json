@@ -7,13 +7,14 @@
   "scripts": {
     "dev": "bun --bun ./node_modules/.bin/vite",
     "demo": "VITE_DEMO_MODE=true bun --bun ./node_modules/.bin/vite --host 127.0.0.1 --port 55174",
-    "build": "bun --bun ./node_modules/.bin/tsc -b && bun --bun ./node_modules/.bin/vite build && bun ./scripts/write-version.mjs",
+    "build": "bun --bun ./node_modules/.bin/tsc -b && bun --bun ./node_modules/.bin/vite build && bun ./scripts/write-version.mjs && python3 ./scripts/generate_pwa_assets.py",
     "storybook": "bun --bun ./node_modules/.bin/storybook dev --host 127.0.0.1 --port 56006 --disable-telemetry",
     "storybook:ci": "bun --bun ./node_modules/.bin/storybook dev --ci --no-open --host 127.0.0.1 --port 56006 --disable-telemetry",
     "build-storybook": "bun --bun ./node_modules/.bin/storybook build --disable-telemetry",
     "preview": "bun --bun ./node_modules/.bin/vite preview",
     "test": "bun test",
-    "test:source-budgets": "bun test tests/sourceLineBudgets.test.ts"
+    "test:source-budgets": "bun test tests/sourceLineBudgets.test.ts",
+    "test:e2e:pwa-offline": "bun ../../tests/e2e/pwa_offline_browser_e2e.ts"
   },
   "dependencies": {
     "@iconify/react": "^4.1.1",

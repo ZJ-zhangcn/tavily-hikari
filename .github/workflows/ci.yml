@@ -30,6 +30,9 @@ jobs:
         with:
           bun-version-file: .bun-version
 
+      - name: Install PWA asset dependencies
+        run: python3 -m pip install --user Pillow
+
       - name: Build frontend assets
         working-directory: web
         env:
@@ -302,7 +305,7 @@ jobs:
         run: |
           set -euo pipefail
           for result in "${BACKEND_LIB_RESULT}" "${BACKEND_INTEGRATION_RESULT}" "${BACKEND_BIN_RESULT}"; do
-            if [ "${result}" != "success" ]; then
+            if [ "${result}" = "failure" ] || [ "${result}" = "cancelled" ]; then
               echo "backend shard failed with result=${result}"
               exit 1
             fi

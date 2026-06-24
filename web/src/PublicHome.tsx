@@ -19,6 +19,7 @@ import {
   type PublicTokenLog,
 } from './api'
 import LanguageSwitcher from './components/LanguageSwitcher'
+import OfflineStatusBanner from './components/OfflineStatusBanner'
 import ThemeToggle from './components/ThemeToggle'
 import useUpdateAvailable from './hooks/useUpdateAvailable'
 import RollingNumber from './components/RollingNumber'
@@ -41,6 +42,7 @@ import {
 import { useLanguage, useTranslate, type Language } from './i18n'
 import { copyText, selectAllReadonlyText } from './lib/clipboard'
 import { useResponsiveModes } from './lib/responsive'
+import { useOfflineState } from './pwa/useOfflineState'
 
 type GuideLanguage = 'toml' | 'json' | 'bash'
 
@@ -127,6 +129,7 @@ function PublicHome(): JSX.Element {
   const [activeGuide, setActiveGuide] = useState<GuideKey>('codex')
   const [revealedGuideToken, setRevealedGuideToken] = useState<string | null>(null)
   const updateBanner = useUpdateAvailable()
+  const offline = useOfflineState()
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'error'>('idle')
   const pageRef = useRef<HTMLElement>(null)
   const accessTokenFieldRef = useRef<HTMLInputElement | null>(null)
@@ -559,6 +562,12 @@ function PublicHome(): JSX.Element {
         onTokenAccessClick={openTokenAccessDialog}
         onAdminActionClick={() => { window.location.href = isAdmin ? '/admin' : '/login' }}
       />
+      {offline.isOffline ? (
+        <OfflineStatusBanner
+          title="Offline shell loaded"
+          description="The page frame is available, but live metrics, profile checks, and sign-in actions need the network."
+        />
+      ) : null}
       {!hideTokenPanels && (
         <>
           <section className="surface panel access-panel">

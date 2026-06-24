@@ -72,6 +72,7 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist',
       emptyOutDir: true,
+      manifest: true,
       rollupOptions: {
         input: {
           main: resolve(rootDir, 'index.html'),

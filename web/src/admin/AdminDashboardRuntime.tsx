@@ -26,6 +26,7 @@ import AdminCompactIntro from '../components/AdminCompactIntro'
 import LanguageSwitcher from '../components/LanguageSwitcher'
 import NotFoundFallbackPreview from '../components/NotFoundFallbackPreview'
 import HaStatusBanner from '../components/HaStatusBanner'
+import OfflineStatusBanner from '../components/OfflineStatusBanner'
 import HaSourceSettingsDialog from './HaSourceSettingsDialog'
 import HaNodeDetailPanel from './HaNodeDetailPanel'
 import { AdminSidebarUtilityCard, AdminSidebarUtilityStack } from '../components/AdminSidebarUtility'
@@ -163,6 +164,7 @@ import {
 import { useLanguage, useTranslate, type AdminTranslations } from '../i18n'
 import { extractApiKeyImportEntriesFromText } from '../lib/api-key-extract'
 import { ADMIN_USER_CONSOLE_HREF } from '../lib/adminUserConsoleEntry'
+import { useOfflineState } from '../pwa/useOfflineState'
 import {
   copyText,
   isCopyIntentKey,
@@ -1706,6 +1708,7 @@ type AdminTokenFilterDraft = {
 
 function AdminDashboard(): JSX.Element {
   const [route, setRoute] = useState<AdminPathRoute>(() => parseAdminPath(window.location.pathname))
+  const offline = useOfflineState()
   const [locationSearch, setLocationSearch] = useState(() => window.location.search)
   const { language } = useLanguage()
   const translations = useTranslate()
@@ -10605,6 +10608,12 @@ function AdminDashboard(): JSX.Element {
         )}
       </section>
       )}
+      {offline.isOffline ? (
+        <OfflineStatusBanner
+          title="Admin shell loaded offline"
+          description="Dashboard data, HA controls, saves, and request streams stay unavailable until the connection returns."
+        />
+      ) : null}
       {error && <div className="surface error-banner">{error}</div>}
 
       {showKeys && (
