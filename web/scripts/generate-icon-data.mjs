@@ -66,6 +66,7 @@ const ICON_SOURCES = [
     ['mdi:tune', 'tune'],
     ['mdi:tune-variant', 'tune-variant'],
     ['mdi:view-dashboard-outline', 'view-dashboard-outline'],
+    ['mdi:wifi-strength-off-outline', 'wifi-strength-off-outline'],
   ]],
   [simpleIcons, [
     ['simple-icons:openai', 'openai'],
