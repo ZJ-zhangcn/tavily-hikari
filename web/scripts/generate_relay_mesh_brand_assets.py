@@ -309,44 +309,44 @@ def export_static_assets(public_dir: Path) -> None:
     save_resized(launcher_light, 180, public_dir / "apple-touch-icon.png")
 
     write_theme_svg(
-        "/relay-mesh-mark-light.png",
-        "/relay-mesh-mark-dark.png",
+        "relay-mesh-mark-light.png",
+        "relay-mesh-mark-dark.png",
         mark_light.width,
         mark_light.height,
         public_dir / "favicon.svg",
     )
     write_svg_wrapper(
-        "/relay-mesh-mark-light.png",
+        "relay-mesh-mark-light.png",
         mark_light.width,
         mark_light.height,
         public_dir / "relay-mesh-mark-light.svg",
     )
     write_svg_wrapper(
-        "/relay-mesh-mark-dark.png",
+        "relay-mesh-mark-dark.png",
         mark_dark.width,
         mark_dark.height,
         public_dir / "relay-mesh-mark-dark.svg",
     )
     write_svg_wrapper(
-        "/relay-mesh-mark-mono-dark.png",
+        "relay-mesh-mark-mono-dark.png",
         mark_mono_dark.width,
         mark_mono_dark.height,
         public_dir / "relay-mesh-mark-mono-dark.svg",
     )
     write_svg_wrapper(
-        "/relay-mesh-mark-mono-light.png",
+        "relay-mesh-mark-mono-light.png",
         mark_mono_light.width,
         mark_mono_light.height,
         public_dir / "relay-mesh-mark-mono-light.svg",
     )
     write_svg_wrapper(
-        "/relay-mesh-icon-mono-dark.png",
+        "relay-mesh-icon-mono-dark.png",
         launcher_mono_dark.width,
         launcher_mono_dark.height,
         public_dir / "relay-mesh-icon-mono-dark.svg",
     )
     write_svg_wrapper(
-        "/relay-mesh-icon-mono-light.png",
+        "relay-mesh-icon-mono-light.png",
         launcher_mono_light.width,
         launcher_mono_light.height,
         public_dir / "relay-mesh-icon-mono-light.svg",
