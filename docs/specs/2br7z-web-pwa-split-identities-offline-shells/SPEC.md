@@ -2,7 +2,7 @@
 
 ## 状态
 
-- Status: 进行中（快车道）
+- Status: 已完成（快车道）
 - Created: 2026-06-24
 - Last: 2026-06-25
 
@@ -38,8 +38,9 @@
 - `web/package.json`
 - `web/scripts/**`
 - `web/*.html`
-- `web/public/relay-mesh-lockup.png`
-- `web/public/relay-mesh-icon.png`
+- `web/public/relay-mesh-lockup*.png`
+- `web/public/relay-mesh-icon*.png`
+- `web/public/relay-mesh-mark*.{png,svg}`
 - `web/src/*main.tsx`
 - `web/src/api/runtime.ts`
 - `web/src/components/**`
@@ -47,8 +48,9 @@
 - `web/src/user-console/runtime.tsx`
 - `web/src/admin/AdminDashboardRuntime.tsx`
 - `docs-site/rspress.config.ts`
-- `docs-site/docs/public/relay-mesh-lockup.png`
-- `docs-site/docs/public/relay-mesh-icon.png`
+- `docs-site/docs/public/relay-mesh-lockup*.png`
+- `docs-site/docs/public/relay-mesh-icon*.png`
+- `docs-site/docs/public/relay-mesh-mark*.{png,svg}`
 - `src/server/spa.rs`
 - `src/server/serve.rs`
 - `docs/specs/README.md`
@@ -111,15 +113,19 @@
 - `web/dist/pwa/admin-*.png`
 - `web/dist/pwa/public-touch-icon.png`
 - `web/dist/pwa/admin-touch-icon.png`
-- `web/public/relay-mesh-lockup.png`
-- `web/public/relay-mesh-icon.png`
-- `docs-site/docs/public/relay-mesh-lockup.png`
-- `docs-site/docs/public/relay-mesh-icon.png`
+- `web/public/relay-mesh-lockup*.png`
+- `web/public/relay-mesh-icon*.png`
+- `web/public/relay-mesh-mark*.{png,svg}`
+- `docs-site/docs/public/relay-mesh-lockup*.png`
+- `docs-site/docs/public/relay-mesh-icon*.png`
+- `docs-site/docs/public/relay-mesh-mark*.{png,svg}`
 
 ### 构建输入
 
 - Vite build manifest 必须开启，供 post-build 读取 multipage output graph。
 - 生成脚本必须按 entrypoint 归类 public/admin asset graph，并输出两套 PWA 合同文件。
+- Relay Mesh 资产导出链必须显式产出 light / dark / mono 变体，并保留默认亮色别名文件用于现有入口兼容。
+- PWA manifest 必须覆盖 `64, 96, 128, 144, 152, 167, 180, 192, 256, 384, 512, 1024` 尺寸，并额外提供 `192/512` maskable 图标。
 
 ### 静态托管
 
@@ -199,3 +205,4 @@
 - 2026-06-24: 补齐 Chromium 离线视觉证据，确认 public identity 离线访问 `/admin` 不会命中 cached admin shell。
 - 2026-06-24: 将统一离线提示 banner 图标从 `mdi:earth-off` 调整为更贴近无网络语义的 `mdi:web-off`，并更新对应视觉证据。
 - 2026-06-25: 将 split public/admin PWA 图标、touch icon 与站点 favicon 切换到经批准的 Relay Mesh lockup/icon 导出链，并同步接入 public/console/admin/docs-site 品牌位而不改变 PWA identity 合同。
+- 2026-06-25: 补齐 Relay Mesh light/dark/mono 变体、主题感知 favicon 与全尺寸 PWA icon 覆盖，并更新品牌资产导出预览证据。

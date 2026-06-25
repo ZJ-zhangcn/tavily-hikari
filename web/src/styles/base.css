@@ -588,6 +588,18 @@
   object-fit: contain;
 }
 
+.brand-lockup-image-dark {
+  display: none;
+}
+
+.dark .brand-lockup-image-light {
+  display: none;
+}
+
+.dark .brand-lockup-image-dark {
+  display: block;
+}
+
 .brand-lockup-image-compact {
   width: min(100%, 168px);
 }

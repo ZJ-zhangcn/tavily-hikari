@@ -13,16 +13,20 @@ const localStorybookDevOrigin = process.env.VITE_STORYBOOK_DEV_ORIGIN?.trim() ??
 export default defineConfig({
   root: 'docs',
   base: docsBase,
-  icon: '/relay-mesh-icon.png',
+  icon: '/favicon.svg',
   logo: {
-    light: '/relay-mesh-lockup.png',
-    dark: '/relay-mesh-lockup.png',
+    light: '/relay-mesh-lockup-light.png',
+    dark: '/relay-mesh-lockup-dark.png',
   },
   logoText: 'Tavily Hikari Docs',
   lang: 'en',
   head: [
     ['meta', { name: 'theme-color', content: '#7c3aed' }],
-    ['link', { rel: 'apple-touch-icon', href: '/relay-mesh-icon.png' }],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/relay-mesh-mark-light.svg', media: '(prefers-color-scheme: light)' }],
+    ['link', { rel: 'icon', type: 'image/svg+xml', href: '/relay-mesh-mark-dark.svg', media: '(prefers-color-scheme: dark)' }],
+    ['link', { rel: 'icon', type: 'image/png', sizes: '32x32', href: '/favicon-32x32.png' }],
+    ['link', { rel: 'icon', type: 'image/png', sizes: '16x16', href: '/favicon-16x16.png' }],
+    ['link', { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' }],
   ],
   locales: [
     {
@@ -55,7 +59,6 @@ export default defineConfig({
         label: 'English',
         title: 'Tavily Hikari Docs',
         description: 'Product, deployment, API, and operator guidance for Tavily Hikari.',
-        logo: '/relay-mesh-lockup.png',
         logoText: 'Tavily Hikari Docs',
         nav: [
           { text: 'Home', link: '/' },
@@ -86,7 +89,6 @@ export default defineConfig({
         label: '简体中文',
         title: 'Tavily Hikari 文档',
         description: 'Tavily Hikari 的产品、部署、API 与运维文档。',
-        logo: '/relay-mesh-lockup.png',
         logoText: 'Tavily Hikari 文档',
         nav: [
           { text: '首页', link: '/zh/' },
