@@ -187,6 +187,10 @@ export function useOAuthCallbackFlow({
     return () => {
       active = false
       window.clearTimeout(timeout)
+      if (oauthCallbackRedirectTimerRef.current != null) {
+        window.clearTimeout(oauthCallbackRedirectTimerRef.current)
+        oauthCallbackRedirectTimerRef.current = null
+      }
     }
   }, [abortActiveConsoleLoads, ensureFinalizeAttempt, oauthCallbackProvider, setError, setLoading])
 

@@ -95,4 +95,65 @@ describe('useOAuthCallbackFlow', () => {
 
     await act(async () => root.unmount())
   })
+
+  it('clears the delayed success redirect when the callback unmounts', async () => {
+    const route = { name: 'oauthCallback', provider: 'linuxdo' } as const
+    const abortActiveConsoleLoads = mock(() => undefined)
+    const setLoading = mock((_value: boolean) => undefined)
+    const setError = mock((_value: string | null) => undefined)
+    const fetchMock = mock(async () => {
+      return new Response(
+        JSON.stringify({
+          outcome: 'success',
+          provider: 'linuxdo',
+          redirectTo: '/console',
+          detail: null,
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      )
+    })
+    globalThis.fetch = fetchMock as typeof fetch
+
+    const replaceStateMock = mock((_state: unknown, _unused: string, url?: string | URL | null) => {
+      if (typeof url === 'string') {
+        window.history.pushState({}, '', url)
+      }
+    })
+    window.history.replaceState = replaceStateMock as typeof window.history.replaceState
+    window.history.replaceState({}, '', '/console/oauth/linuxdo/callback?code=oauth-code&state=oauth-state')
+
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    function Harness(): null {
+      useOAuthCallbackFlow({
+        route,
+        providers: EN.header.providers,
+        text: EN.oauthCallback,
+        abortActiveConsoleLoads,
+        setLoading,
+        setError,
+      })
+      return null
+    }
+
+    try {
+      await act(async () => {
+        root.render(<Harness />)
+      })
+      await flushEffects(50)
+      expect(window.location.pathname).toBe('/console/oauth/linuxdo/callback')
+      await act(async () => root.unmount())
+      await flushEffects(900)
+
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(window.location.pathname).toBe('/console/oauth/linuxdo/callback')
+    } finally {
+      // no-op
+    }
+  })
 })
