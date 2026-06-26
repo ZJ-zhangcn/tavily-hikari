@@ -929,15 +929,6 @@ async fn post_linuxdo_finalize(
     }
 
     let use_secure_cookie = wants_secure_cookie(&headers);
-    if let Err((status, reason)) = require_full_master_write(state.as_ref()).await {
-        eprintln!("linuxdo finalize rejected by write gate ({status}): {reason}");
-        return linuxdo_finalize_json_response(
-            LinuxDoFinalizeResponse::server_error(reason),
-            use_secure_cookie,
-            None,
-        );
-    }
-
     let code = payload.code.trim();
     let oauth_state = payload.state.trim();
     if code.is_empty() || oauth_state.is_empty() {
