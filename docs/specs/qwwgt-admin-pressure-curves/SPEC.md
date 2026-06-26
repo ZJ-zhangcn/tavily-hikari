@@ -65,6 +65,7 @@
   requested_viewport: `1440x2200`
   viewport_strategy: `storybook-viewport`
 
+  PR: include
   ![Analysis pressure desktop](./assets/pressure-desktop.png)
 
 - source_type: `storybook_canvas`
@@ -75,6 +76,7 @@
   requested_viewport: `390x2600`
   viewport_strategy: `storybook-viewport`
 
+  PR: include
   ![Analysis pressure mobile](./assets/pressure-mobile.png)
 
 ## References
