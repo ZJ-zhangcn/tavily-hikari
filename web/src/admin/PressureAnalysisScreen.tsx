@@ -3,6 +3,7 @@ import { useMemo } from 'react'
 import {
   CategoryScale,
   Chart as ChartJS,
+  Filler,
   Legend,
   LinearScale,
   LineElement,
@@ -23,7 +24,7 @@ import type {
 import type { AdminTranslations, Language } from '../i18n'
 import AdminLoadingRegion from '../components/AdminLoadingRegion'
 
-ChartJS.register(CategoryScale, LinearScale, LineElement, PointElement, Tooltip, Legend)
+ChartJS.register(CategoryScale, LinearScale, LineElement, PointElement, Filler, Tooltip, Legend)
 
 type ActiveUserPressurePoint = {
   rank: number
