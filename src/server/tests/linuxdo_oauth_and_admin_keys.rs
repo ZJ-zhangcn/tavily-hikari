@@ -210,17 +210,16 @@ use super::upstream_support_and_manual_jobs::*;
             .expect("oauth binding cookie");
 
         let callback_resp = client
-            .get(format!(
-                "http://{addr}/auth/linuxdo/callback?code=test-code&state={state}"
-            ))
+            .post(format!("http://{addr}/auth/linuxdo/finalize"))
             .header(reqwest::header::COOKIE, binding_cookie)
+            .json(&json!({ "code": "test-code", "state": state }))
             .send()
             .await
-            .expect("oauth callback");
-        assert_eq!(
-            callback_resp.status(),
-            reqwest::StatusCode::TEMPORARY_REDIRECT
-        );
+            .expect("oauth finalize");
+        assert_eq!(callback_resp.status(), reqwest::StatusCode::OK);
+        let finalize_body: serde_json::Value =
+            callback_resp.json().await.expect("oauth finalize body");
+        assert_eq!(finalize_body.get("outcome").and_then(|value| value.as_str()), Some("success"));
 
         let pool = connect_sqlite_test_pool(&db_str).await;
         let (ciphertext, nonce, trust_level, attempted_at, success_at, sync_error) =
@@ -302,21 +301,27 @@ use super::upstream_support_and_manual_jobs::*;
             .expect("oauth binding cookie");
 
         let callback_resp = client
-            .get(format!(
-                "http://{addr}/auth/linuxdo/callback?code=test-code&state={state}"
-            ))
+            .post(format!("http://{addr}/auth/linuxdo/finalize"))
             .header(reqwest::header::COOKIE, binding_cookie)
+            .json(&json!({ "code": "test-code", "state": state }))
             .send()
             .await
-            .expect("oauth callback");
-        assert_eq!(callback_resp.status(), reqwest::StatusCode::FORBIDDEN);
+            .expect("oauth finalize");
+        assert_eq!(callback_resp.status(), reqwest::StatusCode::OK);
+        let cleared_binding_cookie = callback_resp
+            .headers()
+            .get_all(reqwest::header::SET_COOKIE)
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .any(|value| value.starts_with(&format!("{OAUTH_LOGIN_BINDING_COOKIE_NAME}=")));
+        let finalize_body: serde_json::Value =
+            callback_resp.json().await.expect("oauth finalize body");
+        assert_eq!(
+            finalize_body.get("outcome").and_then(|value| value.as_str()),
+            Some("inactive_user")
+        );
         assert!(
-            callback_resp
-                .headers()
-                .get_all(reqwest::header::SET_COOKIE)
-                .iter()
-                .filter_map(|value| value.to_str().ok())
-                .any(|value| value.starts_with(&format!("{OAUTH_LOGIN_BINDING_COOKIE_NAME}="))),
+            cleared_binding_cookie,
             "inactive callbacks should still clear the OAuth binding cookie"
         );
 
@@ -412,17 +417,16 @@ use super::upstream_support_and_manual_jobs::*;
             .expect("oauth binding cookie");
 
         let callback_resp = client
-            .get(format!(
-                "http://{addr}/auth/linuxdo/callback?code=test-code&state={state}"
-            ))
+            .post(format!("http://{addr}/auth/linuxdo/finalize"))
             .header(reqwest::header::COOKIE, binding_cookie)
+            .json(&json!({ "code": "test-code", "state": state }))
             .send()
             .await
-            .expect("oauth callback");
-        assert_eq!(
-            callback_resp.status(),
-            reqwest::StatusCode::TEMPORARY_REDIRECT
-        );
+            .expect("oauth finalize");
+        assert_eq!(callback_resp.status(), reqwest::StatusCode::OK);
+        let finalize_body: serde_json::Value =
+            callback_resp.json().await.expect("oauth finalize body");
+        assert_eq!(finalize_body.get("outcome").and_then(|value| value.as_str()), Some("success"));
 
         let (ciphertext, nonce, trust_level, attempted_at, success_at, sync_error) =
             fetch_linuxdo_oauth_account_snapshot(&pool, "linuxdo-callback-error-user").await;
@@ -434,6 +438,36 @@ use super::upstream_support_and_manual_jobs::*;
         let sync_error = sync_error.expect("sync error recorded");
         assert!(sync_error.contains("refresh-token storage error"));
         assert!(sync_error.contains("refresh token persistence failed"));
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[tokio::test]
+    async fn legacy_linuxdo_callback_route_serves_diagnostic_response() {
+        let db_path = temp_db_path("legacy-linuxdo-callback-diagnostic");
+        let db_str = db_path.to_string_lossy().to_string();
+        let proxy = TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
+            .await
+            .expect("proxy created");
+
+        let addr = spawn_user_oauth_server(proxy).await;
+        let response = reqwest::Client::new()
+            .get(format!(
+                "http://{addr}/auth/linuxdo/callback?code=legacy-code&state=legacy-state"
+            ))
+            .send()
+            .await
+            .expect("legacy callback diagnostic");
+        assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
+        let body = response.text().await.expect("diagnostic body");
+        assert!(
+            body.contains("POST /auth/linuxdo/finalize"),
+            "diagnostic response should point operators at the new finalize endpoint"
+        );
+        assert!(
+            body.contains("/console/oauth/linuxdo/callback"),
+            "diagnostic response should mention the frontend callback redirect URI"
+        );
 
         let _ = std::fs::remove_file(db_path);
     }
