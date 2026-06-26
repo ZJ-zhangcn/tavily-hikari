@@ -13,15 +13,13 @@
 - `server24h` 的平均压力继续由前端对 288 个 rolling 1h 点直接求算术平均，不新增额外 API 字段。
 - `web/src/admin/PressureAnalysisScreen.tsx` 现统一使用 Chart.js `Line` 曲线，并通过 `cubicInterpolationMode='monotone'` 与适中 `tension` 避免折角和过冲。
 - “当前 1 小时用户压力分布” 已替换为活跃用户 pressure rank 曲线，排序为 `pressure DESC, userId ASC`，且前端再次过滤 `pressure > 0`。
+- Storybook runtime 与 demo API 现共用 `web/src/api/pressureDemoFixture.ts`；mock 用户汇总会和当前 1h 服务器压力、昨日同期差值以及 success/failure 总量保持一致。
 - Storybook runtime 与截图脚本改为固定产出 focused spec 目录下的 desktop/mobile 证据图。
 
 ## Validation
 
-- `cargo test analysis_pressure_snapshot_uses_rolling_1h_and_excludes_non_upstream_events -- --nocapture`
-- `cargo test analysis_pressure_snapshot_warms_up_24h_rolling_window_edges -- --nocapture`
-- `cargo test analysis_pressure_api_requires_admin_and_reuses_startup_backfill -- --exact --nocapture`
-- `cargo test rust_source_files_stay_within_line_budget -- --nocapture`
-- `cd web && bun test src/admin/AdminPages.stories.test.ts`
+- `cargo test`
+- `cd web && bun test`
 - `cd web && bun run build`
 - `cd web && bun run build-storybook`
 
