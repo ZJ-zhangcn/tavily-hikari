@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 
-import { finalizeLinuxDoAuth } from '../api'
+import { finalizeLinuxDoAuth, type LinuxDoFinalizeResult } from '../api'
 import { userConsoleRouteToPath, type UserConsoleRoute } from '../lib/userConsoleRoutes'
 import {
   OAUTH_CALLBACK_FINALIZE_TIMEOUT_MS,
@@ -30,34 +30,73 @@ export function useOAuthCallbackFlow({
   setError,
 }: UseOAuthCallbackFlowArgs) {
   const isOAuthCallbackRoute = route.name === 'oauthCallback'
+  const oauthCallbackProvider = route.name === 'oauthCallback' ? route.provider : null
   const [oauthCallbackState, setOauthCallbackState] = useState<OAuthCallbackScreenState>('connecting')
   const [oauthCallbackDetail, setOauthCallbackDetail] = useState<string | null>(null)
   const oauthCallbackQueryRef = useRef<ReturnType<typeof parseOAuthCallbackQuery> | null>(null)
+  const oauthCallbackQueryRouteRef = useRef<string | null>(null)
+  const oauthCallbackAttemptRef = useRef<{
+    controller: AbortController
+    key: string
+    promise: Promise<LinuxDoFinalizeResult>
+  } | null>(null)
   const oauthCallbackRedirectTimerRef = useRef<number | null>(null)
 
   useEffect(() => {
-    if (!isOAuthCallbackRoute) {
+    if (!oauthCallbackProvider) {
       oauthCallbackQueryRef.current = null
+      oauthCallbackQueryRouteRef.current = null
+      oauthCallbackAttemptRef.current?.controller.abort()
+      oauthCallbackAttemptRef.current = null
       if (oauthCallbackRedirectTimerRef.current != null) {
         window.clearTimeout(oauthCallbackRedirectTimerRef.current)
         oauthCallbackRedirectTimerRef.current = null
       }
       return
     }
-    oauthCallbackQueryRef.current = parseOAuthCallbackQuery(window.location.search)
+
+    const routeKey = `oauth:${oauthCallbackProvider}`
+    if (oauthCallbackQueryRouteRef.current && oauthCallbackQueryRouteRef.current !== routeKey) {
+      oauthCallbackAttemptRef.current?.controller.abort()
+      oauthCallbackAttemptRef.current = null
+      if (oauthCallbackRedirectTimerRef.current != null) {
+        window.clearTimeout(oauthCallbackRedirectTimerRef.current)
+        oauthCallbackRedirectTimerRef.current = null
+      }
+    }
+    if (oauthCallbackQueryRouteRef.current !== routeKey || oauthCallbackQueryRef.current == null) {
+      oauthCallbackQueryRef.current = parseOAuthCallbackQuery(window.location.search)
+      oauthCallbackQueryRouteRef.current = routeKey
+    }
     if (window.location.search || window.location.hash) {
       window.history.replaceState(null, '', userConsoleRouteToPath(route))
     }
-  }, [isOAuthCallbackRoute, route])
+  }, [oauthCallbackProvider, route])
+
+  const ensureFinalizeAttempt = useCallback((key: string, code: string, state: string) => {
+    if (oauthCallbackAttemptRef.current?.key === key) {
+      return oauthCallbackAttemptRef.current
+    }
+
+    const controller = new AbortController()
+    const promise = finalizeLinuxDoAuth(code, state, controller.signal).finally(() => {
+      if (oauthCallbackAttemptRef.current?.key === key) {
+        oauthCallbackAttemptRef.current = null
+      }
+    })
+    const attempt = { controller, key, promise }
+    oauthCallbackAttemptRef.current = attempt
+    return attempt
+  }, [])
 
   useEffect(() => {
-    if (!isOAuthCallbackRoute || route.name !== 'oauthCallback') return
+    if (!oauthCallbackProvider) return
 
     abortActiveConsoleLoads()
     setLoading(false)
     setError(null)
 
-    if (route.provider !== 'linuxdo') {
+    if (oauthCallbackProvider !== 'linuxdo') {
       setOauthCallbackState('unsupportedProvider')
       setOauthCallbackDetail(null)
       return
@@ -75,19 +114,27 @@ export function useOAuthCallbackFlow({
       return
     }
 
-    const controller = new AbortController()
+    const attempt = ensureFinalizeAttempt(
+      `${oauthCallbackProvider}:${query.code}:${query.state}`,
+      query.code,
+      query.state,
+    )
+    let active = true
     let timedOut = false
     const timeout = window.setTimeout(() => {
       timedOut = true
-      controller.abort()
+      attempt.controller.abort()
+      if (!active) return
+      setOauthCallbackState('timeout')
+      setOauthCallbackDetail(null)
     }, OAUTH_CALLBACK_FINALIZE_TIMEOUT_MS)
 
     setOauthCallbackState('connecting')
     setOauthCallbackDetail(null)
 
-    void finalizeLinuxDoAuth(query.code, query.state, controller.signal)
+    void attempt.promise
       .then((result) => {
-        if (controller.signal.aborted) return
+        if (!active || timedOut) return
         if (result.outcome === 'success') {
           setOauthCallbackState('success')
           setOauthCallbackDetail(null)
@@ -119,12 +166,17 @@ export function useOAuthCallbackFlow({
         setOauthCallbackDetail(result.detail)
       })
       .catch((err) => {
+        if (!active) return
         if (timedOut) {
           setOauthCallbackState('timeout')
           setOauthCallbackDetail(null)
           return
         }
-        if (controller.signal.aborted) return
+        if (attempt.controller.signal.aborted) {
+          setOauthCallbackState('timeout')
+          setOauthCallbackDetail(null)
+          return
+        }
         setOauthCallbackState('serverError')
         setOauthCallbackDetail(err instanceof Error ? err.message : null)
       })
@@ -133,10 +185,10 @@ export function useOAuthCallbackFlow({
       })
 
     return () => {
-      controller.abort()
+      active = false
       window.clearTimeout(timeout)
     }
-  }, [abortActiveConsoleLoads, isOAuthCallbackRoute, route, setError, setLoading])
+  }, [abortActiveConsoleLoads, ensureFinalizeAttempt, oauthCallbackProvider, setError, setLoading])
 
   const providerLabel = route.name === 'oauthCallback'
     ? resolveOAuthCallbackProviderLabel(route.provider, providers)
