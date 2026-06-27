@@ -169,6 +169,8 @@
 - Moved `server_pressure_buckets` historical rebuild out of the startup critical path into one
   post-listener background rebuild, and shortened its writer-slot hold time by computing aggregate
   rows before the final replace transaction.
-- Tightened the image `HEALTHCHECK` timing to
-  `start-period=20s/start-interval=20s/interval=5s/timeout=5s/retries=18` so container healthy
-  state tracks the stricter serving contract instead of flipping green on an early success probe.
+- Cold startup subscription refresh now fans out across the whole configured URL set in one wave,
+  so 5-8 slow feeds no longer turn strict readiness into multiple 60-second timeout batches.
+- Tightened the image `HEALTHCHECK` timing to a builder-compatible 20-second minimum gate plus
+  `start-period=20s/interval=5s/timeout=5s/retries=18`, so container healthy state still tracks
+  the stricter serving contract without depending on Docker 25-only `--start-interval`.

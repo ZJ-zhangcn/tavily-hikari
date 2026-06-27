@@ -86,11 +86,15 @@ month-tail public metrics scan.
   path. Trigger it once after the listener is already serving, keep failure isolated to logs or
   stale/empty analysis views, and shorten the live writer window by computing aggregates before the
   final replace transaction.
+- If strict cold startup still depends on subscription-backed forward-proxy runtime, do not let a
+  small configured subscription set spill into fixed-size timeout batches before readiness. Fan the
+  whole startup set out in one wave, and keep the fail-closed rule tied to “every subscription
+  fetch failed” rather than to a per-batch wall-clock artifact.
 - Align deploy health timing with that stricter contract. In this service the accepted image
-  baseline is `start-period=20s`, `start-interval=20s`, `interval=5s`, `timeout=5s`, and
-  `retries=18`. Shared-testbox smoke showed that `start-period` alone only masks failures; the
-  matching `start-interval` is what stops a fast successful probe from flipping the container
-  healthy before the intended startup hold window has elapsed.
+  baseline is `start-period=20s`, `interval=5s`, `timeout=5s`, and `retries=18`, with the
+  healthcheck command itself enforcing the 20-second minimum-success gate. That keeps old Docker
+  builders working while still stopping a fast successful probe from flipping the container healthy
+  before the intended startup hold window has elapsed.
 - Keep retention cleanup bounded. Large `request_logs` backlogs should be deleted in small batches
   with a runtime/batch budget and a catch-up delay, rather than one daily job holding or repeatedly
   contesting the writer until the whole backlog is gone.

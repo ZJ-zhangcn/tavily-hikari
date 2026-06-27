@@ -62,10 +62,13 @@
 - The server-pressure rebuild now computes aggregate rows before taking the SQLite write
   transaction and only holds the writer slot during the final table replace, shrinking the live
   rebuild write window.
+- Cold startup now fans subscription-URL fetches across the whole configured set in one wave, so a
+  5-8 URL subscription config no longer stretches strict readiness across multiple 60-second
+  timeout batches before xray/runtime can finish initializing.
 - The container image `HEALTHCHECK` now polls the stricter `/health` contract with
-  `start-period=20s`, `start-interval=20s`, `interval=5s`, `timeout=5s`, and `retries=18`.
-  Shared-testbox smoke showed that `start-period` alone only masks startup failures; matching
-  `start-interval` is what keeps the first green transition near the intended 20-second floor.
+  `start-period=20s`, `interval=5s`, `timeout=5s`, and `retries=18`, while a builder-compatible
+  healthcheck gate keeps the first green transition near the intended 20-second floor without
+  relying on Docker 25-only `--start-interval`.
 - LinuxDo system tag binding backfill now uses a single indexed startup precheck and only repairs
   mismatched rows before readiness. A background scheduler periodically refreshes the bindings and
   quota snapshots after the service is already listening.

@@ -86,6 +86,9 @@ source when a usable persisted runtime already exists.
   bounded backoff so a short writer collision does not delay readiness longer than necessary.
 - Startup subscription refresh may fetch multiple subscription URLs concurrently, as long as the
   refresh still fails closed when every subscription fetch fails.
+- When startup has no safely restorable subscription runtime, the configured subscription URL set
+  must still complete in one startup wave instead of fixed 4-URL timeout batches, so strict cold
+  startup wall time stays bounded by a single subscription-fetch timeout.
 - Startup must restore persisted subscription endpoints before remote subscription refresh when
   their configured subscription ownership is unambiguous. When at least one restored subscription
   endpoint exists, startup must not block on remote refresh before xray sync/runtime persistence;
@@ -100,8 +103,9 @@ source when a usable persisted runtime already exists.
   as a best-effort background rebuild whose failure is isolated to logs/observability and does not
   turn serving `/health` red.
 - The default image `HEALTHCHECK` must align with the stricter serving contract by using
-  `start-period=20s`, `start-interval=20s`, `interval=5s`, `timeout=5s`, and `retries=18` so a
-  fast green probe cannot bypass the intended startup hold window.
+  `start-period=20s`, `interval=5s`, `timeout=5s`, and `retries=18`, while the healthcheck command
+  itself keeps the first green transition at or after the intended 20-second hold window without
+  depending on Docker 25-only flags.
 - Scheduled job records must preserve the logical job type and record the trigger source separately
   as `scheduler`, `manual`, or `auto`. Manual runs must not be encoded by appending suffixes to
   `job_type`.
@@ -223,6 +227,9 @@ source when a usable persisted runtime already exists.
   restores the local runtime and completes without waiting for the slow remote refresh.
 - Without persisted subscription runtime, startup remains strict and waits for subscription
   readiness instead of reporting healthy from an empty proxy graph.
+- Without persisted subscription runtime and with a small multi-URL subscription set, startup still
+  waits for subscription readiness but does not spill into multiple 60-second timeout waves before
+  strict health can turn green.
 - When a serving role needs shared xray relay, `/health` returns non-`200` immediately until the
   runtime is actually ready even if the internal startup grace timer has not expired yet.
 - In `active_standby`, `standby` / `recovery` still return `200 ok` on `/health` while runtime/xray
@@ -232,7 +239,8 @@ source when a usable persisted runtime already exists.
   without making owner-facing pressure analysis return `500`.
 - Under mock/local upstream startup, the image `HEALTHCHECK` becomes healthy only after the stricter
   serving `/health` is truly green and remains stable within the
-  `start-period=20s/start-interval=20s/interval=5s/timeout=5s/retries=18` timing contract.
+  builder-compatible 20-second minimum-gate plus `start-period=20s/interval=5s/timeout=5s/retries=18`
+  timing contract.
 - With a large backlog of old request logs, one scheduler pass records bounded progress instead of
   running indefinitely; later catch-up passes eventually remove all rows older than the retention
   threshold.
