@@ -1934,6 +1934,9 @@ export interface AdminQuotaLimitSet {
   hourlyLimit: number
   dailyLimit: number
   monthlyLimit: number
+  businessCalls1hLimit: number
+  dailyCreditsLimit: number
+  monthlyCreditsLimit: number
   inheritsDefaults: boolean
 }
 
@@ -1957,6 +1960,9 @@ export interface AdminUserTag {
   hourlyDelta: number
   dailyDelta: number
   monthlyDelta: number
+  businessCalls1hDelta: number
+  dailyCreditsDelta: number
+  monthlyCreditsDelta: number
   userCount: number
 }
 
@@ -1971,6 +1977,9 @@ export interface AdminUserTagBinding {
   hourlyDelta: number
   dailyDelta: number
   monthlyDelta: number
+  businessCalls1hDelta: number
+  dailyCreditsDelta: number
+  monthlyCreditsDelta: number
   source: string
 }
 
@@ -1985,6 +1994,9 @@ export interface AdminUserQuotaBreakdownEntry {
   hourlyDelta: number
   dailyDelta: number
   monthlyDelta: number
+  businessCalls1hDelta: number
+  dailyCreditsDelta: number
+  monthlyCreditsDelta: number
 }
 
 export interface AdminUserSummary {
@@ -2006,6 +2018,10 @@ export interface AdminUserSummary {
   quotaDailyLimit: number
   quotaMonthlyUsed: number
   quotaMonthlyLimit: number
+  dailyCreditsUsed: number
+  dailyCreditsLimit: number
+  monthlyCreditsUsed: number
+  monthlyCreditsLimit: number
   dailySuccess: number
   dailyFailure: number
   monthlySuccess: number
@@ -2239,6 +2255,7 @@ export async function postUserLogout(signal?: AbortSignal): Promise<void> {
 export interface UserDashboard {
   debugInfoShared: boolean
   requestRate: RequestRate
+  businessCalls1h: BusinessCalls1hSummary
   hourlyAnyUsed: number
   hourlyAnyLimit: number
   quotaHourlyUsed: number
@@ -2247,6 +2264,10 @@ export interface UserDashboard {
   quotaDailyLimit: number
   quotaMonthlyUsed: number
   quotaMonthlyLimit: number
+  dailyCreditsUsed: number
+  dailyCreditsLimit: number
+  monthlyCreditsUsed: number
+  monthlyCreditsLimit: number
   dailySuccess: number
   dailyFailure: number
   monthlySuccess: number
@@ -2276,6 +2297,9 @@ export interface UserDashboardOverviewProgress {
   quotaHourly: UserDashboardProgressCard
   quotaDaily: UserDashboardProgressCard
   quotaMonthly: UserDashboardProgressCard
+  businessCalls1h: UserDashboardProgressCard
+  dailyCredits: UserDashboardProgressCard
+  monthlyCredits: UserDashboardProgressCard
 }
 
 export interface UserDashboardOverview {
@@ -2286,6 +2310,7 @@ export interface UserDashboardOverview {
 export interface UserTokenSummary {
   tokenId: string; enabled: boolean; note: string | null; lastUsedAt: number | null
   requestRate: RequestRate
+  businessCalls1h: BusinessCalls1hSummary
   hourlyAnyUsed: number
   hourlyAnyLimit: number
   quotaHourlyUsed: number
@@ -2294,6 +2319,10 @@ export interface UserTokenSummary {
   quotaDailyLimit: number
   quotaMonthlyUsed: number
   quotaMonthlyLimit: number
+  dailyCreditsUsed: number
+  dailyCreditsLimit: number
+  monthlyCreditsUsed: number
+  monthlyCreditsLimit: number
   dailySuccess: number
   dailyFailure: number
   monthlySuccess: number

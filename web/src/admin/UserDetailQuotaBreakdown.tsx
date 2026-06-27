@@ -104,9 +104,9 @@ export function UserDetailQuotaBreakdown({
                   <td>
                     <StatusBadge tone={view.effectTone}>{view.effectLabel}</StatusBadge>
                   </td>
-                  <td>{formatBreakdownValue(entry, view.isAbsoluteRow, entry.hourlyDelta)}</td>
-                  <td>{formatBreakdownValue(entry, view.isAbsoluteRow, entry.dailyDelta)}</td>
-                  <td>{formatBreakdownValue(entry, view.isAbsoluteRow, entry.monthlyDelta)}</td>
+                  <td>{formatBreakdownValue(entry, view.isAbsoluteRow, entry.businessCalls1hDelta)}</td>
+                  <td>{formatBreakdownValue(entry, view.isAbsoluteRow, entry.dailyCreditsDelta)}</td>
+                  <td>{formatBreakdownValue(entry, view.isAbsoluteRow, entry.monthlyCreditsDelta)}</td>
                 </tr>
               )
             })}
@@ -145,7 +145,7 @@ export function UserDetailQuotaBreakdown({
                     language={language}
                     className="admin-user-mobile-metric-label"
                   />
-                  <strong>{formatBreakdownValue(entry, view.isAbsoluteRow, entry.hourlyDelta)}</strong>
+                  <strong>{formatBreakdownValue(entry, view.isAbsoluteRow, entry.businessCalls1hDelta)}</strong>
                 </div>
                 <div className="admin-user-mobile-metric-card">
                   <UsageMetricLabel
@@ -154,7 +154,7 @@ export function UserDetailQuotaBreakdown({
                     language={language}
                     className="admin-user-mobile-metric-label"
                   />
-                  <strong>{formatBreakdownValue(entry, view.isAbsoluteRow, entry.dailyDelta)}</strong>
+                  <strong>{formatBreakdownValue(entry, view.isAbsoluteRow, entry.dailyCreditsDelta)}</strong>
                 </div>
                 <div className="admin-user-mobile-metric-card admin-user-mobile-metric-card--span-2">
                   <UsageMetricLabel
@@ -163,7 +163,7 @@ export function UserDetailQuotaBreakdown({
                     language={language}
                     className="admin-user-mobile-metric-label"
                   />
-                  <strong>{formatBreakdownValue(entry, view.isAbsoluteRow, entry.monthlyDelta)}</strong>
+                  <strong>{formatBreakdownValue(entry, view.isAbsoluteRow, entry.monthlyCreditsDelta)}</strong>
                 </div>
               </div>
             </article>

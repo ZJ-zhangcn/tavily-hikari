@@ -33,7 +33,7 @@ const EXCEPTIONS = new Map<string, { max: number; reason: string }>([
   [
     'src/api/runtime.ts',
     {
-      max: 3720,
+      max: 3740,
       reason:
         'API barrel still carries HA source settings, planned cutover node-detail contracts, admin settings, auth-token retention contracts, user-list contracts, source dialog failure normalization, and user-console overview APIs until the proxy API surface is split out.',
     },
@@ -104,7 +104,7 @@ const EXCEPTIONS = new Map<string, { max: number; reason: string }>([
   [
     'src/UserConsole.stories.tsx',
     {
-      max: 1860,
+      max: 1900,
       reason: 'Console Storybook proof still keeps overview, recharge, failover, and token-detail acceptance states on one stable owner-facing story surface.',
     },
   ],

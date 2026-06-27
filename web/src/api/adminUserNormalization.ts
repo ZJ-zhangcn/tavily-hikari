@@ -83,32 +83,56 @@ function normalizeBusinessCalls1h(
 
 function normalizeAdminQuotaLimitSet(value: unknown): AdminQuotaLimitSet {
   const source = isRecordLike(value) ? value : {}
+  const businessCalls1hLimit = readNumber(
+    source,
+    'businessCalls1hLimit',
+    'business_calls_1h_limit',
+    readNumber(source, 'hourlyLimit', 'hourly_limit'),
+  )
+  const dailyCreditsLimit = readNumber(
+    source,
+    'dailyCreditsLimit',
+    'daily_credits_limit',
+    readNumber(source, 'dailyLimit', 'daily_limit'),
+  )
+  const monthlyCreditsLimit = readNumber(
+    source,
+    'monthlyCreditsLimit',
+    'monthly_credits_limit',
+    readNumber(source, 'monthlyLimit', 'monthly_limit'),
+  )
   return {
     hourlyAnyLimit: readNumber(source, 'hourlyAnyLimit', 'hourly_any_limit'),
-    hourlyLimit: readNumber(
-      source,
-      'businessCalls1hLimit',
-      'business_calls_1h_limit',
-      readNumber(source, 'hourlyLimit', 'hourly_limit'),
-    ),
-    dailyLimit: readNumber(
-      source,
-      'dailyCreditsLimit',
-      'daily_credits_limit',
-      readNumber(source, 'dailyLimit', 'daily_limit'),
-    ),
-    monthlyLimit: readNumber(
-      source,
-      'monthlyCreditsLimit',
-      'monthly_credits_limit',
-      readNumber(source, 'monthlyLimit', 'monthly_limit'),
-    ),
+    hourlyLimit: businessCalls1hLimit,
+    dailyLimit: dailyCreditsLimit,
+    monthlyLimit: monthlyCreditsLimit,
+    businessCalls1hLimit,
+    dailyCreditsLimit,
+    monthlyCreditsLimit,
     inheritsDefaults: readBoolean(source, 'inheritsDefaults', 'inherits_defaults'),
   }
 }
 
 function normalizeAdminUserTag(value: unknown): AdminUserTag {
   const source = isRecordLike(value) ? value : {}
+  const businessCalls1hDelta = readNumber(
+    source,
+    'businessCalls1hDelta',
+    'business_calls_1h_delta',
+    readNumber(source, 'hourlyDelta', 'hourly_delta'),
+  )
+  const dailyCreditsDelta = readNumber(
+    source,
+    'dailyCreditsDelta',
+    'daily_credits_delta',
+    readNumber(source, 'dailyDelta', 'daily_delta'),
+  )
+  const monthlyCreditsDelta = readNumber(
+    source,
+    'monthlyCreditsDelta',
+    'monthly_credits_delta',
+    readNumber(source, 'monthlyDelta', 'monthly_delta'),
+  )
   return {
     id: readString(source, 'id'),
     name: readString(source, 'name'),
@@ -117,30 +141,36 @@ function normalizeAdminUserTag(value: unknown): AdminUserTag {
     systemKey: readNullableString(source, 'systemKey', 'system_key'),
     effectKind: readString(source, 'effectKind', 'effect_kind'),
     hourlyAnyDelta: readNumber(source, 'hourlyAnyDelta', 'hourly_any_delta'),
-    hourlyDelta: readNumber(
-      source,
-      'businessCalls1hDelta',
-      'business_calls_1h_delta',
-      readNumber(source, 'hourlyDelta', 'hourly_delta'),
-    ),
-    dailyDelta: readNumber(
-      source,
-      'dailyCreditsDelta',
-      'daily_credits_delta',
-      readNumber(source, 'dailyDelta', 'daily_delta'),
-    ),
-    monthlyDelta: readNumber(
-      source,
-      'monthlyCreditsDelta',
-      'monthly_credits_delta',
-      readNumber(source, 'monthlyDelta', 'monthly_delta'),
-    ),
+    hourlyDelta: businessCalls1hDelta,
+    dailyDelta: dailyCreditsDelta,
+    monthlyDelta: monthlyCreditsDelta,
+    businessCalls1hDelta,
+    dailyCreditsDelta,
+    monthlyCreditsDelta,
     userCount: readNumber(source, 'userCount', 'user_count'),
   }
 }
 
 function normalizeAdminUserTagBinding(value: unknown): AdminUserTagBinding {
   const source = isRecordLike(value) ? value : {}
+  const businessCalls1hDelta = readNumber(
+    source,
+    'businessCalls1hDelta',
+    'business_calls_1h_delta',
+    readNumber(source, 'hourlyDelta', 'hourly_delta'),
+  )
+  const dailyCreditsDelta = readNumber(
+    source,
+    'dailyCreditsDelta',
+    'daily_credits_delta',
+    readNumber(source, 'dailyDelta', 'daily_delta'),
+  )
+  const monthlyCreditsDelta = readNumber(
+    source,
+    'monthlyCreditsDelta',
+    'monthly_credits_delta',
+    readNumber(source, 'monthlyDelta', 'monthly_delta'),
+  )
   return {
     tagId: readString(source, 'tagId', 'tag_id'),
     name: readString(source, 'name'),
@@ -149,30 +179,36 @@ function normalizeAdminUserTagBinding(value: unknown): AdminUserTagBinding {
     systemKey: readNullableString(source, 'systemKey', 'system_key'),
     effectKind: readString(source, 'effectKind', 'effect_kind'),
     hourlyAnyDelta: readNumber(source, 'hourlyAnyDelta', 'hourly_any_delta'),
-    hourlyDelta: readNumber(
-      source,
-      'businessCalls1hDelta',
-      'business_calls_1h_delta',
-      readNumber(source, 'hourlyDelta', 'hourly_delta'),
-    ),
-    dailyDelta: readNumber(
-      source,
-      'dailyCreditsDelta',
-      'daily_credits_delta',
-      readNumber(source, 'dailyDelta', 'daily_delta'),
-    ),
-    monthlyDelta: readNumber(
-      source,
-      'monthlyCreditsDelta',
-      'monthly_credits_delta',
-      readNumber(source, 'monthlyDelta', 'monthly_delta'),
-    ),
+    hourlyDelta: businessCalls1hDelta,
+    dailyDelta: dailyCreditsDelta,
+    monthlyDelta: monthlyCreditsDelta,
+    businessCalls1hDelta,
+    dailyCreditsDelta,
+    monthlyCreditsDelta,
     source: readString(source, 'source'),
   }
 }
 
 function normalizeAdminUserQuotaBreakdownEntry(value: unknown): AdminUserQuotaBreakdownEntry {
   const source = isRecordLike(value) ? value : {}
+  const businessCalls1hDelta = readNumber(
+    source,
+    'businessCalls1hDelta',
+    'business_calls_1h_delta',
+    readNumber(source, 'hourlyDelta', 'hourly_delta'),
+  )
+  const dailyCreditsDelta = readNumber(
+    source,
+    'dailyCreditsDelta',
+    'daily_credits_delta',
+    readNumber(source, 'dailyDelta', 'daily_delta'),
+  )
+  const monthlyCreditsDelta = readNumber(
+    source,
+    'monthlyCreditsDelta',
+    'monthly_credits_delta',
+    readNumber(source, 'monthlyDelta', 'monthly_delta'),
+  )
   return {
     kind: readString(source, 'kind'),
     label: readString(source, 'label'),
@@ -181,24 +217,12 @@ function normalizeAdminUserQuotaBreakdownEntry(value: unknown): AdminUserQuotaBr
     source: readNullableString(source, 'source'),
     effectKind: readString(source, 'effectKind', 'effect_kind'),
     hourlyAnyDelta: readNumber(source, 'hourlyAnyDelta', 'hourly_any_delta'),
-    hourlyDelta: readNumber(
-      source,
-      'businessCalls1hDelta',
-      'business_calls_1h_delta',
-      readNumber(source, 'hourlyDelta', 'hourly_delta'),
-    ),
-    dailyDelta: readNumber(
-      source,
-      'dailyCreditsDelta',
-      'daily_credits_delta',
-      readNumber(source, 'dailyDelta', 'daily_delta'),
-    ),
-    monthlyDelta: readNumber(
-      source,
-      'monthlyCreditsDelta',
-      'monthly_credits_delta',
-      readNumber(source, 'monthlyDelta', 'monthly_delta'),
-    ),
+    hourlyDelta: businessCalls1hDelta,
+    dailyDelta: dailyCreditsDelta,
+    monthlyDelta: monthlyCreditsDelta,
+    businessCalls1hDelta,
+    dailyCreditsDelta,
+    monthlyCreditsDelta,
   }
 }
 
@@ -216,6 +240,30 @@ export function normalizeAdminUserSummary(value: unknown): AdminUserSummary {
     totalCount: readNumber(source, 'quotaHourlyUsed', 'quota_hourly_used'),
     limit: readNumber(source, 'quotaHourlyLimit', 'quota_hourly_limit'),
   })
+  const dailyCreditsUsed = readNumber(
+    source,
+    'dailyCreditsUsed',
+    'daily_credits_used',
+    readNumber(source, 'quotaDailyUsed', 'quota_daily_used'),
+  )
+  const dailyCreditsLimit = readNumber(
+    source,
+    'dailyCreditsLimit',
+    'daily_credits_limit',
+    readNumber(source, 'quotaDailyLimit', 'quota_daily_limit'),
+  )
+  const monthlyCreditsUsed = readNumber(
+    source,
+    'monthlyCreditsUsed',
+    'monthly_credits_used',
+    readNumber(source, 'quotaMonthlyUsed', 'quota_monthly_used'),
+  )
+  const monthlyCreditsLimit = readNumber(
+    source,
+    'monthlyCreditsLimit',
+    'monthly_credits_limit',
+    readNumber(source, 'quotaMonthlyLimit', 'quota_monthly_limit'),
+  )
   const tags = Array.isArray(source.tags) ? source.tags.map(normalizeAdminUserTagBinding) : []
 
   return {
@@ -233,30 +281,14 @@ export function normalizeAdminUserSummary(value: unknown): AdminUserSummary {
     hourlyAnyLimit: requestRate.limit,
     quotaHourlyUsed: businessCalls1h.totalCount,
     quotaHourlyLimit: businessCalls1h.limit,
-    quotaDailyUsed: readNumber(
-      source,
-      'dailyCreditsUsed',
-      'daily_credits_used',
-      readNumber(source, 'quotaDailyUsed', 'quota_daily_used'),
-    ),
-    quotaDailyLimit: readNumber(
-      source,
-      'dailyCreditsLimit',
-      'daily_credits_limit',
-      readNumber(source, 'quotaDailyLimit', 'quota_daily_limit'),
-    ),
-    quotaMonthlyUsed: readNumber(
-      source,
-      'monthlyCreditsUsed',
-      'monthly_credits_used',
-      readNumber(source, 'quotaMonthlyUsed', 'quota_monthly_used'),
-    ),
-    quotaMonthlyLimit: readNumber(
-      source,
-      'monthlyCreditsLimit',
-      'monthly_credits_limit',
-      readNumber(source, 'quotaMonthlyLimit', 'quota_monthly_limit'),
-    ),
+    quotaDailyUsed: dailyCreditsUsed,
+    quotaDailyLimit: dailyCreditsLimit,
+    quotaMonthlyUsed: monthlyCreditsUsed,
+    quotaMonthlyLimit: monthlyCreditsLimit,
+    dailyCreditsUsed,
+    dailyCreditsLimit,
+    monthlyCreditsUsed,
+    monthlyCreditsLimit,
     dailySuccess: readNumber(source, 'dailySuccess', 'daily_success'),
     dailyFailure: readNumber(source, 'dailyFailure', 'daily_failure'),
     monthlySuccess: readNumber(source, 'monthlySuccess', 'monthly_success'),

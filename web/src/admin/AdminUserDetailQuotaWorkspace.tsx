@@ -22,6 +22,25 @@ import { UserRechargeQuotaCalendar } from './UserRechargeQuotaCalendar'
 type QuotaDraft = Record<QuotaSliderField, string>
 type QuotaSnapshot = Record<QuotaSliderField, QuotaSliderSeed>
 
+function buildQuotaBreakdownEntry(
+  entry: Pick<
+    AdminUserQuotaBreakdownEntry,
+    'kind' | 'label' | 'tagId' | 'tagName' | 'source' | 'effectKind'
+  > & {
+    businessCalls1hDelta: number
+    dailyCreditsDelta: number
+    monthlyCreditsDelta: number
+  },
+): AdminUserQuotaBreakdownEntry {
+  return {
+    ...entry,
+    hourlyAnyDelta: 0,
+    hourlyDelta: entry.businessCalls1hDelta,
+    dailyDelta: entry.dailyCreditsDelta,
+    monthlyDelta: entry.monthlyCreditsDelta,
+  }
+}
+
 interface AdminUserDetailQuotaWorkspaceProps {
   detail: AdminUserDetail
   usersStrings: AdminTranslations['users']
@@ -64,22 +83,22 @@ export function AdminUserDetailQuotaWorkspace({
         <UsageMetricLabel label={usersStrings.quota.hourly} kind="businessCalls1h" language={language} />
       ),
       ariaLabel: usersStrings.quota.hourly,
-      used: detail.quotaHourlyUsed,
-      currentLimit: detail.quotaBase.hourlyLimit,
+      used: detail.businessCalls1h.totalCount,
+      currentLimit: detail.quotaBase.businessCalls1hLimit,
     },
     {
       field: 'dailyLimit',
       label: <UsageMetricLabel label={usersStrings.quota.daily} kind="dailyCredits" language={language} />,
       ariaLabel: usersStrings.quota.daily,
-      used: detail.quotaDailyUsed,
-      currentLimit: detail.quotaBase.dailyLimit,
+      used: detail.dailyCreditsUsed,
+      currentLimit: detail.quotaBase.dailyCreditsLimit,
     },
     {
       field: 'monthlyLimit',
       label: <UsageMetricLabel label={usersStrings.quota.monthly} kind="monthlyCredits" language={language} />,
       ariaLabel: usersStrings.quota.monthly,
-      used: detail.quotaMonthlyUsed,
-      currentLimit: detail.quotaBase.monthlyLimit,
+      used: detail.monthlyCreditsUsed,
+      currentLimit: detail.quotaBase.monthlyCreditsLimit,
     },
   ] as const
   const quotaDirty = quotaDraft
@@ -187,45 +206,42 @@ function buildFallbackQuotaBreakdown(
   rechargeLabel: string,
 ): AdminUserQuotaBreakdownEntry[] {
   const rows: AdminUserQuotaBreakdownEntry[] = [
-    {
+    buildQuotaBreakdownEntry({
       kind: 'base',
       label: 'base',
       tagId: null,
       tagName: null,
       source: null,
       effectKind: 'base',
-      hourlyAnyDelta: detail.quotaBase.hourlyAnyLimit,
-      hourlyDelta: detail.quotaBase.hourlyLimit,
-      dailyDelta: detail.quotaBase.dailyLimit,
-      monthlyDelta: detail.quotaBase.monthlyLimit,
-    },
+      businessCalls1hDelta: detail.quotaBase.businessCalls1hLimit,
+      dailyCreditsDelta: detail.quotaBase.dailyCreditsLimit,
+      monthlyCreditsDelta: detail.quotaBase.monthlyCreditsLimit,
+    }),
   ]
   const rechargeCredits = detail.recharge?.currentMonthEntitlementCredits ?? 0
   if (rechargeCredits > 0) {
-    rows.push({
+    rows.push(buildQuotaBreakdownEntry({
       kind: 'recharge',
       label: rechargeLabel,
       tagId: null,
       tagName: null,
       source: 'system_linuxdo',
       effectKind: 'quota_delta',
-      hourlyAnyDelta: rechargeCredits,
-      hourlyDelta: rechargeCredits,
-      dailyDelta: rechargeCredits,
-      monthlyDelta: rechargeCredits,
-    })
+      businessCalls1hDelta: rechargeCredits,
+      dailyCreditsDelta: rechargeCredits,
+      monthlyCreditsDelta: rechargeCredits,
+    }))
   }
-  rows.push({
+  rows.push(buildQuotaBreakdownEntry({
     kind: 'effective',
     label: 'effective',
     tagId: null,
     tagName: null,
     source: null,
     effectKind: 'effective',
-    hourlyAnyDelta: detail.effectiveQuota.hourlyAnyLimit,
-    hourlyDelta: detail.effectiveQuota.hourlyLimit,
-    dailyDelta: detail.effectiveQuota.dailyLimit,
-    monthlyDelta: detail.effectiveQuota.monthlyLimit,
-  })
+    businessCalls1hDelta: detail.effectiveQuota.businessCalls1hLimit,
+    dailyCreditsDelta: detail.effectiveQuota.dailyCreditsLimit,
+    monthlyCreditsDelta: detail.effectiveQuota.monthlyCreditsLimit,
+  }))
   return rows
 }

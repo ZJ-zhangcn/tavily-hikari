@@ -223,12 +223,12 @@ export function UsersUsageScreen({
                       </td>
                       <td className="admin-users-compact-cell">
                         <AdminTableValueStack
-                          {...formatQuotaStackValue(item.quotaDailyUsed, item.quotaDailyLimit)}
+                          {...formatQuotaStackValue(item.dailyCreditsUsed, item.dailyCreditsLimit)}
                         />
                       </td>
                       <td className="admin-users-compact-cell">
                         <AdminTableValueStack
-                          {...formatQuotaStackValue(item.quotaMonthlyUsed, item.quotaMonthlyLimit)}
+                          {...formatQuotaStackValue(item.monthlyCreditsUsed, item.monthlyCreditsLimit)}
                         />
                       </td>
                       <td className="admin-users-compact-cell">
@@ -321,11 +321,11 @@ export function UsersUsageScreen({
                   </div>
                   <div className="admin-mobile-kv">
                     <span>{usersStrings.usage.table.daily}</span>
-                    <strong>{formatQuotaUsagePair(item.quotaDailyUsed, item.quotaDailyLimit)}</strong>
+                    <strong>{formatQuotaUsagePair(item.dailyCreditsUsed, item.dailyCreditsLimit)}</strong>
                   </div>
                   <div className="admin-mobile-kv">
                     <span>{usersStrings.usage.table.monthly}</span>
-                    <strong>{formatQuotaUsagePair(item.quotaMonthlyUsed, item.quotaMonthlyLimit)}</strong>
+                    <strong>{formatQuotaUsagePair(item.monthlyCreditsUsed, item.monthlyCreditsLimit)}</strong>
                   </div>
                   <div className="admin-mobile-kv">
                     <span>{usersStrings.usage.table.monthlyBroken}</span>

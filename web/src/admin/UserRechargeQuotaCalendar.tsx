@@ -27,7 +27,7 @@ export function UserRechargeQuotaCalendar({
   const rows = useMemo(() => buildRechargeMonthRows(entitlements), [entitlements])
   const tagDelta = detail.quotaBreakdown
     .filter((item) => item.kind === 'tag')
-    .reduce((sum, item) => sum + item.monthlyDelta, 0)
+    .reduce((sum, item) => sum + item.monthlyCreditsDelta, 0)
   const locale = language === 'zh' ? 'zh-CN' : 'en-US'
   const currentRecharge = detail.recharge?.currentMonthEntitlementCredits
     ?? rows.find((row) => isSameLocalMonth(row.monthStart, Date.now() / 1000))?.recharge
@@ -35,7 +35,7 @@ export function UserRechargeQuotaCalendar({
   const effectiveUntil = detail.recharge?.effectiveUntilMonthStart
   const tableFacts = [
     formatTemplate(strings.currentMonthRecharge, { value: formatNumber(currentRecharge) }),
-    formatTemplate(strings.currentFinal, { value: formatNumber(detail.quotaMonthlyLimit) }),
+    formatTemplate(strings.currentFinal, { value: formatNumber(detail.monthlyCreditsLimit) }),
     effectiveUntil
       ? formatTemplate(strings.effectiveUntil, { value: formatMonth(effectiveUntil, locale) })
       : strings.effectiveUntilEmpty,
@@ -74,11 +74,11 @@ export function UserRechargeQuotaCalendar({
               {rows.map((row) => (
                 <tr key={row.monthStart}>
                   <th scope="row">{formatMonth(row.monthStart, locale)}</th>
-                  <td>{formatNumber(detail.quotaBase.monthlyLimit)}</td>
+                  <td>{formatNumber(detail.quotaBase.monthlyCreditsLimit)}</td>
                   <td>{formatNumber(tagDelta)}</td>
                   <td>{formatNumber(row.recharge)}</td>
-                  <td>{formatNumber(detail.quotaBase.monthlyLimit + tagDelta + row.recharge)}</td>
-                  <td>{formatNumber(detail.quotaMonthlyUsed)}</td>
+                  <td>{formatNumber(detail.quotaBase.monthlyCreditsLimit + tagDelta + row.recharge)}</td>
+                  <td>{formatNumber(detail.monthlyCreditsUsed)}</td>
                 </tr>
               ))}
             </tbody>
