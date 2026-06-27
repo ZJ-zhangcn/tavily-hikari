@@ -280,6 +280,7 @@ import {
   unbindAdminUserTag,
   type AdminUserSummary,
   type AnalysisPressureSnapshot,
+  type AlertGroup,
   type AdminUserListStats,
   type AdminUnboundTokenUsageSortField,
   type AdminUnboundTokenUsageSummary,
@@ -8905,6 +8906,20 @@ function AdminDashboard(): JSX.Element {
     }))
   }, [navigateToPath])
 
+  const openDashboardRecentAlertGroup = useCallback((group: AlertGroup) => {
+    const now = new Date()
+    navigateToPath(alertsPath({
+      view: 'groups',
+      type: group.type,
+      since: formatIso8601WithOffset(new Date(now.getTime() - 24 * 60 * 60 * 1000)),
+      until: formatIso8601WithOffset(now),
+      userId: group.subjectKind === 'user' ? (group.user?.userId ?? group.subjectId) : undefined,
+      tokenId: group.subjectKind === 'token' ? (group.token?.id ?? group.subjectId) : undefined,
+      keyId: group.subjectKind === 'key' ? (group.key?.id ?? group.subjectId) : undefined,
+      requestKinds: group.requestKind?.key ? [group.requestKind.key] : undefined,
+    }))
+  }, [navigateToPath])
+
 
   if (route.name === 'key') {
     return renderAdminPageWithGlobalOverlays(
@@ -10302,6 +10317,7 @@ function AdminDashboard(): JSX.Element {
           recentAlerts={dashboardRecentAlerts}
           onOpenModule={navigateModule}
           onOpenRecentAlerts={openDashboardRecentAlerts}
+          onOpenRecentAlertGroup={openDashboardRecentAlertGroup}
           onOpenToken={navigateToken}
           onOpenKey={navigateKey}
         />

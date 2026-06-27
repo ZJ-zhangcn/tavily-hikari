@@ -261,9 +261,11 @@
 ## Visual Evidence
 
 - Storybook canvas 组件证据：
-  - `Admin/Components/DashboardOverview / RecentAlertsDesktopEvidence` 提供稳定桌面证据，近期告警区已重做为“紧凑概览条 + 队列表格”。
-  - 顶部概览区只保留最近 `1 小时 / 24 小时 / 7 天` 三窗聚合计数，以及当前 `24h` 聚合总数。
-  - 下方 `24h` 聚合列表按 `告警 / 请求类型 / 告警区间 / 命中` 四列对齐，每条记录都展示连续区间 `firstSeen -> lastSeen`、主体与最新摘要。
+  - `Admin/Components/DashboardOverview / RecentAlertsDesktopEvidence` 提供稳定桌面证据，近期告警区已重做为“24h 队列导语 + 三窗聚合计数 + 聚合告警队列表格”。
+  - 顶部概览区只保留最近 `1 小时 / 24 小时 / 7 天` 三窗聚合计数，并用 `24h` 窗口显式标注当前队列口径。
+  - 下方 `24h` 聚合列表改为 `告警 / 告警区间 / 查看` 三列骨架；请求类型与命中数并回主体行内元信息，每条记录都展示连续区间 `firstSeen -> lastSeen`、主体与最新摘要。
+  - 审计收口后，命中数 badge 已复用共享 badge 尺寸契约，行尾 `Review group` CTA 降为更安静的次级操作，避免与连续区间信息抢视觉层级。
+  - 分组查看按钮具备主体化可访问名称，且窄屏表头仍保留在无障碍语义树中，不再因为 `display: none` 丢失表格关系。
 
     ![仪表盘近期告警聚合摘要 Storybook 证据](assets/dashboard-alerts-24h-grouped-summary.png)
 
@@ -274,7 +276,7 @@
     ![告警中心 tabs 顺序统一 Storybook 证据](assets/alerts-center-groups-first-tabs.png)
 
 - Chrome DevTools 复核：
-  - `iframe.html?id=admin-components-dashboardoverview--default` 已确认近期告警区显示 `Last 1 hour / Last 24 hours / Last 7 days` 三窗计数，以及 `Alert window` 连续区间文案。
+  - `iframe.html?id=admin-components-dashboardoverview--recent-alerts-desktop-evidence` 已确认近期告警区显示 `Last 1 hour / Last 24 hours / Last 7 days` 三窗计数，以及 `Alert window` 连续区间文案。
   - `iframe.html?id=admin-pages--alerts` 已确认顶部 header tabs 与页面内 segmented tabs 都以 `Groups` 在前、`Events` 在后。
 
 ## 101 验证 Runbook

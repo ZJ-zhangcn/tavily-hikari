@@ -108,8 +108,11 @@ const strings = {
   failedJobRisk: 'Job #{id} status: {status}',
   tokenCoverageTruncated: 'Token scope is truncated.',
   tokenCoverageError: 'Token scope failed to load.',
-  recentAlertsTitle: 'Alerts · Last 24 hours',
-  recentAlertsDescription: 'A compact 24-hour summary with a deep-link into the grouped Alerts view for the same explicit time slice.',
+  recentAlertsTitle: 'Recent alerts',
+  recentAlertsDescription: 'Grouped alerts from the last 24 hours, sorted by latest activity.',
+  recentAlertsOverviewTitle: '24-hour queue',
+  recentAlertsOverviewSummary: 'The list below stays pinned to the current 24-hour grouped-alert window. Use 1 hour and 7 days for context.',
+  recentAlertsCurrentWindow: 'Queue below',
   recentAlertsWindowLabels: {
     hour1: 'Last 1 hour',
     hour24: 'Last 24 hours',
@@ -120,11 +123,13 @@ const strings = {
     requestKind: 'Request kind',
     timeRange: 'Alert window',
     hits: 'Hits',
+    review: 'Review',
   },
   recentAlertsHits: 'Grouped alerts',
   recentAlertsTimeRange: 'Alert window',
   recentAlertsEmpty: 'No alert events were recorded in the current 24-hour window.',
-  recentAlertsOpen: 'Open alerts',
+  recentAlertsOpen: 'Review alerts',
+  recentAlertsOpenGroup: 'Review group',
   recentAlertsTypeLabels: {
     upstream_rate_limited_429: 'Upstream 429',
     upstream_usage_limit_432: 'Upstream usage limit 432',
@@ -585,8 +590,11 @@ const zhStrings = {
   failedJobRisk: '任务 #{id} 状态：{status}',
   tokenCoverageTruncated: '令牌范围数据被截断。',
   tokenCoverageError: '令牌范围数据加载失败。',
-  recentAlertsTitle: '告警 · 最近 24 小时',
-  recentAlertsDescription: '按最近 24 小时展示事件总数、分组数与高频告警主体，并可进入同口径的聚合告警视图。',
+  recentAlertsTitle: '近期告警',
+  recentAlertsDescription: '按最近 24 小时展示聚合告警，并按最新告警时间排序。',
+  recentAlertsOverviewTitle: '24 小时队列',
+  recentAlertsOverviewSummary: '下方列表固定对应当前 24 小时聚合告警窗口，1 小时和 7 天数字只用来提供上下文。',
+  recentAlertsCurrentWindow: '下方列表',
   recentAlertsWindowLabels: {
     hour1: '最近 1 小时',
     hour24: '最近 24 小时',
@@ -597,11 +605,13 @@ const zhStrings = {
     requestKind: '请求类型',
     timeRange: '告警区间',
     hits: '命中',
+    review: '查看',
   },
   recentAlertsHits: '聚合告警',
   recentAlertsTimeRange: '告警区间',
   recentAlertsEmpty: '当前 24 小时窗口内没有记录到告警事件。',
-  recentAlertsOpen: '打开告警中心',
+  recentAlertsOpen: '查看告警',
+  recentAlertsOpenGroup: '查看分组',
   recentAlertsTypeLabels: {
     upstream_rate_limited_429: '上游 429',
     upstream_usage_limit_432: '上游用量限制 432',
@@ -1153,25 +1163,37 @@ export const RecentAlertsDesktopEvidence: Story = {
   render: (args) => (
     <div className="dashboard-recent-alerts-evidence" style={{ width: '1320px', maxWidth: '1320px', margin: '0 auto' }}>
       <style>{`
-        .dashboard-recent-alerts-evidence .dashboard-alerts-summary__eyebrow {
-          display: flex !important;
-          grid-template-columns: none !important;
+        .dashboard-recent-alerts-evidence .dashboard-alerts-summary__overview {
+          grid-template-columns: minmax(240px, 1fr) minmax(0, 1.7fr) !important;
         }
 
         .dashboard-recent-alerts-evidence .dashboard-alerts-summary__metrics {
           grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
         }
 
+        .dashboard-recent-alerts-evidence .dashboard-alerts-summary__metric-chip + .dashboard-alerts-summary__metric-chip {
+          border-top: 0 !important;
+          border-left: 1px solid hsl(var(--border) / 0.72) !important;
+        }
+
         .dashboard-recent-alerts-evidence .dashboard-alerts-summary__table-head {
           display: grid !important;
         }
 
-        .dashboard-recent-alerts-evidence .dashboard-alerts-summary__row {
-          grid-template-columns: minmax(0, 2.3fr) minmax(140px, 0.9fr) minmax(0, 2fr) 88px !important;
-          gap: 14px !important;
+        .dashboard-recent-alerts-evidence .dashboard-alerts-summary__field-label {
+          display: none !important;
         }
 
-        .dashboard-recent-alerts-evidence .dashboard-alerts-summary__count {
+        .dashboard-recent-alerts-evidence .dashboard-alerts-summary__identity-head {
+          flex-direction: row !important;
+        }
+
+        .dashboard-recent-alerts-evidence .dashboard-alerts-summary__row {
+          grid-template-columns: minmax(0, 2.75fr) minmax(220px, 1.35fr) 140px !important;
+          gap: 16px !important;
+        }
+
+        .dashboard-recent-alerts-evidence .dashboard-alerts-summary__action {
           justify-items: end !important;
           text-align: right !important;
         }
