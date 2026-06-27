@@ -19,8 +19,10 @@ import {
 } from 'chart.js'
 import {
   buildDeltaSeriesSlotValues,
+  buildAggregatedHourlySlots,
   buildDashboardAreaStackLayers,
   buildHourlyRangeSlots,
+  formatDashboardRealtimeWindowLabel,
   getVisibleHourlyWindow,
   DASHBOARD_RESULT_SERIES_ORDER,
   DASHBOARD_TYPE_SERIES_ORDER,
@@ -105,10 +107,19 @@ function formatChartWindowWithLabels(
   strings: Pick<DashboardOverviewStrings, 'chartUtcWindow' | 'chartRollingWindow' | 'chartDeltaWindow'>,
   count: number,
   comparisonCount: number,
+  window?: DashboardHourlyRequestWindow,
 ): string {
+  if (chartMode === 'resultsArea' || chartMode === 'typesArea') {
+    return formatDashboardRealtimeWindowLabel(
+      strings.chartRollingWindow,
+      window?.bucketSeconds ?? 0,
+      window?.visibleBuckets ?? count,
+      count,
+    )
+  }
   const template = chartMode === 'resultsDelta' || chartMode === 'typesDelta'
     ? strings.chartDeltaWindow
-    : strings.chartRollingWindow
+    : strings.chartUtcWindow
   return formatChartWindow(template, count, comparisonCount)
 }
 
@@ -236,12 +247,12 @@ export default function DashboardTrendPanel({
   const isAreaMode = isAreaChartMode(chartMode)
   const rollingRangeSlots = visibleWindow.slots
   const naturalDayRangeSlots = useMemo(
-    () => buildHourlyRangeSlots(hourlyRequestWindow, summaryWindows.today_start, summaryWindows.today_end),
+    () => buildAggregatedHourlySlots(hourlyRequestWindow, summaryWindows.today_start, summaryWindows.today_end).slots,
     [hourlyRequestWindow, summaryWindows.today_end, summaryWindows.today_start],
   )
-  const rangeSlots = isDeltaMode ? naturalDayRangeSlots : rollingRangeSlots
+  const rangeSlots = isDeltaMode ? naturalDayRangeSlots : isAreaMode ? rollingRangeSlots : naturalDayRangeSlots
   const comparisonRangeSlots = useMemo(
-    () => buildHourlyRangeSlots(hourlyRequestWindow, comparisonRangeStart, comparisonRangeEnd),
+    () => buildAggregatedHourlySlots(hourlyRequestWindow, comparisonRangeStart, comparisonRangeEnd).slots,
     [comparisonRangeEnd, comparisonRangeStart, hourlyRequestWindow],
   )
   const labels = useMemo(
@@ -483,6 +494,7 @@ export default function DashboardTrendPanel({
     strings,
     rangeSlots.length,
     comparisonRangeSlots.length,
+    hourlyRequestWindow,
   )
 
   return (
