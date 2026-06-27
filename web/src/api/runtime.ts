@@ -19,6 +19,12 @@ import {
   normalizeUserTokenSummary,
   normalizeUserTokenSummaryList,
 } from './userConsoleNormalization'
+import {
+  normalizeAdminUserDetail,
+  normalizeAdminUserSummaryPage,
+  normalizeAdminUserTag,
+  normalizeAdminUserTagList,
+} from './adminUserNormalization'
 
 export interface Summary {
   total_requests: number
@@ -1928,6 +1934,9 @@ export interface AdminQuotaLimitSet {
   hourlyLimit: number
   dailyLimit: number
   monthlyLimit: number
+  businessCalls1hLimit: number
+  dailyCreditsLimit: number
+  monthlyCreditsLimit: number
   inheritsDefaults: boolean
 }
 
@@ -1951,6 +1960,9 @@ export interface AdminUserTag {
   hourlyDelta: number
   dailyDelta: number
   monthlyDelta: number
+  businessCalls1hDelta: number
+  dailyCreditsDelta: number
+  monthlyCreditsDelta: number
   userCount: number
 }
 
@@ -1965,6 +1977,9 @@ export interface AdminUserTagBinding {
   hourlyDelta: number
   dailyDelta: number
   monthlyDelta: number
+  businessCalls1hDelta: number
+  dailyCreditsDelta: number
+  monthlyCreditsDelta: number
   source: string
 }
 
@@ -1979,6 +1994,9 @@ export interface AdminUserQuotaBreakdownEntry {
   hourlyDelta: number
   dailyDelta: number
   monthlyDelta: number
+  businessCalls1hDelta: number
+  dailyCreditsDelta: number
+  monthlyCreditsDelta: number
 }
 
 export interface AdminUserSummary {
@@ -2000,6 +2018,10 @@ export interface AdminUserSummary {
   quotaDailyLimit: number
   quotaMonthlyUsed: number
   quotaMonthlyLimit: number
+  dailyCreditsUsed: number
+  dailyCreditsLimit: number
+  monthlyCreditsUsed: number
+  monthlyCreditsLimit: number
   dailySuccess: number
   dailyFailure: number
   monthlySuccess: number
@@ -2085,6 +2107,7 @@ export interface BusinessCalls1hSummary {
   successCount: number
   failureCount: number
   totalCount: number
+  limit: number
   windowMinutes: number
 }
 
@@ -2232,6 +2255,7 @@ export async function postUserLogout(signal?: AbortSignal): Promise<void> {
 export interface UserDashboard {
   debugInfoShared: boolean
   requestRate: RequestRate
+  businessCalls1h: BusinessCalls1hSummary
   hourlyAnyUsed: number
   hourlyAnyLimit: number
   quotaHourlyUsed: number
@@ -2240,6 +2264,10 @@ export interface UserDashboard {
   quotaDailyLimit: number
   quotaMonthlyUsed: number
   quotaMonthlyLimit: number
+  dailyCreditsUsed: number
+  dailyCreditsLimit: number
+  monthlyCreditsUsed: number
+  monthlyCreditsLimit: number
   dailySuccess: number
   dailyFailure: number
   monthlySuccess: number
@@ -2269,6 +2297,9 @@ export interface UserDashboardOverviewProgress {
   quotaHourly: UserDashboardProgressCard
   quotaDaily: UserDashboardProgressCard
   quotaMonthly: UserDashboardProgressCard
+  businessCalls1h: UserDashboardProgressCard
+  dailyCredits: UserDashboardProgressCard
+  monthlyCredits: UserDashboardProgressCard
 }
 
 export interface UserDashboardOverview {
@@ -2279,6 +2310,7 @@ export interface UserDashboardOverview {
 export interface UserTokenSummary {
   tokenId: string; enabled: boolean; note: string | null; lastUsedAt: number | null
   requestRate: RequestRate
+  businessCalls1h: BusinessCalls1hSummary
   hourlyAnyUsed: number
   hourlyAnyLimit: number
   quotaHourlyUsed: number
@@ -2287,6 +2319,10 @@ export interface UserTokenSummary {
   quotaDailyLimit: number
   quotaMonthlyUsed: number
   quotaMonthlyLimit: number
+  dailyCreditsUsed: number
+  dailyCreditsLimit: number
+  monthlyCreditsUsed: number
+  monthlyCreditsLimit: number
   dailySuccess: number
   dailyFailure: number
   monthlySuccess: number
@@ -3139,7 +3175,9 @@ export function fetchAdminUsers(
     params.set('sort', sort)
     params.set('order', order ?? 'desc')
   }
-  return requestJson(`/api/users?${params.toString()}`, { signal })
+  return requestJson<unknown>(`/api/users?${params.toString()}`, { signal }).then(
+    normalizeAdminUserSummaryPage,
+  )
 }
 
 export function fetchAdminUnboundTokenUsage(
@@ -3194,7 +3232,7 @@ export function fetchTokenBrokenKeys(
 
 export function fetchAdminUserDetail(id: string, signal?: AbortSignal): Promise<AdminUserDetail> {
   const encoded = encodeURIComponent(id)
-  return requestJson(`/api/users/${encoded}`, { signal })
+  return requestJson<unknown>(`/api/users/${encoded}`, { signal }).then(normalizeAdminUserDetail)
 }
 
 export async function createAdminUserToken(id: string): Promise<AuthTokenSecret> {
@@ -3243,24 +3281,24 @@ export async function updateAdminUserBrokenKeyLimit(
 }
 
 export function fetchAdminUserTags(signal?: AbortSignal): Promise<AdminUserTag[]> {
-  return requestJson<{ items: AdminUserTag[] }>('/api/user-tags', { signal }).then((response) => response.items)
+  return requestJson<unknown>('/api/user-tags', { signal }).then(normalizeAdminUserTagList)
 }
 
 export function createAdminUserTag(payload: UpsertAdminUserTagPayload): Promise<AdminUserTag> {
-  return requestJson('/api/user-tags', {
+  return requestJson<unknown>('/api/user-tags', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  })
+  }).then(normalizeAdminUserTag)
 }
 
 export function updateAdminUserTag(id: string, payload: UpsertAdminUserTagPayload): Promise<AdminUserTag> {
   const encoded = encodeURIComponent(id)
-  return requestJson(`/api/user-tags/${encoded}`, {
+  return requestJson<unknown>(`/api/user-tags/${encoded}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
-  })
+  }).then(normalizeAdminUserTag)
 }
 
 export async function deleteAdminUserTag(id: string): Promise<void> {

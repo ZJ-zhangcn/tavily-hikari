@@ -7,10 +7,12 @@ import { Fragment, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, use
 import type {
   Announcement,
   ApiKeyBulkAction,
+  AdminQuotaLimitSet,
   AdminUnboundTokenUsageSortField,
   AdminUnboundTokenUsageSummary,
   AnalysisPressureSnapshot,
   AdminUserDetail,
+  AdminUserQuotaBreakdownEntry,
   AdminUserSummary,
   AdminUsersSortField,
   AdminUserTag,
@@ -1037,12 +1039,84 @@ const STORY_RECENT_ALERTS: RecentAlertsSummary = {
   topGroups: [],
 }
 
-const DEFAULT_LINUXDO_TAG_DELTA = {
+function withQuotaDeltaCanonical<
+  T extends {
+    hourlyAnyDelta: number
+    hourlyDelta: number
+    dailyDelta: number
+    monthlyDelta: number
+  },
+>(value: T): T & Pick<AdminUserTag, 'businessCalls1hDelta' | 'dailyCreditsDelta' | 'monthlyCreditsDelta'> {
+  return {
+    ...value,
+    businessCalls1hDelta: value.hourlyDelta,
+    dailyCreditsDelta: value.dailyDelta,
+    monthlyCreditsDelta: value.monthlyDelta,
+  }
+}
+
+function withAdminUserSummaryCanonical<
+  T extends {
+    quotaDailyUsed: number
+    quotaDailyLimit: number
+    quotaMonthlyUsed: number
+    quotaMonthlyLimit: number
+  },
+>(value: T): T & Pick<AdminUserSummary, 'dailyCreditsUsed' | 'dailyCreditsLimit' | 'monthlyCreditsUsed' | 'monthlyCreditsLimit'> {
+  return {
+    ...value,
+    dailyCreditsUsed: value.quotaDailyUsed,
+    dailyCreditsLimit: value.quotaDailyLimit,
+    monthlyCreditsUsed: value.quotaMonthlyUsed,
+    monthlyCreditsLimit: value.quotaMonthlyLimit,
+  }
+}
+
+function withQuotaLimitCanonical<
+  T extends {
+    hourlyAnyLimit: number
+    hourlyLimit: number
+    dailyLimit: number
+    monthlyLimit: number
+    inheritsDefaults: boolean
+  },
+>(value: T): T & AdminQuotaLimitSet {
+  return {
+    ...value,
+    businessCalls1hLimit: value.hourlyLimit,
+    dailyCreditsLimit: value.dailyLimit,
+    monthlyCreditsLimit: value.monthlyLimit,
+  }
+}
+
+function withQuotaBreakdownCanonical<
+  T extends {
+    kind: string
+    label: string
+    tagId: string | null
+    tagName: string | null
+    source: string | null
+    effectKind: string
+    hourlyAnyDelta: number
+    hourlyDelta: number
+    dailyDelta: number
+    monthlyDelta: number
+  },
+>(value: T): T & AdminUserQuotaBreakdownEntry {
+  return {
+    ...value,
+    businessCalls1hDelta: value.hourlyDelta,
+    dailyCreditsDelta: value.dailyDelta,
+    monthlyCreditsDelta: value.monthlyDelta,
+  }
+}
+
+const DEFAULT_LINUXDO_TAG_DELTA = withQuotaDeltaCanonical({
   hourlyAnyDelta: 500,
   hourlyDelta: 100,
   dailyDelta: 500,
   monthlyDelta: 5_000,
-} as const
+} as const)
 
 const MOCK_TAG_CATALOG: AdminUserTag[] = [
   {
@@ -1095,7 +1169,7 @@ const MOCK_TAG_CATALOG: AdminUserTag[] = [
     ...DEFAULT_LINUXDO_TAG_DELTA,
     userCount: 1,
   },
-  {
+  withQuotaDeltaCanonical({
     id: 'team_lead',
     name: 'team_lead',
     displayName: 'Team Lead',
@@ -1107,8 +1181,8 @@ const MOCK_TAG_CATALOG: AdminUserTag[] = [
     dailyDelta: 2_000,
     monthlyDelta: 100_000,
     userCount: 1,
-  },
-  {
+  }),
+  withQuotaDeltaCanonical({
     id: 'debt_cap',
     name: 'debt_cap',
     displayName: 'Debt Cap',
@@ -1120,8 +1194,8 @@ const MOCK_TAG_CATALOG: AdminUserTag[] = [
     dailyDelta: -1_000,
     monthlyDelta: -700_000,
     userCount: 1,
-  },
-  {
+  }),
+  withQuotaDeltaCanonical({
     id: 'suspended_manual',
     name: 'suspended_manual',
     displayName: 'Suspended',
@@ -1133,7 +1207,7 @@ const MOCK_TAG_CATALOG: AdminUserTag[] = [
     dailyDelta: 0,
     monthlyDelta: 0,
     userCount: 1,
-  },
+  }),
 ]
 
 const MOCK_ALICE_TAGS: AdminUserTagBinding[] = [
@@ -1147,7 +1221,7 @@ const MOCK_ALICE_TAGS: AdminUserTagBinding[] = [
     ...DEFAULT_LINUXDO_TAG_DELTA,
     source: 'system_linuxdo',
   },
-  {
+  withQuotaDeltaCanonical({
     tagId: 'team_lead',
     name: 'team_lead',
     displayName: 'Team Lead',
@@ -1159,8 +1233,8 @@ const MOCK_ALICE_TAGS: AdminUserTagBinding[] = [
     dailyDelta: 2_000,
     monthlyDelta: 100_000,
     source: 'manual',
-  },
-  {
+  }),
+  withQuotaDeltaCanonical({
     tagId: 'debt_cap',
     name: 'debt_cap',
     displayName: 'Debt Cap',
@@ -1172,7 +1246,7 @@ const MOCK_ALICE_TAGS: AdminUserTagBinding[] = [
     dailyDelta: -1_000,
     monthlyDelta: -700_000,
     source: 'manual',
-  },
+  }),
 ]
 
 const MOCK_BOB_TAGS: AdminUserTagBinding[] = [
@@ -1186,7 +1260,7 @@ const MOCK_BOB_TAGS: AdminUserTagBinding[] = [
     ...DEFAULT_LINUXDO_TAG_DELTA,
     source: 'system_linuxdo',
   },
-  {
+  withQuotaDeltaCanonical({
     tagId: 'suspended_manual',
     name: 'suspended_manual',
     displayName: 'Suspended',
@@ -1198,11 +1272,11 @@ const MOCK_BOB_TAGS: AdminUserTagBinding[] = [
     dailyDelta: 0,
     monthlyDelta: 0,
     source: 'manual',
-  },
+  }),
 ]
 
 const MOCK_USERS: AdminUserSummary[] = [
-  {
+  withAdminUserSummaryCanonical({
     userId: 'usr_alice',
     displayName: 'Alice Wang',
     username: 'alice',
@@ -1212,7 +1286,7 @@ const MOCK_USERS: AdminUserSummary[] = [
     apiKeyCount: 3,
     tags: MOCK_ALICE_TAGS,
     requestRate: createRequestRate(58, 60, 'user'),
-    businessCalls1h: { successCount: 34, failureCount: 2, totalCount: 36, windowMinutes: 60 },
+    businessCalls1h: { successCount: 34, failureCount: 2, totalCount: 36, limit: 120, windowMinutes: 60 },
     hourlyAnyUsed: 58,
     hourlyAnyLimit: 60,
     quotaHourlyUsed: 1_118,
@@ -1230,8 +1304,8 @@ const MOCK_USERS: AdminUserSummary[] = [
     recentIpCount24h: 4,
     recentIpCount7d: 4,
     lastActivity: now - 25,
-  },
-  {
+  }),
+  withAdminUserSummaryCanonical({
     userId: 'usr_bob',
     displayName: 'Bob Chen',
     username: 'bob',
@@ -1241,7 +1315,7 @@ const MOCK_USERS: AdminUserSummary[] = [
     apiKeyCount: 2,
     tags: MOCK_BOB_TAGS,
     requestRate: createRequestRate(60, 60, 'user'),
-    businessCalls1h: { successCount: 58, failureCount: 4, totalCount: 62, windowMinutes: 60 },
+    businessCalls1h: { successCount: 58, failureCount: 4, totalCount: 62, limit: 60, windowMinutes: 60 },
     hourlyAnyUsed: 60,
     hourlyAnyLimit: 60,
     quotaHourlyUsed: 602,
@@ -1259,8 +1333,8 @@ const MOCK_USERS: AdminUserSummary[] = [
     recentIpCount24h: 8,
     recentIpCount7d: 11,
     lastActivity: now - 38,
-  },
-  {
+  }),
+  withAdminUserSummaryCanonical({
     userId: 'usr_charlie',
     displayName: 'Charlie Li',
     username: 'charlie',
@@ -1270,7 +1344,7 @@ const MOCK_USERS: AdminUserSummary[] = [
     apiKeyCount: 0,
     tags: [],
     requestRate: createRequestRate(0, 60, 'user'),
-    businessCalls1h: { successCount: 0, failureCount: 0, totalCount: 0, windowMinutes: 60 },
+    businessCalls1h: { successCount: 0, failureCount: 0, totalCount: 0, limit: 500, windowMinutes: 60 },
     hourlyAnyUsed: 0,
     hourlyAnyLimit: 60,
     quotaHourlyUsed: 0,
@@ -1288,7 +1362,7 @@ const MOCK_USERS: AdminUserSummary[] = [
     recentIpCount24h: 0,
     recentIpCount7d: 0,
     lastActivity: null,
-  },
+  }),
 ]
 
 const MOCK_USER_TOKENS: AdminUserTokenSummary[] = [
@@ -1446,22 +1520,22 @@ const MOCK_UNBOUND_TOKEN_USAGE: AdminUnboundTokenUsageSummary[] = [
 const MOCK_USER_DETAIL: AdminUserDetail = {
   ...MOCK_USERS[0],
   tokens: MOCK_USER_TOKENS,
-  quotaBase: {
+  quotaBase: withQuotaLimitCanonical({
     hourlyAnyLimit: 1_200,
     hourlyLimit: 1_000,
     dailyLimit: 24_000,
     monthlyLimit: 600_000,
     inheritsDefaults: false,
-  },
-  effectiveQuota: {
+  }),
+  effectiveQuota: withQuotaLimitCanonical({
     hourlyAnyLimit: 1_770,
     hourlyLimit: 1_200,
     dailyLimit: 25_500,
     monthlyLimit: 5_000,
     inheritsDefaults: false,
-  },
+  }),
   quotaBreakdown: [
-    {
+    withQuotaBreakdownCanonical({
       kind: 'base',
       label: 'base',
       tagId: null,
@@ -1472,8 +1546,8 @@ const MOCK_USER_DETAIL: AdminUserDetail = {
       hourlyDelta: 1_000,
       dailyDelta: 24_000,
       monthlyDelta: 600_000,
-    },
-    {
+    }),
+    withQuotaBreakdownCanonical({
       kind: 'tag',
       label: 'L2',
       tagId: 'linuxdo_l2',
@@ -1481,8 +1555,8 @@ const MOCK_USER_DETAIL: AdminUserDetail = {
       source: 'system_linuxdo',
       effectKind: 'quota_delta',
       ...DEFAULT_LINUXDO_TAG_DELTA,
-    },
-    {
+    }),
+    withQuotaBreakdownCanonical({
       kind: 'tag',
       label: 'Team Lead',
       tagId: 'team_lead',
@@ -1493,8 +1567,8 @@ const MOCK_USER_DETAIL: AdminUserDetail = {
       hourlyDelta: 180,
       dailyDelta: 2_000,
       monthlyDelta: 100_000,
-    },
-    {
+    }),
+    withQuotaBreakdownCanonical({
       kind: 'tag',
       label: 'Debt Cap',
       tagId: 'debt_cap',
@@ -1505,8 +1579,8 @@ const MOCK_USER_DETAIL: AdminUserDetail = {
       hourlyDelta: -80,
       dailyDelta: -1_000,
       monthlyDelta: -700_000,
-    },
-    {
+    }),
+    withQuotaBreakdownCanonical({
       kind: 'effective',
       label: 'effective',
       tagId: null,
@@ -1517,7 +1591,7 @@ const MOCK_USER_DETAIL: AdminUserDetail = {
       hourlyDelta: 1_200,
       dailyDelta: 25_500,
       monthlyDelta: 5_000,
-    },
+    }),
   ],
   recentIpAddresses24h: ['203.0.113.7', '198.51.100.10', '198.51.100.44', '2001:db8::42'],
   recentIpAddresses7d: ['203.0.113.7', '198.51.100.10', '198.51.100.44', '2001:db8::42'],
@@ -5918,7 +5992,7 @@ function UserTagsPageCanvas({ editorMode = 'view' }: { editorMode?: StoryTagCard
   )
 }
 function UserDetailPageCanvas({
-  initialUsageSeries = 'quota1h',
+  initialUsageSeries = 'businessCalls1h',
   initialDetail = MOCK_USER_DETAIL,
 }: {
   initialUsageSeries?: AdminUserUsageSeriesKey | 'ip'
@@ -6216,6 +6290,7 @@ function UserDetailPageCanvas({
         <UserDetailQuotaBreakdown
           entries={detail.quotaBreakdown}
           usersStrings={users}
+          language={language}
           formatQuotaLimitValue={formatQuotaLimitValue}
           formatSignedQuotaDelta={formatSignedQuotaDelta}
         />
@@ -7137,8 +7212,8 @@ export const UserDetail: Story = {
     ) {
       throw new Error('Expected the shared usage panel content to avoid a nested card surface.')
     }
-    if (usagePanel.dataset.loadedSeries !== 'quota1h') {
-      throw new Error(`Expected the default story to lazy-load only quota1h, received ${usagePanel.dataset.loadedSeries ?? '<empty>'}.`)
+    if (usagePanel.dataset.loadedSeries !== 'businessCalls1h') {
+      throw new Error(`Expected the default story to lazy-load only businessCalls1h, received ${usagePanel.dataset.loadedSeries ?? '<empty>'}.`)
     }
     if (canvasElement.textContent?.includes('封禁数限额')) {
       throw new Error('Expected user detail story to hide the per-user blocked-key limit card.')
@@ -7146,7 +7221,7 @@ export const UserDetail: Story = {
     if (canvasElement.textContent?.includes('更早的历史超出可追溯范围')) {
       throw new Error('Expected the shared usage partial-history hint to stay out of the always-visible panel copy.')
     }
-    if (!canvasElement.textContent?.includes('账户共享请求频率、业务额度消耗与 IP 活跃趋势。')) {
+    if (!canvasElement.textContent?.includes('账户共享请求限流、每小时业务请求次数、积分消耗与 IP 活跃趋势。')) {
       throw new Error('Expected the shared usage description to summarize the business metrics without interaction instructions.')
     }
 
@@ -7186,7 +7261,7 @@ export const UserDetail: Story = {
 
     const tabLabels = Array.from(canvasElement.querySelectorAll<HTMLButtonElement>('.admin-user-shared-usage-tabs .segmented-tab'))
       .map((item) => item.textContent?.trim())
-    const expectedTabLabels = ['5m', '1h', '24h', '月', 'IP']
+    const expectedTabLabels = ['5m', '业务请求 1h', '24h', '月', 'IP']
     if (tabLabels.join('|') !== expectedTabLabels.join('|')) {
       throw new Error(`Expected shared usage tabs to be ordered ${expectedTabLabels.join(' / ')}, received ${tabLabels.join(' / ')}.`)
     }
@@ -7244,7 +7319,7 @@ export const UserDetail: Story = {
     await new Promise((resolve) => window.setTimeout(resolve, 80))
 
     const loadedSeries = usagePanel.dataset.loadedSeries?.split(',').filter(Boolean) ?? []
-    const expected = ['quota1h', 'rate5m', 'quota24h', 'quotaMonth']
+    const expected = ['businessCalls1h', 'rate5m', 'quota24h', 'quotaMonth']
     if (expected.some((value) => !loadedSeries.includes(value))) {
       throw new Error(`Expected shared usage tabs to lazy-load all series after interaction, received ${loadedSeries.join(',')}.`)
     }
@@ -7338,7 +7413,7 @@ export const UserDetailBusinessCalls1h: Story = {
     if (usagePanel?.dataset.activeSeries !== 'businessCalls1h') {
       throw new Error('Expected the business calls story to open the business 1h tab.')
     }
-    if (!canvasElement.textContent?.includes('业务 1h')) {
+    if (!canvasElement.textContent?.includes('业务请求 1h')) {
       throw new Error('Expected the business calls story to include the business 1h label.')
     }
     if (!canvasElement.textContent?.includes('36')) {

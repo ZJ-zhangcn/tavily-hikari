@@ -1,4 +1,5 @@
 import { Button } from '../components/ui/button'
+import { UsageMetricLabel } from '../components/UsageMetricLabel'
 import QuotaRangeField from '../components/QuotaRangeField'
 import { StatusBadge } from '../components/StatusBadge'
 import type { AdminUserDetail, AdminUserQuotaBreakdownEntry } from '../api'
@@ -20,6 +21,25 @@ import { UserRechargeQuotaCalendar } from './UserRechargeQuotaCalendar'
 
 type QuotaDraft = Record<QuotaSliderField, string>
 type QuotaSnapshot = Record<QuotaSliderField, QuotaSliderSeed>
+
+function buildQuotaBreakdownEntry(
+  entry: Pick<
+    AdminUserQuotaBreakdownEntry,
+    'kind' | 'label' | 'tagId' | 'tagName' | 'source' | 'effectKind'
+  > & {
+    businessCalls1hDelta: number
+    dailyCreditsDelta: number
+    monthlyCreditsDelta: number
+  },
+): AdminUserQuotaBreakdownEntry {
+  return {
+    ...entry,
+    hourlyAnyDelta: 0,
+    hourlyDelta: entry.businessCalls1hDelta,
+    dailyDelta: entry.dailyCreditsDelta,
+    monthlyDelta: entry.monthlyCreditsDelta,
+  }
+}
 
 interface AdminUserDetailQuotaWorkspaceProps {
   detail: AdminUserDetail
@@ -59,21 +79,26 @@ export function AdminUserDetailQuotaWorkspace({
   const quotaFields = [
     {
       field: 'hourlyLimit',
-      label: usersStrings.quota.hourly,
-      used: detail.quotaHourlyUsed,
-      currentLimit: detail.quotaBase.hourlyLimit,
+      label: (
+        <UsageMetricLabel label={usersStrings.quota.hourly} kind="businessCalls1h" language={language} />
+      ),
+      ariaLabel: usersStrings.quota.hourly,
+      used: detail.businessCalls1h.totalCount,
+      currentLimit: detail.quotaBase.businessCalls1hLimit,
     },
     {
       field: 'dailyLimit',
-      label: usersStrings.quota.daily,
-      used: detail.quotaDailyUsed,
-      currentLimit: detail.quotaBase.dailyLimit,
+      label: <UsageMetricLabel label={usersStrings.quota.daily} kind="dailyCredits" language={language} />,
+      ariaLabel: usersStrings.quota.daily,
+      used: detail.dailyCreditsUsed,
+      currentLimit: detail.quotaBase.dailyCreditsLimit,
     },
     {
       field: 'monthlyLimit',
-      label: usersStrings.quota.monthly,
-      used: detail.quotaMonthlyUsed,
-      currentLimit: detail.quotaBase.monthlyLimit,
+      label: <UsageMetricLabel label={usersStrings.quota.monthly} kind="monthlyCredits" language={language} />,
+      ariaLabel: usersStrings.quota.monthly,
+      used: detail.monthlyCreditsUsed,
+      currentLimit: detail.quotaBase.monthlyCreditsLimit,
     },
   ] as const
   const quotaDirty = quotaDraft
@@ -122,7 +147,7 @@ export function AdminUserDetailQuotaWorkspace({
                 sliderMin={0}
                 sliderMax={Math.max(0, sliderSeed.stages.length - 1)}
                 sliderValue={getQuotaSliderStagePosition(sliderSeed.stages, parsedDraft)}
-                sliderAriaLabel={item.label}
+                sliderAriaLabel={item.ariaLabel}
                 sliderStyle={{ background: buildQuotaSliderTrack(sliderSeed.stages, sliderSeed.used, parsedDraft) }}
                 onSliderChange={(nextValue) => {
                   const nextIndex = clampQuotaSliderStageIndex(sliderSeed.stages, nextValue)
@@ -131,7 +156,7 @@ export function AdminUserDetailQuotaWorkspace({
                 helperText={<>{formatNumber(sliderSeed.used)} / {formatNumber(parsedDraft)}</>}
                 inputName={item.field}
                 inputValue={formatQuotaDraftInput(draftValue)}
-                inputAriaLabel={`${item.label} input`}
+                inputAriaLabel={`${item.ariaLabel} input`}
                 onInputChange={(nextValue) => onQuotaDraftChange(item.field, nextValue)}
               />
             )
@@ -159,6 +184,7 @@ export function AdminUserDetailQuotaWorkspace({
         <UserDetailQuotaBreakdown
           entries={breakdownEntries}
           usersStrings={usersStrings}
+          language={language}
           formatQuotaLimitValue={formatQuotaLimitValue}
           formatSignedQuotaDelta={formatSignedQuotaDelta}
         />
@@ -180,45 +206,42 @@ function buildFallbackQuotaBreakdown(
   rechargeLabel: string,
 ): AdminUserQuotaBreakdownEntry[] {
   const rows: AdminUserQuotaBreakdownEntry[] = [
-    {
+    buildQuotaBreakdownEntry({
       kind: 'base',
       label: 'base',
       tagId: null,
       tagName: null,
       source: null,
       effectKind: 'base',
-      hourlyAnyDelta: detail.quotaBase.hourlyAnyLimit,
-      hourlyDelta: detail.quotaBase.hourlyLimit,
-      dailyDelta: detail.quotaBase.dailyLimit,
-      monthlyDelta: detail.quotaBase.monthlyLimit,
-    },
+      businessCalls1hDelta: detail.quotaBase.businessCalls1hLimit,
+      dailyCreditsDelta: detail.quotaBase.dailyCreditsLimit,
+      monthlyCreditsDelta: detail.quotaBase.monthlyCreditsLimit,
+    }),
   ]
   const rechargeCredits = detail.recharge?.currentMonthEntitlementCredits ?? 0
   if (rechargeCredits > 0) {
-    rows.push({
+    rows.push(buildQuotaBreakdownEntry({
       kind: 'recharge',
       label: rechargeLabel,
       tagId: null,
       tagName: null,
       source: 'system_linuxdo',
       effectKind: 'quota_delta',
-      hourlyAnyDelta: rechargeCredits,
-      hourlyDelta: rechargeCredits,
-      dailyDelta: rechargeCredits,
-      monthlyDelta: rechargeCredits,
-    })
+      businessCalls1hDelta: rechargeCredits,
+      dailyCreditsDelta: rechargeCredits,
+      monthlyCreditsDelta: rechargeCredits,
+    }))
   }
-  rows.push({
+  rows.push(buildQuotaBreakdownEntry({
     kind: 'effective',
     label: 'effective',
     tagId: null,
     tagName: null,
     source: null,
     effectKind: 'effective',
-    hourlyAnyDelta: detail.effectiveQuota.hourlyAnyLimit,
-    hourlyDelta: detail.effectiveQuota.hourlyLimit,
-    dailyDelta: detail.effectiveQuota.dailyLimit,
-    monthlyDelta: detail.effectiveQuota.monthlyLimit,
-  })
+    businessCalls1hDelta: detail.effectiveQuota.businessCalls1hLimit,
+    dailyCreditsDelta: detail.effectiveQuota.dailyCreditsLimit,
+    monthlyCreditsDelta: detail.effectiveQuota.monthlyCreditsLimit,
+  }))
   return rows
 }

@@ -108,7 +108,7 @@ export function UsersUsageScreen({
           {users.length === 0 ? (
             <tbody>
               <tr>
-                <td colSpan={12}>
+                <td colSpan={11}>
                   <div className="empty-state alert">{usersStrings.empty.none}</div>
                 </td>
               </tr>
@@ -122,13 +122,6 @@ export function UsersUsageScreen({
                   <AdminUsersSortableHeader
                     label={usersStrings.usage.table.hourlyAny}
                     field="hourlyAnyUsed"
-                    activeField={activeSortField}
-                    activeOrder={activeSortOrder}
-                    onToggle={onToggleSort}
-                  />
-                  <AdminUsersSortableHeader
-                    label={usersStrings.usage.table.hourly}
-                    field="quotaHourlyUsed"
                     activeField={activeSortField}
                     activeOrder={activeSortOrder}
                     onToggle={onToggleSort}
@@ -217,26 +210,25 @@ export function UsersUsageScreen({
                       </td>
                       <td className="admin-users-compact-cell">
                         <AdminTableValueStack
-                          {...formatQuotaStackValue(item.quotaHourlyUsed, item.quotaHourlyLimit)}
-                        />
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <AdminTableValueStack
-                          {...formatBusinessCalls1hStackValue(
-                            item.businessCalls1h.successCount,
-                            item.businessCalls1h.failureCount,
-                            language,
+                          primary={formatQuotaUsagePair(
+                            item.businessCalls1h.totalCount,
+                            item.businessCalls1h.limit,
                           )}
+                          secondary={
+                            language === 'zh'
+                              ? `成 ${formatNumber(item.businessCalls1h.successCount)} / 败 ${formatNumber(item.businessCalls1h.failureCount)}`
+                              : `S ${formatNumber(item.businessCalls1h.successCount)} / F ${formatNumber(item.businessCalls1h.failureCount)}`
+                          }
                         />
                       </td>
                       <td className="admin-users-compact-cell">
                         <AdminTableValueStack
-                          {...formatQuotaStackValue(item.quotaDailyUsed, item.quotaDailyLimit)}
+                          {...formatQuotaStackValue(item.dailyCreditsUsed, item.dailyCreditsLimit)}
                         />
                       </td>
                       <td className="admin-users-compact-cell">
                         <AdminTableValueStack
-                          {...formatQuotaStackValue(item.quotaMonthlyUsed, item.quotaMonthlyLimit)}
+                          {...formatQuotaStackValue(item.monthlyCreditsUsed, item.monthlyCreditsLimit)}
                         />
                       </td>
                       <td className="admin-users-compact-cell">
@@ -318,13 +310,9 @@ export function UsersUsageScreen({
                     <strong>{formatQuotaUsagePair(requestRate.used, requestRate.limit)}</strong>
                   </div>
                   <div className="admin-mobile-kv">
-                    <span>{usersStrings.usage.table.hourly}</span>
-                    <strong>{formatQuotaUsagePair(item.quotaHourlyUsed, item.quotaHourlyLimit)}</strong>
-                  </div>
-                  <div className="admin-mobile-kv">
                     <span>{usersStrings.usage.table.businessOneHour}</span>
                     <strong>
-                      {formatNumber(item.businessCalls1h.totalCount)}
+                      {formatQuotaUsagePair(item.businessCalls1h.totalCount, item.businessCalls1h.limit)}
                       {' · '}
                       {language === 'zh'
                         ? `成 ${formatNumber(item.businessCalls1h.successCount)} / 败 ${formatNumber(item.businessCalls1h.failureCount)}`
@@ -333,11 +321,11 @@ export function UsersUsageScreen({
                   </div>
                   <div className="admin-mobile-kv">
                     <span>{usersStrings.usage.table.daily}</span>
-                    <strong>{formatQuotaUsagePair(item.quotaDailyUsed, item.quotaDailyLimit)}</strong>
+                    <strong>{formatQuotaUsagePair(item.dailyCreditsUsed, item.dailyCreditsLimit)}</strong>
                   </div>
                   <div className="admin-mobile-kv">
                     <span>{usersStrings.usage.table.monthly}</span>
-                    <strong>{formatQuotaUsagePair(item.quotaMonthlyUsed, item.quotaMonthlyLimit)}</strong>
+                    <strong>{formatQuotaUsagePair(item.monthlyCreditsUsed, item.monthlyCreditsLimit)}</strong>
                   </div>
                   <div className="admin-mobile-kv">
                     <span>{usersStrings.usage.table.monthlyBroken}</span>

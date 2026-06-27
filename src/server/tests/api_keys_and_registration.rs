@@ -1571,10 +1571,12 @@ colo=LAX
         );
         assert_eq!(
             dashboard_body
-                .get("hourlyAnyLimit")
+                .get("businessCalls1h")
+                .and_then(|value| value.get("limit"))
                 .and_then(|value| value.as_i64()),
             first_item
-                .get("hourlyAnyLimit")
+                .get("businessCalls1h")
+                .and_then(|value| value.get("limit"))
                 .and_then(|value| value.as_i64())
         );
         assert_eq!(
@@ -2196,7 +2198,7 @@ colo=LAX
             Some(request_rate_limit())
         );
         assert!(
-            first_snapshot["progress"]["quotaHourly"]["points"]
+            first_snapshot["progress"]["businessCalls1h"]["points"]
                 .as_array()
                 .is_some_and(|points| !points.is_empty())
         );

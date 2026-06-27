@@ -1,4 +1,6 @@
 const USER_OVERVIEW_REQUEST_RATE_BUCKET_SECS: i64 = 5;
+const USER_OVERVIEW_BUSINESS_CALLS_1H_POINT_COUNT: usize =
+    (SECS_PER_HOUR / SECS_PER_FIVE_MINUTES) as usize;
 
 fn fallback_limit_values(
     limit_values: Vec<Option<i64>>,
@@ -80,6 +82,36 @@ fn build_user_overview_current_period_points(
         .collect()
 }
 
+fn build_user_overview_business_calls_1h_points(
+    points: Vec<AdminUserBusinessCalls1hPoint>,
+    user_created_at: Option<i64>,
+    limit: i64,
+) -> Vec<UserDashboardOverviewSeriesPoint> {
+    let available_bucket_start =
+        user_created_at.map(|created_at| created_at - created_at.rem_euclid(SECS_PER_FIVE_MINUTES));
+    let first_point_index = points
+        .len()
+        .saturating_sub(USER_OVERVIEW_BUSINESS_CALLS_1H_POINT_COUNT.max(1));
+
+    points
+        .into_iter()
+        .skip(first_point_index)
+        .map(|point| {
+            let value = if available_bucket_start.is_some_and(|start| point.bucket_start < start) {
+                None
+            } else {
+                point.pressure
+            };
+            UserDashboardOverviewSeriesPoint {
+                bucket_start: point.bucket_start,
+                display_bucket_start: point.display_bucket_start,
+                value,
+                limit_value: value.map(|_| limit),
+            }
+        })
+        .collect()
+}
+
 impl TavilyProxy {
     pub async fn user_dashboard_overview(
         &self,
@@ -104,9 +136,8 @@ impl TavilyProxy {
             .build_user_dashboard_quota_hourly_progress(
                 user_id,
                 user_created_at,
-                summary.quota_hourly_used,
-                summary.quota_hourly_limit,
-                now_ts,
+                summary.business_calls_1h.total_count,
+                summary.business_calls_1h.limit,
             )
             .await?;
         let quota_daily = self
@@ -187,57 +218,17 @@ impl TavilyProxy {
         user_created_at: Option<i64>,
         used: i64,
         limit: i64,
-        now_ts: i64,
     ) -> Result<UserDashboardProgressCard, ProxyError> {
-        let current_hour_start = now_ts - now_ts.rem_euclid(SECS_PER_HOUR);
-        let current_bucket_start = now_ts - now_ts.rem_euclid(SECS_PER_FIVE_MINUTES);
-        let bucket_start_before = current_hour_start + SECS_PER_HOUR;
-        let bucket_starts: Vec<i64> = (0..(SECS_PER_HOUR / SECS_PER_FIVE_MINUTES))
-            .map(|index| current_hour_start + index * SECS_PER_FIVE_MINUTES)
-            .collect();
-        let values = self
-            .key_store
-            .fetch_account_usage_rollup_values(
-                user_id,
-                AccountUsageRollupMetricKind::BusinessCredits,
-                AccountUsageRollupBucketKind::FiveMinute,
-                current_hour_start,
-                bucket_start_before,
-            )
-            .await?;
-        let limit_values = fallback_limit_values(
-            resolve_bucket_limit_values(
-                &bucket_starts,
-                bucket_start_before,
-                &self
-                    .key_store
-                    .fetch_account_quota_limit_snapshots_for_window(
-                        user_id,
-                        current_hour_start,
-                        bucket_start_before,
-                    )
-                    .await?,
-                |snapshot| snapshot.changed_at,
-                |snapshot| snapshot.select(AccountQuotaLimitSnapshotField::Hourly),
-            ),
+        let points = build_user_overview_business_calls_1h_points(
+            self.user_business_calls_1h_window.usage_series(user_id).await,
+            user_created_at,
             limit,
         );
-        let available_bucket_start = user_created_at
-            .map(|created_at| created_at - created_at.rem_euclid(SECS_PER_FIVE_MINUTES))
-            .unwrap_or(current_hour_start)
-            .max(current_hour_start);
 
         Ok(UserDashboardProgressCard {
             used,
             limit,
-            points: build_user_overview_current_period_points(
-                bucket_starts,
-                &values,
-                available_bucket_start,
-                current_bucket_start,
-                bucket_start_before,
-                limit_values,
-            ),
+            points,
         })
     }
 
