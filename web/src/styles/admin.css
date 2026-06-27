@@ -1642,38 +1642,6 @@ tbody .log-details-row:hover {
     padding-inline: 0.58rem;
   }
 
-  .user-console-header {
-    flex-direction: row;
-    align-items: center;
-    gap: 10px;
-    height: 60px;
-    min-height: 60px;
-    max-height: 60px;
-    padding: 8px 12px;
-  }
-
-  .user-console-header-primary {
-    gap: 2px;
-  }
-
-  .user-console-header-primary h1 {
-    font-size: 1.04rem;
-  }
-
-  .user-console-header-context {
-    gap: 5px;
-    font-size: 0.64rem;
-  }
-
-  .user-console-header-eyebrow {
-    max-width: 9ch;
-  }
-
-  .user-console-header-inline-meta {
-    display: none;
-  }
-
-
   .admin-panel-refresh-button {
     align-self: flex-start;
     min-width: 104px;
