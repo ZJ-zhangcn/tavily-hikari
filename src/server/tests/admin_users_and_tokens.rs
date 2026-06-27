@@ -744,6 +744,7 @@ use super::upstream_support_and_manual_jobs::*;
         let now = now.timestamp();
         let charlie_daily_success_at = day_start + 3_601;
         let charlie_latest_activity_at = now + 3_601;
+        let request_kind = classify_token_request_kind("/api/tavily/search", None);
         sqlx::query(
             r#"
             INSERT INTO auth_token_logs (
@@ -833,6 +834,103 @@ use super::upstream_support_and_manual_jobs::*;
             )
             .await
             .expect("record bob active request");
+
+        let alice_request_log_success: i64 = sqlx::query_scalar(
+            r#"
+            INSERT INTO request_logs (
+                api_key_id,
+                method,
+                path,
+                status_code,
+                tavily_status_code,
+                result_status,
+                request_kind_key,
+                request_kind_label,
+                counts_business_quota,
+                request_user_id,
+                upstream_operation,
+                created_at
+            ) VALUES ('key-admin-users-alice-success', 'POST', '/api/tavily/search', 200, 200, 'success', 'api:search', 'API | search', 1, ?, 'http_search', ?)
+            RETURNING id
+            "#,
+        )
+        .bind(&alice.user_id)
+        .bind(now - 600)
+        .fetch_one(&pool)
+        .await
+        .expect("insert alice request success");
+        proxy
+            .record_token_attempt_with_kind_request_log_metadata(
+                &alice_token.id,
+                &Method::POST,
+                "/api/tavily/search",
+                Some("q=admin-users-success"),
+                Some(200),
+                Some(200),
+                true,
+                "success",
+                None,
+                &request_kind,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(alice_request_log_success),
+            )
+            .await
+            .expect("record alice request success");
+
+        let alice_request_log_failure: i64 = sqlx::query_scalar(
+            r#"
+            INSERT INTO request_logs (
+                api_key_id,
+                method,
+                path,
+                status_code,
+                tavily_status_code,
+                result_status,
+                request_kind_key,
+                request_kind_label,
+                counts_business_quota,
+                request_user_id,
+                upstream_operation,
+                created_at
+            ) VALUES ('key-admin-users-alice-failure', 'POST', '/api/tavily/search', 500, 500, 'error', 'api:search', 'API | search', 1, ?, 'http_search', ?)
+            RETURNING id
+            "#,
+        )
+        .bind(&alice.user_id)
+        .bind(now - 300)
+        .fetch_one(&pool)
+        .await
+        .expect("insert alice request failure");
+        proxy
+            .record_token_attempt_with_kind_request_log_metadata(
+                &alice_token.id,
+                &Method::POST,
+                "/api/tavily/search",
+                Some("q=admin-users-failure"),
+                Some(500),
+                Some(500),
+                true,
+                "error",
+                Some("upstream error"),
+                &request_kind,
+                Some("upstream_error"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some(alice_request_log_failure),
+            )
+            .await
+            .expect("record alice request failure");
+
         for (client_ip, created_at, visibility) in [
             ("203.0.113.7", now - 300, "visible"),
             ("198.51.100.10", now - 3_600, "visible"),
@@ -1043,14 +1141,16 @@ use super::upstream_support_and_manual_jobs::*;
         );
         assert!(
             alice_item
-                .get("hourlyAnyUsed")
+                .get("requestRate")
+                .and_then(|value| value.get("used"))
                 .and_then(|value| value.as_i64())
                 .unwrap_or_default()
                 >= 1
         );
         assert!(
             alice_item
-                .get("quotaHourlyUsed")
+                .get("businessCalls1h")
+                .and_then(|value| value.get("totalCount"))
                 .and_then(|value| value.as_i64())
                 .unwrap_or_default()
                 >= 1
@@ -1307,7 +1407,7 @@ use super::upstream_support_and_manual_jobs::*;
         assert_eq!(
             quota_sort_page_1_items
                 .first()
-                .and_then(|item| item.get("quotaMonthlyUsed"))
+                .and_then(|item| item.get("monthlyCreditsUsed"))
                 .and_then(|value| value.as_i64()),
             Some(90)
         );
@@ -1437,8 +1537,9 @@ use super::upstream_support_and_manual_jobs::*;
             .expect("user detail request");
         assert_eq!(detail_resp.status(), reqwest::StatusCode::OK);
         let detail_body: serde_json::Value = detail_resp.json().await.expect("user detail json");
-        let before_hourly_any_used = detail_body
-            .get("hourlyAnyUsed")
+        let before_request_rate_used = detail_body
+            .get("requestRate")
+            .and_then(|value| value.get("used"))
             .and_then(|value| value.as_i64())
             .unwrap_or_default();
         assert_eq!(
@@ -1530,49 +1631,37 @@ use super::upstream_support_and_manual_jobs::*;
             .iter()
             .find(|value| value.get("systemKey").and_then(|it| it.as_str()) == Some("linuxdo_l2"))
             .expect("linuxdo system tag in detail");
-        let system_hourly_any_delta = system_tag
-            .get("hourlyAnyDelta")
-            .and_then(|value| value.as_i64())
-            .unwrap_or_default();
         let system_hourly_delta = system_tag
-            .get("hourlyDelta")
+            .get("businessCalls1hDelta")
             .and_then(|value| value.as_i64())
             .unwrap_or_default();
         let system_daily_delta = system_tag
-            .get("dailyDelta")
+            .get("dailyCreditsDelta")
             .and_then(|value| value.as_i64())
             .unwrap_or_default();
         let system_monthly_delta = system_tag
-            .get("monthlyDelta")
+            .get("monthlyCreditsDelta")
             .and_then(|value| value.as_i64())
             .unwrap_or_default();
         let quota_base = detail_body.get("quotaBase").expect("quotaBase present");
         let effective_quota = detail_body
             .get("effectiveQuota")
             .expect("effectiveQuota present");
-        let quota_base_hourly_any_before = quota_base
-            .get("hourlyAnyLimit")
-            .and_then(|value| value.as_i64())
-            .expect("base hourlyAny limit before patch");
-        let effective_hourly_any_before = effective_quota
-            .get("hourlyAnyLimit")
-            .and_then(|value| value.as_i64())
-            .expect("effective hourlyAny limit before patch");
         assert_eq!(
             effective_quota
-                .get("hourlyAnyLimit")
+                .get("businessCalls1hLimit")
                 .and_then(|value| value.as_i64()),
             quota_base
-                .get("hourlyAnyLimit")
+                .get("businessCalls1hLimit")
                 .and_then(|value| value.as_i64())
-                .map(|value| value + system_hourly_any_delta + 5)
+                .map(|value| value + system_hourly_delta + 10)
         );
         assert_eq!(
             effective_quota
-                .get("hourlyLimit")
+                .get("businessCalls1hLimit")
                 .and_then(|value| value.as_i64()),
             quota_base
-                .get("hourlyLimit")
+                .get("businessCalls1hLimit")
                 .and_then(|value| value.as_i64())
                 .map(|value| value + system_hourly_delta + 10)
         );
@@ -1633,88 +1722,77 @@ use super::upstream_support_and_manual_jobs::*;
         assert_eq!(
             detail_after
                 .get("quotaBase")
-                .and_then(|value| value.get("hourlyAnyLimit"))
-                .and_then(|value| value.as_i64()),
-            Some(quota_base_hourly_any_before)
-        );
-        assert_eq!(
-            detail_after
-                .get("quotaBase")
-                .and_then(|value| value.get("hourlyLimit"))
+                .and_then(|value| value.get("businessCalls1hLimit"))
                 .and_then(|value| value.as_i64()),
             Some(45)
         );
         assert_eq!(
             detail_after
                 .get("quotaBase")
-                .and_then(|value| value.get("dailyLimit"))
+                .and_then(|value| value.get("dailyCreditsLimit"))
                 .and_then(|value| value.as_i64()),
             Some(678)
         );
         assert_eq!(
             detail_after
                 .get("quotaBase")
-                .and_then(|value| value.get("monthlyLimit"))
+                .and_then(|value| value.get("monthlyCreditsLimit"))
                 .and_then(|value| value.as_i64()),
             Some(910)
         );
         assert_eq!(
             detail_after
                 .get("effectiveQuota")
-                .and_then(|value| value.get("hourlyAnyLimit"))
-                .and_then(|value| value.as_i64()),
-            Some(effective_hourly_any_before)
-        );
-        assert_eq!(
-            detail_after
-                .get("effectiveQuota")
-                .and_then(|value| value.get("hourlyLimit"))
+                .and_then(|value| value.get("businessCalls1hLimit"))
                 .and_then(|value| value.as_i64()),
             Some(45 + system_hourly_delta + 10)
         );
         assert_eq!(
             detail_after
                 .get("effectiveQuota")
-                .and_then(|value| value.get("dailyLimit"))
+                .and_then(|value| value.get("dailyCreditsLimit"))
                 .and_then(|value| value.as_i64()),
             Some(678 + system_daily_delta + 20)
         );
         assert_eq!(
             detail_after
                 .get("effectiveQuota")
-                .and_then(|value| value.get("monthlyLimit"))
+                .and_then(|value| value.get("monthlyCreditsLimit"))
                 .and_then(|value| value.as_i64()),
             Some(910 + system_monthly_delta + 30)
         );
         assert_eq!(
             detail_after
-                .get("hourlyAnyLimit")
+                .get("requestRate")
+                .and_then(|value| value.get("limit"))
                 .and_then(|value| value.as_i64()),
             Some(request_rate_limit())
         );
         assert_eq!(
             detail_after
-                .get("quotaHourlyLimit")
+                .get("businessCalls1h")
+                .and_then(|value| value.get("limit"))
                 .and_then(|value| value.as_i64()),
             Some(45 + system_hourly_delta + 10)
         );
         assert_eq!(
             detail_after
-                .get("quotaDailyLimit")
+                .get("dailyCreditsLimit")
                 .and_then(|value| value.as_i64()),
-            Some(678 + system_daily_delta + 20)
+                Some(678 + system_daily_delta + 20)
         );
         assert_eq!(
             detail_after
-                .get("quotaMonthlyLimit")
+                .get("monthlyCreditsLimit")
                 .and_then(|value| value.as_i64()),
-            Some(910 + system_monthly_delta + 30)
+                Some(910 + system_monthly_delta + 30)
         );
         assert_eq!(
             detail_after
-                .get("hourlyAnyUsed")
+                .get("requestRate")
+                .and_then(|value| value.get("used"))
                 .and_then(|value| value.as_i64()),
-            Some(before_hourly_any_used)
+            Some(before_request_rate_used)
         );
 
         let invalid_resp = client
@@ -1776,32 +1854,24 @@ use super::upstream_support_and_manual_jobs::*;
         assert_eq!(
             detail_omitted
                 .get("quotaBase")
-                .and_then(|value| value.get("hourlyLimit"))
+                .and_then(|value| value.get("businessCalls1hLimit"))
                 .and_then(|value| value.as_i64()),
             Some(46)
         );
         assert_eq!(
             detail_omitted
                 .get("quotaBase")
-                .and_then(|value| value.get("dailyLimit"))
+                .and_then(|value| value.get("dailyCreditsLimit"))
                 .and_then(|value| value.as_i64()),
             Some(679)
         );
         assert_eq!(
             detail_omitted
                 .get("quotaBase")
-                .and_then(|value| value.get("monthlyLimit"))
+                .and_then(|value| value.get("monthlyCreditsLimit"))
                 .and_then(|value| value.as_i64()),
             Some(911)
         );
-        assert_eq!(
-            detail_omitted
-                .get("quotaBase")
-                .and_then(|value| value.get("hourlyAnyLimit"))
-                .and_then(|value| value.as_i64()),
-            Some(quota_base_hourly_any_before)
-        );
-
         let _ = std::fs::remove_file(db_path);
     }
 
@@ -1854,25 +1924,19 @@ use super::upstream_support_and_manual_jobs::*;
             .expect("linuxdo_l4 system tag present");
         assert!(
             system_tag
-                .get("hourlyAnyDelta")
+                .get("businessCalls1hDelta")
                 .and_then(|value| value.as_i64())
                 .is_some_and(|value| value > 0)
         );
         assert!(
             system_tag
-                .get("hourlyDelta")
+                .get("dailyCreditsDelta")
                 .and_then(|value| value.as_i64())
                 .is_some_and(|value| value > 0)
         );
         assert!(
             system_tag
-                .get("dailyDelta")
-                .and_then(|value| value.as_i64())
-                .is_some_and(|value| value > 0)
-        );
-        assert!(
-            system_tag
-                .get("monthlyDelta")
+                .get("monthlyCreditsDelta")
                 .and_then(|value| value.as_i64())
                 .is_some_and(|value| value > 0)
         );
@@ -2015,14 +2079,14 @@ use super::upstream_support_and_manual_jobs::*;
         assert_eq!(
             detail_body
                 .get("effectiveQuota")
-                .and_then(|value| value.get("hourlyAnyLimit"))
+                .and_then(|value| value.get("businessCalls1hLimit"))
                 .and_then(|value| value.as_i64()),
             Some(0)
         );
         assert_eq!(
             detail_body
                 .get("effectiveQuota")
-                .and_then(|value| value.get("monthlyLimit"))
+                .and_then(|value| value.get("monthlyCreditsLimit"))
                 .and_then(|value| value.as_i64()),
             Some(0)
         );
@@ -2035,8 +2099,14 @@ use super::upstream_support_and_manual_jobs::*;
         }));
         assert!(breakdown_entries.iter().any(|entry| {
             entry.get("kind").and_then(|value| value.as_str()) == Some("effective")
-                && entry.get("hourlyAnyDelta").and_then(|value| value.as_i64()) == Some(0)
-                && entry.get("monthlyDelta").and_then(|value| value.as_i64()) == Some(0)
+                && entry
+                    .get("businessCalls1hDelta")
+                    .and_then(|value| value.as_i64())
+                    == Some(0)
+                && entry
+                    .get("monthlyCreditsDelta")
+                    .and_then(|value| value.as_i64())
+                    == Some(0)
         }));
 
         let unbind_system_resp = client
@@ -2114,7 +2184,7 @@ use super::upstream_support_and_manual_jobs::*;
         assert_eq!(
             detail_after
                 .get("effectiveQuota")
-                .and_then(|value| value.get("monthlyLimit"))
+                .and_then(|value| value.get("monthlyCreditsLimit"))
                 .and_then(|value| value.as_i64()),
             Some(0)
         );
