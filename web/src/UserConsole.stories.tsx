@@ -84,6 +84,54 @@ function createRequestRate(
   }
 }
 
+function withUserQuotaCanonical<
+  T extends {
+    requestRate: RequestRate
+    businessCalls1h: UserDashboard['businessCalls1h']
+    dailyCreditsUsed: number
+    dailyCreditsLimit: number
+    monthlyCreditsUsed: number
+    monthlyCreditsLimit: number
+  },
+>(value: T): T & {
+  hourlyAnyUsed: number
+  hourlyAnyLimit: number
+  quotaHourlyUsed: number
+  quotaHourlyLimit: number
+  quotaDailyUsed: number
+  quotaDailyLimit: number
+  quotaMonthlyUsed: number
+  quotaMonthlyLimit: number
+} {
+  return {
+    ...value,
+    hourlyAnyUsed: value.requestRate.used,
+    hourlyAnyLimit: value.requestRate.limit,
+    quotaHourlyUsed: value.businessCalls1h.totalCount,
+    quotaHourlyLimit: value.businessCalls1h.limit,
+    quotaDailyUsed: value.dailyCreditsUsed,
+    quotaDailyLimit: value.dailyCreditsLimit,
+    quotaMonthlyUsed: value.monthlyCreditsUsed,
+    quotaMonthlyLimit: value.monthlyCreditsLimit,
+  }
+}
+
+function withOverviewProgressCanonical<
+  T extends {
+    requestRate: UserDashboardOverview['progress']['requestRate']
+    businessCalls1h: UserDashboardOverview['progress']['businessCalls1h']
+    dailyCredits: UserDashboardOverview['progress']['dailyCredits']
+    monthlyCredits: UserDashboardOverview['progress']['monthlyCredits']
+  },
+>(value: T): T & Pick<UserDashboardOverview['progress'], 'quotaHourly' | 'quotaDaily' | 'quotaMonthly'> {
+  return {
+    ...value,
+    quotaHourly: value.businessCalls1h,
+    quotaDaily: value.dailyCredits,
+    quotaMonthly: value.monthlyCredits,
+  }
+}
+
 async function expectTokenListProof(
   canvasElement: HTMLElement,
   selector: string,
@@ -147,17 +195,14 @@ const tokenDetailAdminOverviewArgs: UserConsoleStoryArgs = {
   isAdmin: true,
 }
 
-const dashboardSample: UserDashboard = {
+const dashboardSample: UserDashboard = withUserQuotaCanonical({
   debugInfoShared: false,
   requestRate: createRequestRate(58, 60, 'user'),
-  hourlyAnyUsed: 58,
-  hourlyAnyLimit: 60,
-  quotaHourlyUsed: 82,
-  quotaHourlyLimit: 100,
-  quotaDailyUsed: 356,
-  quotaDailyLimit: 500,
-  quotaMonthlyUsed: 4120,
-  quotaMonthlyLimit: 5000,
+  businessCalls1h: { successCount: 73, failureCount: 9, totalCount: 82, limit: 100, windowMinutes: 60 },
+  dailyCreditsUsed: 356,
+  dailyCreditsLimit: 500,
+  monthlyCreditsUsed: 4120,
+  monthlyCreditsLimit: 5000,
   dailySuccess: 301,
   dailyFailure: 17,
   monthlySuccess: 3478,
@@ -167,7 +212,7 @@ const dashboardSample: UserDashboard = {
     currentEntitlementCredits: 3000,
     effectiveUntilMonthStart: 1_767_225_600,
   },
-}
+})
 
 function createOverviewPoints(values: Array<number | null>, limit: number) {
   return values.map((value, index) => ({
@@ -180,34 +225,34 @@ function createOverviewPoints(values: Array<number | null>, limit: number) {
 
 const dashboardOverviewSample: UserDashboardOverview = {
   summary: dashboardSample,
-  progress: {
+  progress: withOverviewProgressCanonical({
     requestRate: {
       used: dashboardSample.requestRate.used,
       limit: dashboardSample.requestRate.limit,
       points: createOverviewPoints([8, 10, 9, 15, 14, 16, 21, 23, 29, 35, 42, 58], dashboardSample.requestRate.limit),
     },
-    quotaHourly: {
-      used: dashboardSample.quotaHourlyUsed,
-      limit: dashboardSample.quotaHourlyLimit,
-      points: createOverviewPoints([7, 12, 18, 24, 31, 40, 52, 63, 72, 82, null, null], dashboardSample.quotaHourlyLimit),
+    businessCalls1h: {
+      used: dashboardSample.businessCalls1h.totalCount,
+      limit: dashboardSample.businessCalls1h.limit,
+      points: createOverviewPoints([7, 12, 18, 24, 31, 40, 52, 63, 72, 82, null, null], dashboardSample.businessCalls1h.limit),
     },
-    quotaDaily: {
-      used: dashboardSample.quotaDailyUsed,
-      limit: dashboardSample.quotaDailyLimit,
+    dailyCredits: {
+      used: dashboardSample.dailyCreditsUsed,
+      limit: dashboardSample.dailyCreditsLimit,
       points: createOverviewPoints(
         [11, 19, 28, 36, 49, 63, 78, 92, 108, 126, 145, 169, 194, 228, 264, 302, 356, null, null, null, null, null, null, null],
-        dashboardSample.quotaDailyLimit,
+        dashboardSample.dailyCreditsLimit,
       ),
     },
-    quotaMonthly: {
-      used: dashboardSample.quotaMonthlyUsed,
-      limit: dashboardSample.quotaMonthlyLimit,
+    monthlyCredits: {
+      used: dashboardSample.monthlyCreditsUsed,
+      limit: dashboardSample.monthlyCreditsLimit,
       points: createOverviewPoints(
         [130, 248, 364, 508, 672, 821, 983, 1_156, 1_344, 1_525, 1_711, 1_904, 2_118, 2_347, 2_589, 2_846, 3_124, 3_411, 3_762, 4_120, null, null, null, null, null, null, null, null, null, null],
-        dashboardSample.quotaMonthlyLimit,
+        dashboardSample.monthlyCreditsLimit,
       ),
     },
-  },
+  }),
 }
 
 const rechargeConfigSample: RechargeConfig = {
@@ -280,55 +325,50 @@ const rechargeOrdersSample: RechargeOrder[] = [
   },
 ]
 
-const tokenSample: UserTokenSummary = {
+const tokenSample: UserTokenSummary = withUserQuotaCanonical({
   tokenId: 'a1b2',
   enabled: true,
   note: 'primary',
   lastUsedAt: 1_762_386_800,
   requestRate: createRequestRate(58, 60, 'user'),
-  hourlyAnyUsed: 58,
-  hourlyAnyLimit: 60,
-  quotaHourlyUsed: 82,
-  quotaHourlyLimit: 100,
-  quotaDailyUsed: 356,
-  quotaDailyLimit: 500,
-  quotaMonthlyUsed: 4120,
-  quotaMonthlyLimit: 5000,
+  businessCalls1h: { successCount: 73, failureCount: 9, totalCount: 82, limit: 100, windowMinutes: 60 },
+  dailyCreditsUsed: 356,
+  dailyCreditsLimit: 500,
+  monthlyCreditsUsed: 4120,
+  monthlyCreditsLimit: 5000,
   dailySuccess: 301,
   dailyFailure: 17,
   monthlySuccess: 3478,
-}
+})
 
-const tokenSecondarySample: UserTokenSummary = {
+const tokenSecondarySample: UserTokenSummary = withUserQuotaCanonical({
   tokenId: 'c3d4',
   enabled: true,
   note: 'backup',
   lastUsedAt: 1_762_386_100,
   requestRate: createRequestRate(58, 60, 'user'),
-  hourlyAnyUsed: 58,
-  hourlyAnyLimit: 60,
-  quotaHourlyUsed: 12,
-  quotaHourlyLimit: 100,
-  quotaDailyUsed: 84,
-  quotaDailyLimit: 500,
-  quotaMonthlyUsed: 933,
-  quotaMonthlyLimit: 5000,
+  businessCalls1h: { successCount: 10, failureCount: 2, totalCount: 12, limit: 100, windowMinutes: 60 },
+  dailyCreditsUsed: 84,
+  dailyCreditsLimit: 500,
+  monthlyCreditsUsed: 933,
+  monthlyCreditsLimit: 5000,
   dailySuccess: 76,
   dailyFailure: 4,
   monthlySuccess: 827,
-}
+})
 
-const tokenDetailSample: UserTokenSummary = {
+const tokenDetailSample: UserTokenSummary = withUserQuotaCanonical({
   ...tokenSample,
   requestRate: createRequestRate(58, 60, 'user'),
-  hourlyAnyUsed: 58,
-  quotaHourlyUsed: 88,
-  quotaDailyUsed: 371,
-  quotaMonthlyUsed: 4188,
+  businessCalls1h: { successCount: 78, failureCount: 10, totalCount: 88, limit: 100, windowMinutes: 60 },
+  dailyCreditsUsed: 371,
+  dailyCreditsLimit: 500,
+  monthlyCreditsUsed: 4188,
+  monthlyCreditsLimit: 5000,
   dailySuccess: 315,
   dailyFailure: 19,
   monthlySuccess: 3510,
-}
+})
 
 interface ServerPublicTokenLogMock {
   id: number
@@ -950,6 +990,15 @@ function emitUserTokenSnapshot(): void {
     data: JSON.stringify({
       token: {
         ...tokenDetailSample,
+        requestRate: {
+          ...tokenDetailSample.requestRate,
+          used: tokenDetailSample.requestRate.used + 3,
+        },
+        businessCalls1h: {
+          ...tokenDetailSample.businessCalls1h,
+          totalCount: tokenDetailSample.businessCalls1h.totalCount + 2,
+        },
+        dailyCreditsUsed: tokenDetailSample.dailyCreditsUsed + 6,
         hourlyAnyUsed: tokenDetailSample.hourlyAnyUsed + 3,
         quotaHourlyUsed: tokenDetailSample.quotaHourlyUsed + 2,
         quotaDailyUsed: tokenDetailSample.quotaDailyUsed + 6,

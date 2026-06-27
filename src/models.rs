@@ -372,12 +372,14 @@ pub fn resolve_client_ip_info(
 mod client_ip_tests;
 mod dashboard_month_series;
 mod monthly_quota_rebase;
+mod quota_views;
 
 pub use dashboard_month_series::{DashboardMonthSeries, DashboardMonthSeriesPoint};
 pub(crate) use monthly_quota_rebase::{
     maybe_rebase_current_month_business_quota_with_pool,
     rebase_current_month_business_quota_with_pool,
 };
+pub use quota_views::*;
 
 #[derive(Debug)]
 pub(crate) struct ApiKeyLease {
@@ -462,6 +464,7 @@ pub struct TokenQuotaVerdict {
     pub daily_limit: i64,
     pub monthly_used: i64,
     pub monthly_limit: i64,
+    hourly_enforced: bool,
 }
 
 impl TokenQuotaVerdict {
@@ -473,6 +476,45 @@ impl TokenQuotaVerdict {
         monthly_used_raw: i64,
         monthly_limit: i64,
     ) -> Self {
+        Self::new_with_hourly_enforcement(
+            hourly_used_raw,
+            hourly_limit,
+            daily_used_raw,
+            daily_limit,
+            monthly_used_raw,
+            monthly_limit,
+            true,
+        )
+    }
+
+    pub fn new_without_hourly_enforcement(
+        hourly_used_raw: i64,
+        hourly_limit: i64,
+        daily_used_raw: i64,
+        daily_limit: i64,
+        monthly_used_raw: i64,
+        monthly_limit: i64,
+    ) -> Self {
+        Self::new_with_hourly_enforcement(
+            hourly_used_raw,
+            hourly_limit,
+            daily_used_raw,
+            daily_limit,
+            monthly_used_raw,
+            monthly_limit,
+            false,
+        )
+    }
+
+    fn new_with_hourly_enforcement(
+        hourly_used_raw: i64,
+        hourly_limit: i64,
+        daily_used_raw: i64,
+        daily_limit: i64,
+        monthly_used_raw: i64,
+        monthly_limit: i64,
+        hourly_enforced: bool,
+    ) -> Self {
         let hourly_limit = hourly_limit.max(0);
         let daily_limit = daily_limit.max(0);
         let monthly_limit = monthly_limit.max(0);
@@ -482,7 +524,7 @@ impl TokenQuotaVerdict {
 
         let mut exceeded_window = None;
         let mut allowed = true;
-        if hourly_limit == 0 || hourly_used_raw > hourly_limit {
+        if hourly_enforced && (hourly_limit == 0 || hourly_used_raw > hourly_limit) {
             exceeded_window = Some(QuotaWindow::Hour);
             allowed = false;
         }
@@ -507,10 +549,11 @@ impl TokenQuotaVerdict {
             daily_limit,
             monthly_used,
             monthly_limit,
+            hourly_enforced,
         }
     }
 
-    pub(crate) fn effective_window(&self) -> Option<QuotaWindow> {
+    pub fn effective_window(&self) -> Option<QuotaWindow> {
         if let Some(window) = self.exceeded_window {
             return Some(window);
         }
@@ -523,13 +566,13 @@ impl TokenQuotaVerdict {
         if self.daily_used >= self.daily_limit {
             return Some(QuotaWindow::Day);
         }
-        if self.hourly_used >= self.hourly_limit {
+        if self.hourly_enforced && self.hourly_used >= self.hourly_limit {
             return Some(QuotaWindow::Hour);
         }
         None
     }
 
-    pub(crate) fn projected_window(&self, delta: i64) -> Option<QuotaWindow> {
+    pub fn projected_window(&self, delta: i64) -> Option<QuotaWindow> {
         if let Some(window) = self.effective_window() {
             return Some(window);
         }
@@ -540,7 +583,7 @@ impl TokenQuotaVerdict {
             if self.daily_used.saturating_add(delta) > self.daily_limit {
                 return Some(QuotaWindow::Day);
             }
-            if self.hourly_used.saturating_add(delta) > self.hourly_limit {
+            if self.hourly_enforced && self.hourly_used.saturating_add(delta) > self.hourly_limit {
                 return Some(QuotaWindow::Hour);
             }
         }
@@ -1287,10 +1330,17 @@ pub struct AlertTypeCount {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecentAlertsGroupedWindowCount {
+    pub window_hours: i64,
+    pub grouped_count: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentAlertsSummary {
     pub window_hours: i64,
     pub total_events: i64,
     pub grouped_count: i64,
+    pub grouped_count_windows: Vec<RecentAlertsGroupedWindowCount>,
     pub counts_by_type: Vec<AlertTypeCount>,
     pub top_groups: Vec<AlertGroupRecord>,
     pub coverage: String,
@@ -1304,6 +1354,20 @@ impl Default for RecentAlertsSummary {
             window_hours: 24,
             total_events: 0,
             grouped_count: 0,
+            grouped_count_windows: vec![
+                RecentAlertsGroupedWindowCount {
+                    window_hours: 1,
+                    grouped_count: 0,
+                },
+                RecentAlertsGroupedWindowCount {
+                    window_hours: 24,
+                    grouped_count: 0,
+                },
+                RecentAlertsGroupedWindowCount {
+                    window_hours: 24 * 7,
+                    grouped_count: 0,
+                },
+            ],
             counts_by_type: default_alert_type_counts(),
             top_groups: Vec::new(),
             coverage: "ok".to_string(),
@@ -1604,96 +1668,6 @@ pub struct AuthTokenSecret {
     pub token: String, // th-<id>-<secret>
 }
 
-#[derive(Debug, Clone)]
-pub struct AdminQuotaLimitSet {
-    pub hourly_any_limit: i64,
-    pub hourly_limit: i64,
-    pub daily_limit: i64,
-    pub monthly_limit: i64,
-    pub inherits_defaults: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct AdminUserTag {
-    pub id: String,
-    pub name: String,
-    pub display_name: String,
-    pub icon: Option<String>,
-    pub system_key: Option<String>,
-    pub effect_kind: String,
-    pub hourly_any_delta: i64,
-    pub hourly_delta: i64,
-    pub daily_delta: i64,
-    pub monthly_delta: i64,
-    pub user_count: i64,
-}
-
-#[derive(Debug, Clone)]
-pub struct AdminUserTagBinding {
-    pub tag_id: String,
-    pub name: String,
-    pub display_name: String,
-    pub icon: Option<String>,
-    pub system_key: Option<String>,
-    pub effect_kind: String,
-    pub hourly_any_delta: i64,
-    pub hourly_delta: i64,
-    pub daily_delta: i64,
-    pub monthly_delta: i64,
-    pub source: String,
-}
-
-#[derive(Debug, Clone)]
-pub struct AdminUserQuotaBreakdownEntry {
-    pub kind: String,
-    pub label: String,
-    pub tag_id: Option<String>,
-    pub tag_name: Option<String>,
-    pub source: Option<String>,
-    pub effect_kind: String,
-    pub hourly_any_delta: i64,
-    pub hourly_delta: i64,
-    pub daily_delta: i64,
-    pub monthly_delta: i64,
-}
-
-#[derive(Debug, Clone)]
-pub struct AdminUserQuotaDetails {
-    pub base: AdminQuotaLimitSet,
-    pub effective: AdminQuotaLimitSet,
-    pub breakdown: Vec<AdminUserQuotaBreakdownEntry>,
-    pub tags: Vec<AdminUserTagBinding>,
-}
-
-#[derive(Debug, Clone)]
-pub struct UserDashboardSummary {
-    pub debug_info_shared: bool,
-    pub request_rate: RequestRateView,
-    pub business_calls_1h: BusinessCalls1hSummary,
-    pub hourly_any_used: i64,
-    pub hourly_any_limit: i64,
-    pub quota_hourly_used: i64,
-    pub quota_hourly_limit: i64,
-    pub quota_daily_used: i64,
-    pub quota_daily_limit: i64,
-    pub quota_monthly_used: i64,
-    pub quota_monthly_limit: i64,
-    pub daily_success: i64,
-    pub daily_failure: i64,
-    pub monthly_success: i64,
-    pub monthly_failure: i64,
-    pub last_activity: Option<i64>,
-    pub recharge: LinuxDoCreditRechargeSummary,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct BusinessCalls1hSummary {
-    pub success_count: i64,
-    pub failure_count: i64,
-    pub total_count: i64,
-    pub window_minutes: i64,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AnalysisPressureSnapshot {
@@ -1794,110 +1768,6 @@ pub struct AnalysisCurrentUserPressureSummary {
     pub peak: i64,
     pub current_pressure: i64,
     pub vs_yesterday_delta: i64,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct UserLogMetricsSummary {
-    pub daily_success: i64,
-    pub daily_failure: i64,
-    pub monthly_success: i64,
-    pub monthly_failure: i64,
-    pub last_activity: Option<i64>,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct TokenLogMetricsSummary {
-    pub daily_success: i64,
-    pub daily_failure: i64,
-    pub monthly_success: i64,
-    pub monthly_failure: i64,
-    pub last_activity: Option<i64>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AdminUserUsageSeriesKind {
-    Rate5m,
-    Quota1h,
-    Quota24h,
-    QuotaMonth,
-    BusinessCalls1h,
-}
-
-impl AdminUserUsageSeriesKind {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value.trim() {
-            "rate5m" => Some(Self::Rate5m),
-            "quota1h" => Some(Self::Quota1h),
-            "quota24h" => Some(Self::Quota24h),
-            "quotaMonth" => Some(Self::QuotaMonth),
-            "businessCalls1h" => Some(Self::BusinessCalls1h),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AdminUserUsageSeriesPoint {
-    pub bucket_start: i64,
-    pub display_bucket_start: Option<i64>,
-    pub value: Option<i64>,
-    pub limit_value: Option<i64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AdminUserBusinessCalls1hBarsPoint {
-    pub success: Option<i64>,
-    pub failure: Option<i64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AdminUserBusinessCalls1hPoint {
-    pub bucket_start: i64,
-    pub display_bucket_start: Option<i64>,
-    pub bars: AdminUserBusinessCalls1hBarsPoint,
-    pub pressure: Option<i64>,
-    pub limit_value: Option<i64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AdminUserUsageSeries {
-    pub limit: i64,
-    pub points: Vec<AdminUserUsageSeriesPoint>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AdminUserBusinessCalls1hSeries {
-    pub limit: i64,
-    pub points: Vec<AdminUserBusinessCalls1hPoint>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UserDashboardOverviewSeriesPoint {
-    pub bucket_start: i64,
-    pub display_bucket_start: Option<i64>,
-    pub value: Option<i64>,
-    pub limit_value: Option<i64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UserDashboardProgressCard {
-    pub used: i64,
-    pub limit: i64,
-    pub points: Vec<UserDashboardOverviewSeriesPoint>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct UserDashboardOverviewProgress {
-    pub request_rate: UserDashboardProgressCard,
-    pub quota_hourly: UserDashboardProgressCard,
-    pub quota_daily: UserDashboardProgressCard,
-    pub quota_monthly: UserDashboardProgressCard,
-}
-
-#[derive(Debug, Clone)]
-pub struct UserDashboardOverviewSnapshot {
-    pub summary: UserDashboardSummary,
-    pub progress: UserDashboardOverviewProgress,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

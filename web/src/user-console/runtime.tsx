@@ -2651,11 +2651,13 @@ export default function UserConsole(): JSX.Element {
       {consoleLoggedOut && <AccessStatePanel state="logged_out" text={text} onHome={goHome} />}
       {consoleNeedsLogin && <AccessStatePanel state="login_required" text={text} onHome={goHome} />}
       {isOAuthCallbackRoute && (
-        <OAuthCallbackPanel
-          model={oauthCallbackModel}
-          onRestart={restartOAuthCallbackAuth}
-          onHome={goHome}
-        />
+        <div className="oauth-callback-stage">
+          <OAuthCallbackPanel
+            model={oauthCallbackModel}
+            onRestart={restartOAuthCallbackAuth}
+            onHome={goHome}
+          />
+        </div>
       )}
 
       {!isOAuthCallbackRoute && (
@@ -2932,13 +2934,14 @@ export default function UserConsole(): JSX.Element {
               text={text.dashboard}
               rateLabel={formatRequestRateSummary(resolveRequestRate(detail, 'token'), language)}
               rate={resolveRequestRate(detail, 'token')}
-              hourlyUsed={detail?.quotaHourlyUsed ?? 0}
-              hourlyLimit={detail?.quotaHourlyLimit ?? 0}
-              dailyUsed={detail?.quotaDailyUsed ?? 0}
-              dailyLimit={detail?.quotaDailyLimit ?? 0}
-              monthlyUsed={detail?.quotaMonthlyUsed ?? 0}
-              monthlyLimit={detail?.quotaMonthlyLimit ?? 0}
+              hourlyUsed={detail?.businessCalls1h.totalCount ?? 0}
+              hourlyLimit={detail?.businessCalls1h.limit ?? 0}
+              dailyUsed={detail?.dailyCreditsUsed ?? 0}
+              dailyLimit={detail?.dailyCreditsLimit ?? 0}
+              monthlyUsed={detail?.monthlyCreditsUsed ?? 0}
+              monthlyLimit={detail?.monthlyCreditsLimit ?? 0}
               formatNumber={formatNumber}
+              language={language}
             />
 
             <TokenSecretField

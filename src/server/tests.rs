@@ -30,6 +30,7 @@ mod tests {
 
     mod admin_logs_and_summary;
     mod admin_analysis_pressure;
+    mod admin_token_owner_summary;
     mod admin_token_filters_and_maintenance;
     mod admin_users_and_tokens;
     mod alerts_and_ha;
@@ -40,6 +41,7 @@ mod tests {
     mod alerts_and_ha_serving_modes;
     mod alerts_and_ha_startup_roles;
     mod api_keys_and_registration;
+    mod branded_assets_contract;
     mod core_support_and_parsing;
     mod dashboard_overview_snapshot;
     mod linuxdo_oauth_and_admin_keys;

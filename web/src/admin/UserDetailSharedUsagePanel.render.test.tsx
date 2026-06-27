@@ -1,6 +1,7 @@
 import '../../test/happydom'
 
 import { afterEach, describe, expect, it } from 'bun:test'
+import { Chart as ChartJS } from 'chart.js'
 import { act, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
@@ -118,7 +119,7 @@ afterEach(() => {
 })
 
 describe('UserDetailSharedUsagePanel tab presentation', () => {
-  it('orders windows from shortest to longest while keeping 1h as the default active series', async () => {
+  it('orders windows from shortest to longest while keeping business 1h as the default active series', async () => {
     const { container, root } = await mountPanel()
 
     const labels = Array.from(container.querySelectorAll<HTMLButtonElement>('button[role="radio"]'))
@@ -126,13 +127,12 @@ describe('UserDetailSharedUsagePanel tab presentation', () => {
 
     expect(labels).toEqual([
       ZH.admin.users.detail.sharedUsageTabs.fiveMinute,
-      ZH.admin.users.detail.sharedUsageTabs.oneHour,
       ZH.admin.users.detail.sharedUsageTabs.businessOneHour,
       ZH.admin.users.detail.sharedUsageTabs.daily,
       ZH.admin.users.detail.sharedUsageTabs.monthly,
       ZH.admin.users.detail.sharedUsageTabs.ip,
     ])
-    expect(container.querySelector<HTMLElement>('.admin-user-shared-usage-panel')?.dataset.activeSeries).toBe('quota1h')
+    expect(container.querySelector<HTMLElement>('.admin-user-shared-usage-panel')?.dataset.activeSeries).toBe('businessCalls1h')
 
     await act(async () => {
       root.unmount()
@@ -184,7 +184,7 @@ describe('UserDetailSharedUsagePanel loading behavior', () => {
     const loader = createAbortableLoader()
     const { container, root } = await mountPanel({ loadSeries: loader.loadSeries })
 
-    expect(loader.requests.quota1h?.length).toBe(1)
+    expect(loader.requests.businessCalls1h?.length).toBe(1)
     expect(container.textContent).toContain(ZH.admin.users.detail.sharedUsageLoading)
 
     await act(async () => {
@@ -193,15 +193,15 @@ describe('UserDetailSharedUsagePanel loading behavior', () => {
     await flushEffects()
 
     expect(loader.requests.rate5m?.length).toBe(1)
-    expect(loader.requests.quota1h?.[0]?.signal.aborted).toBe(false)
+    expect(loader.requests.businessCalls1h?.[0]?.signal.aborted).toBe(false)
 
     await act(async () => {
-      clickTab(container, ZH.admin.users.detail.sharedUsageTabs.oneHour)
+      clickTab(container, ZH.admin.users.detail.sharedUsageTabs.businessOneHour)
     })
     await flushEffects()
 
-    expect(loader.requests.quota1h?.length).toBe(1)
-    loader.requests.quota1h?.[0]?.deferred.resolve(buildEmptySeries(120))
+    expect(loader.requests.businessCalls1h?.length).toBe(1)
+    loader.requests.businessCalls1h?.[0]?.deferred.resolve(buildEmptySeries(120))
     await flushEffects()
 
     expect(container.textContent).not.toContain(ZH.admin.users.detail.sharedUsageLoading)
@@ -230,13 +230,81 @@ describe('UserDetailSharedUsagePanel loading behavior', () => {
     })
   })
 
+  it('renders the business 1h legend with success, failure, pressure, and limit labels', async () => {
+    const { container, root } = await mountPanel({
+      loadSeries: async () => ({
+        kind: 'businessCalls1h',
+        limit: 120,
+        points: [
+          {
+            bucketStart: 1_776_200_400,
+            bars: { success: 5, failure: 1 },
+            pressure: 24,
+            limitValue: 120,
+          },
+        ],
+      }),
+    })
+
+    const legendText = container.querySelector('.admin-user-shared-usage-legend')?.textContent ?? ''
+    expect(legendText).toContain(ZH.admin.users.detail.sharedUsageLegendSuccess)
+    expect(legendText).toContain(ZH.admin.users.detail.sharedUsageLegendFailure)
+    expect(legendText).toContain(ZH.admin.users.detail.sharedUsageLegendPressure)
+    expect(legendText).toContain(ZH.admin.users.detail.sharedUsageLegendLimit)
+    expect(container.textContent).not.toContain(ZH.admin.users.detail.sharedUsageEmpty)
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
+  it('keeps business pressure and limit lines out of the stacked bar totals', async () => {
+    const { container, root } = await mountPanel({
+      loadSeries: async () => ({
+        kind: 'businessCalls1h',
+        limit: 120,
+        points: [
+          {
+            bucketStart: 1_776_200_400,
+            bars: { success: 5, failure: 1 },
+            pressure: 24,
+            limitValue: 120,
+          },
+          {
+            bucketStart: 1_776_200_700,
+            bars: { success: 4, failure: 0 },
+            pressure: 24,
+            limitValue: 120,
+          },
+        ],
+      }),
+    })
+
+    const canvas = container.querySelector('canvas')
+    expect(canvas).not.toBeNull()
+    const chart = canvas ? ChartJS.getChart(canvas) : undefined
+    expect(chart).toBeDefined()
+
+    const stacks = chart?.data.datasets.map((dataset) => dataset.stack)
+    expect(stacks).toEqual([
+      'business-bars',
+      'business-bars',
+      'business-pressure-line',
+      'business-limit-line',
+    ])
+
+    await act(async () => {
+      root.unmount()
+    })
+  })
+
   it('refetches the active series after the backing user detail refreshes', async () => {
     const firstLoader = createAbortableLoader()
     const secondLoader = createAbortableLoader()
     const { container, root } = await mountPanel({ loadSeries: firstLoader.loadSeries })
 
-    expect(firstLoader.requests.quota1h?.length).toBe(1)
-    firstLoader.requests.quota1h?.[0]?.deferred.resolve(buildEmptySeries(120))
+    expect(firstLoader.requests.businessCalls1h?.length).toBe(1)
+    firstLoader.requests.businessCalls1h?.[0]?.deferred.resolve(buildEmptySeries(120))
     await flushEffects()
     expect(container.textContent).toContain(ZH.admin.users.detail.sharedUsageEmpty)
 
@@ -254,10 +322,10 @@ describe('UserDetailSharedUsagePanel loading behavior', () => {
     })
     await flushEffects()
 
-    expect(secondLoader.requests.quota1h?.length).toBe(1)
+    expect(secondLoader.requests.businessCalls1h?.length).toBe(1)
     expect(container.textContent).toContain(ZH.admin.users.detail.sharedUsageLoading)
 
-    secondLoader.requests.quota1h?.[0]?.deferred.resolve(buildEmptySeries(200))
+    secondLoader.requests.businessCalls1h?.[0]?.deferred.resolve(buildEmptySeries(200))
     await flushEffects()
     expect(container.textContent).toContain(ZH.admin.users.detail.sharedUsageEmpty)
 

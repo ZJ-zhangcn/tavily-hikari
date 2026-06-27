@@ -292,10 +292,26 @@ export interface AdminTranslationsShape {
     tokenCoverageError: string
     recentAlertsTitle: string
     recentAlertsDescription: string
-    recentAlertsEvents: string
-    recentAlertsGroups: string
+    recentAlertsOverviewTitle: string
+    recentAlertsOverviewSummary: string
+    recentAlertsCurrentWindow: string
+    recentAlertsWindowLabels: {
+      hour1: string
+      hour24: string
+      day7: string
+    }
+    recentAlertsColumns: {
+      alert: string
+      requestKind: string
+      timeRange: string
+      hits: string
+      review: string
+    }
+    recentAlertsHits: string
+    recentAlertsTimeRange: string
     recentAlertsEmpty: string
     recentAlertsOpen: string
+    recentAlertsOpenGroup: string
     recentAlertsTypeLabels: {
       upstream_rate_limited_429: string
       upstream_usage_limit_432: string

@@ -16,6 +16,7 @@ describe('DashboardOverview Storybook coverage', () => {
     expect(dashboardStories.TypesAreaHiddenMiddleSeries).toMatchObject({})
     expect(dashboardStories.HiddenSeriesEmpty).toMatchObject({})
     expect(dashboardStories.FixedRangeWithGaps).toMatchObject({})
+    expect(dashboardStories.RecentAlertsDesktopEvidence).toMatchObject({})
     expect(dashboardStories.NoPreviousMonthComparison).toMatchObject({})
   })
 
@@ -31,6 +32,28 @@ describe('DashboardOverview Storybook coverage', () => {
     expect(markup).toContain('Local time axis · Rolling 25 buckets')
     expect(markup).toContain('missing buckets are left blank')
     expect(markup).toContain('dashboard-summary-card-backdrop')
+  })
+
+  it('renders the grouped alert queue summary in the default story', () => {
+    const args = dashboardStories.Default.args
+    const markup = renderToStaticMarkup(createElement(meta.component, args as never))
+    expect(markup).toContain('1 hour')
+    expect(markup).toContain('24 hours')
+    expect(markup).toContain('7 days')
+    expect(markup).toContain('24-hour queue')
+    expect(markup).toContain('Alert window')
+    expect(markup).toContain('Review')
+    expect(markup).toContain('Alice Wang')
+    expect(markup).toContain('Tavily Search')
+    expect(markup).toContain('Tavily usage limit 432')
+    expect(markup).toContain('Queue below')
+    expect(markup).toContain('Review group')
+    expect(markup).toContain('aria-label="Review group: Alice Wang"')
+    expect(markup).toContain('dashboard-alerts-summary__count-badge')
+    expect(markup).toContain('status-pill-warning')
+    expect(markup).toContain('>4<')
+    expect(markup).toContain('dashboard-alerts-summary__field-label')
+    expect(markup).not.toContain('deep-link into the grouped Alerts view')
   })
 
   it('exposes a fixed-range gap story for visual evidence', () => {

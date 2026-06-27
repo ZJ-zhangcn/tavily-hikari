@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 
 import {
   BarElement,
@@ -32,7 +32,6 @@ ChartJS.register(CategoryScale, LinearScale, BarElement, LineController, LineEle
 
 const USAGE_TAB_ORDER: readonly AdminUserUsagePanelTab[] = [
   'rate5m',
-  'quota1h',
   'businessCalls1h',
   'quota24h',
   'quotaMonth',
@@ -58,6 +57,9 @@ const IP_GANTT_MIN_HEIGHT = 172
 const IP_GANTT_MAX_HEIGHT = 420
 const IP_GANTT_ROW_HEIGHT = 32
 const IP_GANTT_AXIS_HEIGHT = 46
+const BUSINESS_CALLS_BAR_STACK = 'business-bars'
+const BUSINESS_CALLS_PRESSURE_STACK = 'business-pressure-line'
+const BUSINESS_CALLS_LIMIT_STACK = 'business-limit-line'
 
 interface SharedUsageTooltipState {
   index: number
@@ -298,7 +300,7 @@ export function UserDetailSharedUsagePanel({
   usersStrings,
   language,
   loadSeries,
-  initialSeries = 'quota1h',
+  initialSeries = 'businessCalls1h',
   ipTimeline = [],
   ipAddresses24h = [],
   ipAddresses7d = [],
@@ -308,7 +310,9 @@ export function UserDetailSharedUsagePanel({
   description,
 }: UserDetailSharedUsagePanelProps): JSX.Element {
   const { resolvedTheme } = useTheme()
-  const [activeSeries, setActiveSeries] = useState<AdminUserUsagePanelTab>(initialSeries)
+  const [activeSeries, setActiveSeries] = useState<AdminUserUsagePanelTab>(
+    initialSeries === 'quota1h' ? 'businessCalls1h' : initialSeries,
+  )
   const [seriesCache, setSeriesCache] = useState<Partial<Record<AdminUserUsageSeriesKey, AdminUserUsageSeries>>>({})
   const [statusBySeries, setStatusBySeries] = useState<Partial<Record<AdminUserUsageSeriesKey, LoadStatus>>>({})
   const [hoverTooltip, setHoverTooltip] = useState<SharedUsageTooltipState | null>(null)
@@ -386,14 +390,19 @@ export function UserDetailSharedUsagePanel({
       return currentSeries.points.some((point) => point.value != null || point.limitValue != null)
     }
     return currentSeries.points.some(
-      (point) => point.bars.success != null || point.bars.failure != null || point.pressure != null,
+      (point) =>
+        point.bars.success != null ||
+        point.bars.failure != null ||
+        point.pressure != null ||
+        point.limitValue != null,
     )
   }, [currentSeries])
   const chartPalette = useMemo(
     () => ({
       bar: readChartColorVar('--primary', '#38bdf8'),
       barBorder: readChartColorVar('--primary', '#0ea5e9'),
-      line: readChartColorVar('--warning', '#f59e0b'),
+      pressureLine: readChartColorVar('--info', '#0ea5e9'),
+      limitLine: readChartColorVar('--warning', '#f59e0b'),
       grid: readChartColorVar('--dashboard-chart-grid', 'rgba(148, 163, 184, 0.18)'),
       tick: readChartColorVar('--dashboard-chart-tick', '#cbd5e1'),
     }),
@@ -405,7 +414,7 @@ export function UserDetailSharedUsagePanel({
   const tooltipHasGap = activeTooltipPoint
     ? 'value' in activeTooltipPoint
       ? activeTooltipPoint.value == null || activeTooltipPoint.limitValue == null
-      : activeTooltipPoint.pressure == null
+      : activeTooltipPoint.pressure == null || activeTooltipPoint.limitValue == null
     : false
 
   const retryActiveSeries = () => {
@@ -441,7 +450,7 @@ export function UserDetailSharedUsagePanel({
             borderColor: chartPalette.barBorder,
             borderWidth: 1,
             borderRadius: 6,
-            stack: 'business-bars',
+            stack: BUSINESS_CALLS_BAR_STACK,
             barPercentage: 0.72,
             categoryPercentage: 0.82,
           },
@@ -453,7 +462,7 @@ export function UserDetailSharedUsagePanel({
             borderColor: readChartColorVar('--destructive', '#dc2626'),
             borderWidth: 1,
             borderRadius: 6,
-            stack: 'business-bars',
+            stack: BUSINESS_CALLS_BAR_STACK,
             barPercentage: 0.72,
             categoryPercentage: 0.82,
           },
@@ -461,11 +470,24 @@ export function UserDetailSharedUsagePanel({
             type: 'line',
             label: usersStrings.detail.sharedUsageLegendPressure,
             data: currentSeries.points.map((point) => point.pressure),
-            borderColor: chartPalette.line,
+            borderColor: chartPalette.pressureLine,
             borderWidth: 2,
             pointRadius: 0,
             pointHoverRadius: 0,
             tension: 0,
+            stack: BUSINESS_CALLS_PRESSURE_STACK,
+          },
+          {
+            type: 'line',
+            label: usersStrings.detail.sharedUsageLegendLimit,
+            data: currentSeries.points.map((point) => point.limitValue),
+            borderColor: chartPalette.limitLine,
+            borderWidth: 2,
+            borderDash: [8, 6],
+            pointRadius: 0,
+            pointHoverRadius: 0,
+            tension: 0,
+            stack: BUSINESS_CALLS_LIMIT_STACK,
           },
         ],
       } as unknown as ChartData<'bar', (number | null)[], string>
@@ -489,7 +511,7 @@ export function UserDetailSharedUsagePanel({
           type: 'line',
           label: usersStrings.detail.sharedUsageLegendLimit,
           data: currentSeries?.points.map((point) => point.limitValue) ?? [],
-          borderColor: chartPalette.line,
+          borderColor: chartPalette.limitLine,
           borderWidth: 2,
           borderDash: [8, 6],
           pointRadius: 0,
@@ -502,7 +524,6 @@ export function UserDetailSharedUsagePanel({
     activeSeries,
     chartPalette.bar,
     chartPalette.barBorder,
-    chartPalette.line,
     currentSeries,
     language,
     usersStrings.detail.sharedUsageLegendFailure,
@@ -510,6 +531,8 @@ export function UserDetailSharedUsagePanel({
     usersStrings.detail.sharedUsageLegendPressure,
     usersStrings.detail.sharedUsageLegendSuccess,
     usersStrings.detail.sharedUsageLegendUsed,
+    chartPalette.limitLine,
+    chartPalette.pressureLine,
   ])
 
   const chartOptions = useMemo(() => {
@@ -771,7 +794,6 @@ export function UserDetailSharedUsagePanel({
             onChange={setActiveSeries}
             options={[
               { value: 'rate5m', label: usersStrings.detail.sharedUsageTabs.fiveMinute },
-              { value: 'quota1h', label: usersStrings.detail.sharedUsageTabs.oneHour },
               { value: 'businessCalls1h', label: usersStrings.detail.sharedUsageTabs.businessOneHour },
               { value: 'quota24h', label: usersStrings.detail.sharedUsageTabs.daily },
               { value: 'quotaMonth', label: usersStrings.detail.sharedUsageTabs.monthly },
@@ -788,7 +810,6 @@ export function UserDetailSharedUsagePanel({
             onChange={setActiveSeries}
             options={[
               { value: 'rate5m', label: usersStrings.detail.sharedUsageTabs.fiveMinute },
-              { value: 'quota1h', label: usersStrings.detail.sharedUsageTabs.oneHour },
               { value: 'businessCalls1h', label: usersStrings.detail.sharedUsageTabs.businessOneHour },
               { value: 'quota24h', label: usersStrings.detail.sharedUsageTabs.daily },
               { value: 'quotaMonth', label: usersStrings.detail.sharedUsageTabs.monthly },
@@ -809,21 +830,46 @@ export function UserDetailSharedUsagePanel({
                 ? usersStrings.detail.sharedUsageLegendSuccess
                 : usersStrings.detail.sharedUsageLegendUsed}
             </span>
-            <span className="admin-user-shared-usage-legend-item">
-              <span className="admin-user-shared-usage-legend-chip admin-user-shared-usage-legend-chip-line" />
-              {activeSeries === 'businessCalls1h'
-                ? usersStrings.detail.sharedUsageLegendPressure
-                : usersStrings.detail.sharedUsageLegendLimit}
-            </span>
             {activeSeries === 'businessCalls1h' ? (
+              <>
+                <span className="admin-user-shared-usage-legend-item">
+                  <span
+                    className="admin-user-shared-usage-legend-chip"
+                    style={{ backgroundColor: readChartColorVar('--destructive', '#ef4444') }}
+                  />
+                  {usersStrings.detail.sharedUsageLegendFailure}
+                </span>
+                <span className="admin-user-shared-usage-legend-item">
+                  <span
+                    className="admin-user-shared-usage-legend-chip admin-user-shared-usage-legend-chip-line"
+                    style={
+                      {
+                        '--admin-user-shared-usage-line-color': chartPalette.pressureLine,
+                        '--admin-user-shared-usage-line-style': 'solid',
+                      } as CSSProperties
+                    }
+                  />
+                  {usersStrings.detail.sharedUsageLegendPressure}
+                </span>
+                <span className="admin-user-shared-usage-legend-item">
+                  <span
+                    className="admin-user-shared-usage-legend-chip admin-user-shared-usage-legend-chip-line"
+                    style={
+                      {
+                        '--admin-user-shared-usage-line-color': chartPalette.limitLine,
+                        '--admin-user-shared-usage-line-style': 'dashed',
+                      } as CSSProperties
+                    }
+                  />
+                  {usersStrings.detail.sharedUsageLegendLimit}
+                </span>
+              </>
+            ) : (
               <span className="admin-user-shared-usage-legend-item">
-                <span
-                  className="admin-user-shared-usage-legend-chip"
-                  style={{ backgroundColor: readChartColorVar('--destructive', '#ef4444') }}
-                />
-                {usersStrings.detail.sharedUsageLegendFailure}
+                <span className="admin-user-shared-usage-legend-chip admin-user-shared-usage-legend-chip-line" />
+                {usersStrings.detail.sharedUsageLegendLimit}
               </span>
-            ) : null}
+            )}
           </div>
         </div>
       )}
@@ -927,6 +973,14 @@ export function UserDetailSharedUsagePanel({
                           {activeTooltipPoint.pressure == null
                             ? '—'
                             : formatNumber(language, activeTooltipPoint.pressure)}
+                        </dd>
+                      </div>
+                      <div>
+                        <dt>{usersStrings.detail.sharedUsageLegendLimit}</dt>
+                        <dd>
+                          {activeTooltipPoint.limitValue == null
+                            ? '—'
+                            : formatNumber(language, activeTooltipPoint.limitValue)}
                         </dd>
                       </div>
                     </>

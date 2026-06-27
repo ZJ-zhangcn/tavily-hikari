@@ -60,6 +60,7 @@ import { Card } from '../components/ui/card'
 import { Badge } from '../components/ui/badge'
 import { Table } from '../components/ui/table'
 import { Textarea } from '../components/ui/textarea'
+import { UsageMetricLabel } from '../components/UsageMetricLabel'
 import { AnchoredInfoDisclosure } from '../components/ui/anchored-info-disclosure'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../components/ui/tooltip'
 import SegmentedTabs from '../components/ui/SegmentedTabs'
@@ -279,6 +280,7 @@ import {
   unbindAdminUserTag,
   type AdminUserSummary,
   type AnalysisPressureSnapshot,
+  type AlertGroup,
   type AdminUserListStats,
   type AdminUnboundTokenUsageSortField,
   type AdminUnboundTokenUsageSummary,
@@ -1082,7 +1084,7 @@ function getAdminRankingsTabFromLocation(): RankingTabKey {
 
 function getUserTagIconSrc(icon: string | null | undefined): string | null {
   if (icon === 'linuxdo') {
-    return '/linuxdo-logo.svg'
+    return '/assets/linuxdo-logo.svg'
   }
   return null
 }
@@ -1781,6 +1783,11 @@ function AdminDashboard(): JSX.Element {
     windowHours: 24,
     totalEvents: 0,
     groupedCount: 0,
+    groupedCountWindows: [
+      { windowHours: 1, groupedCount: 0 },
+      { windowHours: 24, groupedCount: 0 },
+      { windowHours: 168, groupedCount: 0 },
+    ],
     countsByType: [],
     topGroups: [],
   })
@@ -2800,6 +2807,11 @@ function AdminDashboard(): JSX.Element {
           windowHours: 24,
           totalEvents: 0,
           groupedCount: 0,
+          groupedCountWindows: [
+            { windowHours: 1, groupedCount: 0 },
+            { windowHours: 24, groupedCount: 0 },
+            { windowHours: 168, groupedCount: 0 },
+          ],
           countsByType: [],
           topGroups: [],
         })
@@ -8894,6 +8906,20 @@ function AdminDashboard(): JSX.Element {
     }))
   }, [navigateToPath])
 
+  const openDashboardRecentAlertGroup = useCallback((group: AlertGroup) => {
+    const now = new Date()
+    navigateToPath(alertsPath({
+      view: 'groups',
+      type: group.type,
+      since: formatIso8601WithOffset(new Date(now.getTime() - 24 * 60 * 60 * 1000)),
+      until: formatIso8601WithOffset(now),
+      userId: group.subjectKind === 'user' ? (group.user?.userId ?? group.subjectId) : undefined,
+      tokenId: group.subjectKind === 'token' ? (group.token?.id ?? group.subjectId) : undefined,
+      keyId: group.subjectKind === 'key' ? (group.key?.id ?? group.subjectId) : undefined,
+      requestKinds: group.requestKind?.key ? [group.requestKind.key] : undefined,
+    }))
+  }, [navigateToPath])
+
 
   if (route.name === 'key') {
     return renderAdminPageWithGlobalOverlays(
@@ -9076,9 +9102,15 @@ function AdminDashboard(): JSX.Element {
                   <dd>{formatNumber(detail.tokenCount)}</dd>
                 </div>
                 <div>
-                  <dt>{usersStrings.usage.table.businessOneHour}</dt>
+                  <dt>
+                    <UsageMetricLabel
+                      label={usersStrings.quota.hourly}
+                      kind="businessCalls1h"
+                      language={language}
+                    />
+                  </dt>
                   <dd>
-                    {formatNumber(detail.businessCalls1h.totalCount)}
+                    {formatQuotaUsagePair(detail.businessCalls1h.totalCount, detail.businessCalls1h.limit)}
                     <span className="admin-table-value-secondary" style={{ display: 'block' }}>
                       {language === 'zh'
                         ? `成 ${formatNumber(detail.businessCalls1h.successCount)} / 败 ${formatNumber(detail.businessCalls1h.failureCount)}`
@@ -9789,8 +9821,8 @@ function AdminDashboard(): JSX.Element {
         }))
       }}
       options={[
-        { value: 'events', label: alertTabsCopy.events },
         { value: 'groups', label: alertTabsCopy.groups },
+        { value: 'events', label: alertTabsCopy.events },
       ]}
       ariaLabel={moduleDesktopIntro.title}
     />
@@ -10285,6 +10317,7 @@ function AdminDashboard(): JSX.Element {
           recentAlerts={dashboardRecentAlerts}
           onOpenModule={navigateModule}
           onOpenRecentAlerts={openDashboardRecentAlerts}
+          onOpenRecentAlertGroup={openDashboardRecentAlertGroup}
           onOpenToken={navigateToken}
           onOpenKey={navigateKey}
         />

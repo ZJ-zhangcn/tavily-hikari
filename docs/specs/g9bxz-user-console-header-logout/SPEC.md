@@ -4,7 +4,7 @@
 
 - Status: 已实现（待审查）
 - Created: 2026-04-09
-- Last: 2026-04-10
+- Last: 2026-06-27
 
 ## 背景 / 问题陈述
 
@@ -19,10 +19,10 @@
 ### Goals
 
 - 为 `/console` landing 与 token detail 引入用户控制台专属 Hero 页头，不再直接复用后台页头视觉。
-- 页头改为紧凑的用户控制台专属 header，稳定呈现控制台标题、当前视图、账户入口与操作区。
+- 页头改为桌面与移动端都保持单层的用户控制台专属 header，顶部只保留品牌、桌面短副标题与操作区，彻底移除第二行标题/当前视图文案。
 - 复用现有 `POST /api/user/logout` 增加退出登录入口，并在成功退出后返回首页 `/`。
 - 将用户名、provider / admin 身份与退出登录收敛到同一个账户菜单，LinuxDo 会话优先展示头像。
-- 保留并重新排布现有主题切换、语言切换与管理员入口，保证 mobile/admin 紧凑态不裁切且 header 高度不超过 64px。
+- 保留并重新排布现有主题切换、语言切换与管理员入口；桌面端保留显性 theme/language，`small<=767` 与 `compact<=920` 下改为 utility menu 收纳，消除固定 60px 压缩模型。
 - 更新 Storybook、前端测试与 spec 视觉证据，使本轮变更可以稳定验收。
 
 ### Non-goals
@@ -68,7 +68,7 @@
 
 - Given 已登录用户访问 `/console`
   When 页面加载 landing 或 token detail
-  Then 顶部展示用户控制台专属紧凑页头，且能一眼看到标题、当前视图、账户入口与操作区。
+  Then 顶部展示用户控制台专属单行页头，桌面端只保留品牌、eyebrow、短副标题、通知与账户入口，不再出现第二行标题区、固定高度裁切或省略号。
 
 - Given `profile.userLoggedIn === true`
   When 用户点击退出登录
@@ -80,7 +80,11 @@
 
 - Given 管理员用户访问 `/console`
   When 页头同时展示管理员入口、主题/语言切换与账户菜单
-  Then desktop 与 mobile 紧凑态都不出现裁切、挤压失控或按钮不可点击，且页头高度不超过 64px。
+  Then desktop 与 mobile 紧凑态都不出现裁切、挤压失控或按钮不可点击；`compact<=920` 下 utility/account dropdown 不被容器裁切，且页面无横向滚动。
+
+- Given `small<=767` 或 `compact<=920`
+  When 验收者查看用户控制台页头
+  Then 页头保持单层；`small<=767` 首行只保留品牌与通知 / utility / 账户三个入口，主题/语言不再以独立按钮挤在首层。
 
 - Given `console unavailable` 或 admin-only/dev-open-admin 态
   When 页面渲染页头
@@ -109,33 +113,40 @@
 
 ## Visual Evidence
 
-![Storybook desktop user-console hero header](./assets/user-console-header-desktop.png)
+![Storybook desktop user-console header](./assets/user-console-header-desktop.png)
 
-- 证据类型：`source_type=storybook_canvas`，`target_program=mock-only`，`capture_scope=element`
-- 关联 story：`User Console/UserConsole > ConsoleHome`
-- 证明点：desktop 普通用户态页头已改为专属 Hero，稳定展示标题、副标题、当前视图、登录身份，以及主题/语言/退出登录操作。
+- 证据类型：`source_type=storybook_canvas`，`target_program=mock-only`，`capture_scope=browser-viewport`
+- `requested_viewport=1440x420`
+- `viewport_strategy=devtools-emulate`
+- 关联 story：`Console/UserConsoleHeader > storybook_canvas / desktop-landing`
+- 证明点：desktop 页头已收紧为单行 skeleton。桌面首行只保留品牌、eyebrow、短副标题与操作区；第二行标题 / current view chip 已彻底删除，且页头文案不使用省略号。
 
-![Storybook mobile admin user-console hero header](./assets/user-console-header-admin-mobile.png)
+![Storybook mobile collapsed user-console header](./assets/user-console-header-mobile-collapsed.png)
 
-- 证据类型：`source_type=storybook_canvas`，`target_program=mock-only`，`capture_scope=element`
-- 关联 story：`User Console/UserConsole > ConsoleHomeAdminMobile`
-- 证明点：mobile/admin 最紧凑布局下，管理员入口收敛进账户菜单，主题/语言切换与账户入口可稳定容纳，无裁切或失控换行。
+- 证据类型：`source_type=storybook_canvas`，`target_program=mock-only`，`capture_scope=browser-viewport`
+- `requested_viewport=0390-device-iphone-14`
+- `viewport_strategy=devtools-emulate`
+- 关联 story：`Console/UserConsoleHeader > storybook_canvas / mobile-collapsed-actions`
+- 证明点：390px 级别下 header 保持单层手机工具壳体，移动端品牌收紧为 icon + 短字标 `Tavily Hikari`，并与 bell / utility / account 三个入口共存；移动端不再展示副标题或额外标签，且页面无横向滚动。
 
-![Storybook token-detail hero header](./assets/user-console-header-token-detail.png)
+![Storybook token-detail user-console header](./assets/user-console-header-token-detail.png)
 
-- 证据类型：`source_type=storybook_canvas`，`target_program=mock-only`，`capture_scope=element`
-- 关联 story：`User Console/UserConsole > TokenDetailOverview`
-- 证明点：token detail 与 landing 共用同一套 Hero 结构，只替换当前视图上下文，不再分叉成独立页头逻辑。
+- 证据类型：`source_type=storybook_canvas`，`target_program=mock-only`，`capture_scope=browser-viewport`
+- `requested_viewport=1440x420`
+- `viewport_strategy=devtools-emulate`
+- 关联 story：`Console/UserConsoleHeader > storybook_canvas / token-detail`
+- 证明点：landing 与 token detail 复用同一单行 header skeleton；token detail 不再向页头追加标题、chip 或详情说明，视觉长度保持受控。
 
-- 浏览器验证：当前 worktree backend `http://127.0.0.1:58087/console` 以本地 seeded 用户会话完成真实链路验证，点击“退出登录”后触发 `POST /api/user/logout`（204），随后跳回 `/`，并恢复公开首页的 LinuxDo 登录入口。
+- 浏览器验证：在当前 Storybook 静态预览上，已验证 mobile utility/account dropdown 完整落在 viewport 内，且 `document.documentElement.scrollWidth === clientWidth`。本轮主证据源为 `storybook_canvas`，未再重复抓取真实 `/console` 页面截图。
 
 ## 风险 / 开放问题 / 假设
 
 - 风险：账户菜单同时承载 admin 跳转、退出登录与头像回退逻辑，最窄 mobile/admin 组合仍需持续关注菜单宽度与点击热区。
-- 风险：Storybook 环境若直接点击退出按钮可能离开预览，需要让证据 capture 避免误触。
+- 风险：Storybook 环境若直接点击退出按钮会离开预览，因此本轮浏览器验证只检查 overlay 布局与无滚动，不在 Storybook 里触发真实退出动作。
 - 假设：LinuxDo 会话能稳定提供 `avatar_template`；当头像模板缺失或加载失败时允许降级显示首字母占位。
 
 ## 变更记录（Change log）
 
 - 2026-04-09: 创建 follow-up spec，冻结用户控制台专属 Hero 页头与退出登录的实现边界。
 - 2026-04-10: 同步最终实现范围，补记账户菜单头像与 `userAvatarUrl` 契约。
+- 2026-06-27: 将页头升级为桌面与移动端都保持单层的精简结构，删除第二行标题区，补齐 `UserConsoleHeader` 专属 Storybook proofs、组件测试与最新视觉证据。

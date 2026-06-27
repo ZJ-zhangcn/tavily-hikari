@@ -7,10 +7,12 @@ import { Fragment, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, use
 import type {
   Announcement,
   ApiKeyBulkAction,
+  AdminQuotaLimitSet,
   AdminUnboundTokenUsageSortField,
   AdminUnboundTokenUsageSummary,
   AnalysisPressureSnapshot,
   AdminUserDetail,
+  AdminUserQuotaBreakdownEntry,
   AdminUserSummary,
   AdminUsersSortField,
   AdminUserTag,
@@ -108,6 +110,7 @@ import ModulePlaceholder from '../ModulePlaceholder'
 import SystemSettingsModule from '../SystemSettingsModule'
 import type { ApiKeyBulkSyncProgressState } from '../apiKeyBulkSyncProgress'
 import { retainVisibleApiKeySelection } from '../apiKeySelection'
+import { UsersUsageScreen } from '../screens/UsersUsageScreen'
 import { buildPressureDemoFixture } from '../../api/pressureDemoFixture'
 import {
   forwardProxyStorySavedAt,
@@ -1027,6 +1030,11 @@ const STORY_RECENT_ALERTS: RecentAlertsSummary = {
   windowHours: 24,
   totalEvents: 5,
   groupedCount: 4,
+  groupedCountWindows: [
+    { windowHours: 1, groupedCount: 1 },
+    { windowHours: 24, groupedCount: 4 },
+    { windowHours: 168, groupedCount: 6 },
+  ],
   countsByType: [
     { type: 'upstream_rate_limited_429', count: 1 },
     { type: 'upstream_usage_limit_432', count: 1 },
@@ -1037,12 +1045,84 @@ const STORY_RECENT_ALERTS: RecentAlertsSummary = {
   topGroups: [],
 }
 
-const DEFAULT_LINUXDO_TAG_DELTA = {
+function withQuotaDeltaCanonical<
+  T extends {
+    hourlyAnyDelta: number
+    hourlyDelta: number
+    dailyDelta: number
+    monthlyDelta: number
+  },
+>(value: T): T & Pick<AdminUserTag, 'businessCalls1hDelta' | 'dailyCreditsDelta' | 'monthlyCreditsDelta'> {
+  return {
+    ...value,
+    businessCalls1hDelta: value.hourlyDelta,
+    dailyCreditsDelta: value.dailyDelta,
+    monthlyCreditsDelta: value.monthlyDelta,
+  }
+}
+
+function withAdminUserSummaryCanonical<
+  T extends {
+    quotaDailyUsed: number
+    quotaDailyLimit: number
+    quotaMonthlyUsed: number
+    quotaMonthlyLimit: number
+  },
+>(value: T): T & Pick<AdminUserSummary, 'dailyCreditsUsed' | 'dailyCreditsLimit' | 'monthlyCreditsUsed' | 'monthlyCreditsLimit'> {
+  return {
+    ...value,
+    dailyCreditsUsed: value.quotaDailyUsed,
+    dailyCreditsLimit: value.quotaDailyLimit,
+    monthlyCreditsUsed: value.quotaMonthlyUsed,
+    monthlyCreditsLimit: value.quotaMonthlyLimit,
+  }
+}
+
+function withQuotaLimitCanonical<
+  T extends {
+    hourlyAnyLimit: number
+    hourlyLimit: number
+    dailyLimit: number
+    monthlyLimit: number
+    inheritsDefaults: boolean
+  },
+>(value: T): T & AdminQuotaLimitSet {
+  return {
+    ...value,
+    businessCalls1hLimit: value.hourlyLimit,
+    dailyCreditsLimit: value.dailyLimit,
+    monthlyCreditsLimit: value.monthlyLimit,
+  }
+}
+
+function withQuotaBreakdownCanonical<
+  T extends {
+    kind: string
+    label: string
+    tagId: string | null
+    tagName: string | null
+    source: string | null
+    effectKind: string
+    hourlyAnyDelta: number
+    hourlyDelta: number
+    dailyDelta: number
+    monthlyDelta: number
+  },
+>(value: T): T & AdminUserQuotaBreakdownEntry {
+  return {
+    ...value,
+    businessCalls1hDelta: value.hourlyDelta,
+    dailyCreditsDelta: value.dailyDelta,
+    monthlyCreditsDelta: value.monthlyDelta,
+  }
+}
+
+const DEFAULT_LINUXDO_TAG_DELTA = withQuotaDeltaCanonical({
   hourlyAnyDelta: 500,
   hourlyDelta: 100,
   dailyDelta: 500,
   monthlyDelta: 5_000,
-} as const
+} as const)
 
 const MOCK_TAG_CATALOG: AdminUserTag[] = [
   {
@@ -1095,7 +1175,7 @@ const MOCK_TAG_CATALOG: AdminUserTag[] = [
     ...DEFAULT_LINUXDO_TAG_DELTA,
     userCount: 1,
   },
-  {
+  withQuotaDeltaCanonical({
     id: 'team_lead',
     name: 'team_lead',
     displayName: 'Team Lead',
@@ -1107,8 +1187,8 @@ const MOCK_TAG_CATALOG: AdminUserTag[] = [
     dailyDelta: 2_000,
     monthlyDelta: 100_000,
     userCount: 1,
-  },
-  {
+  }),
+  withQuotaDeltaCanonical({
     id: 'debt_cap',
     name: 'debt_cap',
     displayName: 'Debt Cap',
@@ -1120,8 +1200,8 @@ const MOCK_TAG_CATALOG: AdminUserTag[] = [
     dailyDelta: -1_000,
     monthlyDelta: -700_000,
     userCount: 1,
-  },
-  {
+  }),
+  withQuotaDeltaCanonical({
     id: 'suspended_manual',
     name: 'suspended_manual',
     displayName: 'Suspended',
@@ -1133,7 +1213,7 @@ const MOCK_TAG_CATALOG: AdminUserTag[] = [
     dailyDelta: 0,
     monthlyDelta: 0,
     userCount: 1,
-  },
+  }),
 ]
 
 const MOCK_ALICE_TAGS: AdminUserTagBinding[] = [
@@ -1147,7 +1227,7 @@ const MOCK_ALICE_TAGS: AdminUserTagBinding[] = [
     ...DEFAULT_LINUXDO_TAG_DELTA,
     source: 'system_linuxdo',
   },
-  {
+  withQuotaDeltaCanonical({
     tagId: 'team_lead',
     name: 'team_lead',
     displayName: 'Team Lead',
@@ -1159,8 +1239,8 @@ const MOCK_ALICE_TAGS: AdminUserTagBinding[] = [
     dailyDelta: 2_000,
     monthlyDelta: 100_000,
     source: 'manual',
-  },
-  {
+  }),
+  withQuotaDeltaCanonical({
     tagId: 'debt_cap',
     name: 'debt_cap',
     displayName: 'Debt Cap',
@@ -1172,7 +1252,7 @@ const MOCK_ALICE_TAGS: AdminUserTagBinding[] = [
     dailyDelta: -1_000,
     monthlyDelta: -700_000,
     source: 'manual',
-  },
+  }),
 ]
 
 const MOCK_BOB_TAGS: AdminUserTagBinding[] = [
@@ -1186,7 +1266,7 @@ const MOCK_BOB_TAGS: AdminUserTagBinding[] = [
     ...DEFAULT_LINUXDO_TAG_DELTA,
     source: 'system_linuxdo',
   },
-  {
+  withQuotaDeltaCanonical({
     tagId: 'suspended_manual',
     name: 'suspended_manual',
     displayName: 'Suspended',
@@ -1198,11 +1278,11 @@ const MOCK_BOB_TAGS: AdminUserTagBinding[] = [
     dailyDelta: 0,
     monthlyDelta: 0,
     source: 'manual',
-  },
+  }),
 ]
 
 const MOCK_USERS: AdminUserSummary[] = [
-  {
+  withAdminUserSummaryCanonical({
     userId: 'usr_alice',
     displayName: 'Alice Wang',
     username: 'alice',
@@ -1212,7 +1292,7 @@ const MOCK_USERS: AdminUserSummary[] = [
     apiKeyCount: 3,
     tags: MOCK_ALICE_TAGS,
     requestRate: createRequestRate(58, 60, 'user'),
-    businessCalls1h: { successCount: 34, failureCount: 2, totalCount: 36, windowMinutes: 60 },
+    businessCalls1h: { successCount: 34, failureCount: 2, totalCount: 36, limit: 120, windowMinutes: 60 },
     hourlyAnyUsed: 58,
     hourlyAnyLimit: 60,
     quotaHourlyUsed: 1_118,
@@ -1230,8 +1310,8 @@ const MOCK_USERS: AdminUserSummary[] = [
     recentIpCount24h: 4,
     recentIpCount7d: 4,
     lastActivity: now - 25,
-  },
-  {
+  }),
+  withAdminUserSummaryCanonical({
     userId: 'usr_bob',
     displayName: 'Bob Chen',
     username: 'bob',
@@ -1241,7 +1321,7 @@ const MOCK_USERS: AdminUserSummary[] = [
     apiKeyCount: 2,
     tags: MOCK_BOB_TAGS,
     requestRate: createRequestRate(60, 60, 'user'),
-    businessCalls1h: { successCount: 58, failureCount: 4, totalCount: 62, windowMinutes: 60 },
+    businessCalls1h: { successCount: 58, failureCount: 4, totalCount: 62, limit: 60, windowMinutes: 60 },
     hourlyAnyUsed: 60,
     hourlyAnyLimit: 60,
     quotaHourlyUsed: 602,
@@ -1259,8 +1339,8 @@ const MOCK_USERS: AdminUserSummary[] = [
     recentIpCount24h: 8,
     recentIpCount7d: 11,
     lastActivity: now - 38,
-  },
-  {
+  }),
+  withAdminUserSummaryCanonical({
     userId: 'usr_charlie',
     displayName: 'Charlie Li',
     username: 'charlie',
@@ -1270,7 +1350,7 @@ const MOCK_USERS: AdminUserSummary[] = [
     apiKeyCount: 0,
     tags: [],
     requestRate: createRequestRate(0, 60, 'user'),
-    businessCalls1h: { successCount: 0, failureCount: 0, totalCount: 0, windowMinutes: 60 },
+    businessCalls1h: { successCount: 0, failureCount: 0, totalCount: 0, limit: 500, windowMinutes: 60 },
     hourlyAnyUsed: 0,
     hourlyAnyLimit: 60,
     quotaHourlyUsed: 0,
@@ -1288,7 +1368,7 @@ const MOCK_USERS: AdminUserSummary[] = [
     recentIpCount24h: 0,
     recentIpCount7d: 0,
     lastActivity: null,
-  },
+  }),
 ]
 
 const MOCK_USER_TOKENS: AdminUserTokenSummary[] = [
@@ -1361,7 +1441,7 @@ const MOCK_USER_USAGE_SERIES: Record<AdminUserUsageSeriesKey, AdminUserUsageSeri
   },
   businessCalls1h: {
     kind: 'businessCalls1h',
-    limit: 0,
+    limit: 120,
     points: Array.from({ length: 288 }, (_, index) => ({
       bucketStart: now - (287 - index) * 300,
       bars: {
@@ -1369,7 +1449,7 @@ const MOCK_USER_USAGE_SERIES: Record<AdminUserUsageSeriesKey, AdminUserUsageSeri
         failure: index % 31 === 0 ? 1 : 0,
       },
       pressure: 18 + ((index * 7) % 24),
-      limitValue: null,
+      limitValue: index < 96 ? 80 : index < 192 ? 100 : 120,
     })),
   },
 }
@@ -1446,22 +1526,22 @@ const MOCK_UNBOUND_TOKEN_USAGE: AdminUnboundTokenUsageSummary[] = [
 const MOCK_USER_DETAIL: AdminUserDetail = {
   ...MOCK_USERS[0],
   tokens: MOCK_USER_TOKENS,
-  quotaBase: {
+  quotaBase: withQuotaLimitCanonical({
     hourlyAnyLimit: 1_200,
     hourlyLimit: 1_000,
     dailyLimit: 24_000,
     monthlyLimit: 600_000,
     inheritsDefaults: false,
-  },
-  effectiveQuota: {
+  }),
+  effectiveQuota: withQuotaLimitCanonical({
     hourlyAnyLimit: 1_770,
     hourlyLimit: 1_200,
     dailyLimit: 25_500,
     monthlyLimit: 5_000,
     inheritsDefaults: false,
-  },
+  }),
   quotaBreakdown: [
-    {
+    withQuotaBreakdownCanonical({
       kind: 'base',
       label: 'base',
       tagId: null,
@@ -1472,8 +1552,8 @@ const MOCK_USER_DETAIL: AdminUserDetail = {
       hourlyDelta: 1_000,
       dailyDelta: 24_000,
       monthlyDelta: 600_000,
-    },
-    {
+    }),
+    withQuotaBreakdownCanonical({
       kind: 'tag',
       label: 'L2',
       tagId: 'linuxdo_l2',
@@ -1481,8 +1561,8 @@ const MOCK_USER_DETAIL: AdminUserDetail = {
       source: 'system_linuxdo',
       effectKind: 'quota_delta',
       ...DEFAULT_LINUXDO_TAG_DELTA,
-    },
-    {
+    }),
+    withQuotaBreakdownCanonical({
       kind: 'tag',
       label: 'Team Lead',
       tagId: 'team_lead',
@@ -1493,8 +1573,8 @@ const MOCK_USER_DETAIL: AdminUserDetail = {
       hourlyDelta: 180,
       dailyDelta: 2_000,
       monthlyDelta: 100_000,
-    },
-    {
+    }),
+    withQuotaBreakdownCanonical({
       kind: 'tag',
       label: 'Debt Cap',
       tagId: 'debt_cap',
@@ -1505,8 +1585,8 @@ const MOCK_USER_DETAIL: AdminUserDetail = {
       hourlyDelta: -80,
       dailyDelta: -1_000,
       monthlyDelta: -700_000,
-    },
-    {
+    }),
+    withQuotaBreakdownCanonical({
       kind: 'effective',
       label: 'effective',
       tagId: null,
@@ -1517,7 +1597,7 @@ const MOCK_USER_DETAIL: AdminUserDetail = {
       hourlyDelta: 1_200,
       dailyDelta: 25_500,
       monthlyDelta: 5_000,
-    },
+    }),
   ],
   recentIpAddresses24h: ['203.0.113.7', '198.51.100.10', '198.51.100.44', '2001:db8::42'],
   recentIpAddresses7d: ['203.0.113.7', '198.51.100.10', '198.51.100.44', '2001:db8::42'],
@@ -2545,7 +2625,7 @@ function formatSignedQuotaDelta(value: number): string {
 }
 
 function getUserTagIconSrc(icon: string | null | undefined): string | null {
-  return icon === 'linuxdo' ? '/linuxdo-logo.svg' : null
+  return icon === 'linuxdo' ? '/assets/linuxdo-logo.svg' : null
 }
 
 function isSystemUserTag(tag: { systemKey?: string | null; source?: string | null }): boolean {
@@ -4994,8 +5074,6 @@ function UsersUsagePageCanvas({
   const admin = useAdminTranslations()
   const { language } = useLanguage()
   const users = admin.users
-  const usageDailyRateLabel = language === 'zh' ? users.usage.table.dailySuccessRate : 'Daily'
-  const usageMonthlyRateLabel = language === 'zh' ? users.usage.table.monthlySuccessRate : 'Monthly'
   const [sortField, setSortField] = useState<AdminUsersSortField | null>(null)
   const [sortOrder, setSortOrder] = useState<SortDirection | null>(null)
   const {
@@ -5130,225 +5208,36 @@ function UsersUsagePageCanvas({
           </AdminSidebarUtilityCard>
         </AdminSidebarUtilityStack>
       </AdminShellSidebarUtility>
-
-      <div className="admin-desktop-only">
-        <AdminCompactIntro
-          title={users.usage.title}
-          description={users.usage.description}
-          actions={usageHeaderActions}
-        />
-      </div>
-      <div className="admin-stacked-only">
-        <section className="surface app-header admin-usage-stacked-intro">
-          <div className="admin-usage-stacked-intro-main">
-            <h1>{users.usage.title}</h1>
-            <p className="admin-compact-intro-description">{users.usage.description}</p>
-          </div>
-          <div className="admin-usage-stacked-intro-actions">{usageHeaderActions}</div>
-        </section>
-      </div>
-
-      {usersFilterStatusText && (
-        <p className="panel-description admin-usage-filter-status" data-testid="users-filter-status">
-          {usersFilterStatusText}
-        </p>
-      )}
-
-      <section className="surface panel">
-        <div className="table-wrapper jobs-table-wrapper">
-          {filteredUsers.length === 0 ? (
-            <div className="empty-state alert">{users.empty.none}</div>
-          ) : (
-            <table className="jobs-table admin-users-table admin-users-usage-table">
-              <thead>
-                <tr>
-                  <th>{users.usage.table.user}</th>
-                  <th>{users.usage.table.status}</th>
-                  <StoryAdminUsersSortableHeader
-                    label={users.usage.table.hourlyAny}
-                    field="hourlyAnyUsed"
-                    activeField={effectiveSortField}
-                    activeOrder={effectiveSortOrder}
-                    onToggle={toggleSort}
-                  />
-                  <StoryAdminUsersSortableHeader
-                    label={users.usage.table.hourly}
-                    field="quotaHourlyUsed"
-                    activeField={effectiveSortField}
-                    activeOrder={effectiveSortOrder}
-                    onToggle={toggleSort}
-                  />
-                  <th>{users.usage.table.businessOneHour}</th>
-                  <StoryAdminUsersSortableHeader
-                    label={users.usage.table.daily}
-                    field="quotaDailyUsed"
-                    activeField={effectiveSortField}
-                    activeOrder={effectiveSortOrder}
-                    onToggle={toggleSort}
-                  />
-                  <StoryAdminUsersSortableHeader
-                    label={users.usage.table.monthly}
-                    field="quotaMonthlyUsed"
-                    activeField={effectiveSortField}
-                    activeOrder={effectiveSortOrder}
-                    onToggle={toggleSort}
-                  />
-                  <StoryAdminUsersSortableHeader
-                    label={users.usage.table.monthlyBroken}
-                    field="monthlyBrokenCount"
-                    activeField={effectiveSortField}
-                    activeOrder={effectiveSortOrder}
-                    onToggle={toggleSort}
-                  />
-                  <StoryAdminUsersSortableHeader
-                    label={users.usage.table.ipCount}
-                    field="recentIpCount7d"
-                    activeField={effectiveSortField}
-                    activeOrder={effectiveSortOrder}
-                    onToggle={toggleSort}
-                  />
-                  <StoryAdminUsersSortableHeader
-                    label={users.usage.table.dailySuccessRate}
-                    displayLabel={usageDailyRateLabel}
-                    field="dailySuccessRate"
-                    activeField={effectiveSortField}
-                    activeOrder={effectiveSortOrder}
-                    onToggle={toggleSort}
-                  />
-                  <StoryAdminUsersSortableHeader
-                    label={users.usage.table.monthlySuccessRate}
-                    displayLabel={usageMonthlyRateLabel}
-                    field="monthlySuccessRate"
-                    activeField={effectiveSortField}
-                    activeOrder={effectiveSortOrder}
-                    onToggle={toggleSort}
-                  />
-                  <StoryAdminUsersSortableHeader
-                    label={users.usage.table.lastUsed}
-                    field="lastActivity"
-                    activeField={effectiveSortField}
-                    activeOrder={effectiveSortOrder}
-                    onToggle={toggleSort}
-                  />
-                </tr>
-              </thead>
-              <tbody>
-                {sortedUsers.map((item) => {
-                  const requestRate = resolveRequestRate(item, 'user')
-                  const requestRateMetric = formatQuotaStackValue(requestRate.used, requestRate.limit)
-                  const hourlyMetric = formatQuotaStackValue(item.quotaHourlyUsed, item.quotaHourlyLimit)
-                  const businessCalls1hMetric = formatBusinessCalls1hStackValue(
-                    item.businessCalls1h.successCount,
-                    item.businessCalls1h.failureCount,
-                    language,
-                  )
-                  const dailyQuotaMetric = formatQuotaStackValue(item.quotaDailyUsed, item.quotaDailyLimit)
-                  const monthlyQuotaMetric = formatQuotaStackValue(item.quotaMonthlyUsed, item.quotaMonthlyLimit)
-                  const monthlyBrokenMetric = formatMonthlyBrokenStackValue(
-                    item.monthlyBrokenCount,
-                    item.monthlyBrokenLimit,
-                  )
-                  const dailySuccessMetric = formatSuccessRateStackValue(item.dailySuccess, item.dailyFailure, language)
-                  const monthlySuccessMetric = formatSuccessRateStackValue(item.monthlySuccess, item.monthlyFailure, language)
-                  const lastActivityMetric = formatStackedTimestamp(item.lastActivity, language)
-                  const userLabel = item.displayName || item.username || item.userId
-                  return (
-                    <tr key={item.userId}>
-                      <td className="admin-users-identity-cell">
-                        <button
-                          type="button"
-                          className="link-button admin-users-identity-button"
-                          aria-label={users.actions.view}
-                          onClick={() => openAdminStory('admin-pages--user-detail')}
-                        >
-                          <strong>{item.displayName || item.username || item.userId}</strong>
-                        </button>
-                        <div className="panel-description admin-users-identity-meta">
-                          <code>{item.userId}</code>
-                          {item.username ? ` · @${item.username}` : ''}
-                        </div>
-                      </td>
-                      <td>
-                        <StatusBadge tone={item.active ? 'success' : 'neutral'}>
-                          {item.active ? users.status.active : users.status.inactive}
-                        </StatusBadge>
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <div className="admin-table-value-stack">
-                          <span className={`admin-table-value-primary${requestRateMetric.primaryClassName ? ` ${requestRateMetric.primaryClassName}` : ''}`}>{requestRateMetric.primary}</span>
-                          <span className="admin-table-value-secondary">{requestRateMetric.secondary}</span>
-                        </div>
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <div className="admin-table-value-stack">
-                          <span className={`admin-table-value-primary${hourlyMetric.primaryClassName ? ` ${hourlyMetric.primaryClassName}` : ''}`}>{hourlyMetric.primary}</span>
-                          <span className="admin-table-value-secondary">{hourlyMetric.secondary}</span>
-                        </div>
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <div className="admin-table-value-stack">
-                          <span className="admin-table-value-primary">{businessCalls1hMetric.primary}</span>
-                          <span className="admin-table-value-secondary">{businessCalls1hMetric.secondary}</span>
-                        </div>
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <div className="admin-table-value-stack">
-                          <span className={`admin-table-value-primary${dailyQuotaMetric.primaryClassName ? ` ${dailyQuotaMetric.primaryClassName}` : ''}`}>{dailyQuotaMetric.primary}</span>
-                          <span className="admin-table-value-secondary">{dailyQuotaMetric.secondary}</span>
-                        </div>
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <div className="admin-table-value-stack">
-                          <span className={`admin-table-value-primary${monthlyQuotaMetric.primaryClassName ? ` ${monthlyQuotaMetric.primaryClassName}` : ''}`}>{monthlyQuotaMetric.primary}</span>
-                          <span className="admin-table-value-secondary">{monthlyQuotaMetric.secondary}</span>
-                        </div>
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <div className="admin-table-value-stack">
-                          <MonthlyBrokenCountTrigger
-                            count={item.monthlyBrokenCount}
-                            onOpen={() =>
-                              setMonthlyBrokenDrawer({
-                                label: userLabel,
-                                items: MOCK_MONTHLY_BROKEN_ITEMS[`user:${item.userId}`] ?? [],
-                              })}
-                            ariaLabel={users.brokenKeys.openDetails.replace('{label}', userLabel)}
-                            className={monthlyBrokenMetric.primaryClassName}
-                          />
-                          <span className="admin-table-value-secondary">{monthlyBrokenMetric.secondary}</span>
-                        </div>
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <span className="admin-table-value-primary">{formatNumber(item.recentIpCount7d)}</span>
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <div className="admin-table-value-stack">
-                          <span className="admin-table-value-primary">{dailySuccessMetric.primary}</span>
-                          <span className="admin-table-value-secondary">{dailySuccessMetric.secondary}</span>
-                        </div>
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <div className="admin-table-value-stack">
-                          <span className="admin-table-value-primary">{monthlySuccessMetric.primary}</span>
-                          <span className="admin-table-value-secondary">{monthlySuccessMetric.secondary}</span>
-                        </div>
-                      </td>
-                      <td className="admin-users-compact-cell">
-                        <div className="admin-table-value-stack">
-                          <span className="admin-table-value-primary">{lastActivityMetric.primary}</span>
-                          {lastActivityMetric.secondary && (
-                            <span className="admin-table-value-secondary">{lastActivityMetric.secondary}</span>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </section>
+      <UsersUsageScreen
+        users={sortedUsers}
+        language={language}
+        usersStrings={users}
+        searchControls={usageHeaderActions}
+        filterStatusText={usersFilterStatusText}
+        loadState="ready"
+        loadingLabel={users.empty.loading}
+        errorLabel={users.empty.none}
+        activeSortField={effectiveSortField}
+        activeSortOrder={effectiveSortOrder}
+        onToggleSort={toggleSort}
+        onOpenUser={() => openAdminStory('admin-pages--user-detail')}
+        onOpenMonthlyBrokenDrawer={(userId, label) =>
+          setMonthlyBrokenDrawer({
+            label,
+            items: MOCK_MONTHLY_BROKEN_ITEMS[`user:${userId}`] ?? [],
+          })}
+        formatNumber={formatNumber}
+        formatTimestamp={formatTimestamp}
+        formatQuotaUsagePair={formatQuotaUsagePair}
+        formatQuotaStackValue={formatQuotaStackValue}
+        formatBusinessCalls1hStackValue={formatBusinessCalls1hStackValue}
+        formatSuccessRateStackValue={formatSuccessRateStackValue}
+        formatCompactSuccessRateValue={formatCompactSuccessRateValue}
+        formatStackedTimestamp={formatStackedTimestamp}
+        formatAdminUserListPrimary={(item) => item.displayName || item.username || item.userId}
+        formatAdminUserListMeta={(item) => (item.displayName && item.username ? `@${item.username}` : null)}
+        formatMonthlyBrokenStackValue={formatMonthlyBrokenStackValue}
+      />
     </AdminPageFrame>
   )
 }
@@ -5918,7 +5807,7 @@ function UserTagsPageCanvas({ editorMode = 'view' }: { editorMode?: StoryTagCard
   )
 }
 function UserDetailPageCanvas({
-  initialUsageSeries = 'quota1h',
+  initialUsageSeries = 'businessCalls1h',
   initialDetail = MOCK_USER_DETAIL,
 }: {
   initialUsageSeries?: AdminUserUsageSeriesKey | 'ip'
@@ -6216,6 +6105,7 @@ function UserDetailPageCanvas({
         <UserDetailQuotaBreakdown
           entries={detail.quotaBreakdown}
           usersStrings={users}
+          language={language}
           formatQuotaLimitValue={formatQuotaLimitValue}
           formatSignedQuotaDelta={formatSignedQuotaDelta}
         />
@@ -6817,6 +6707,15 @@ export const UsersUsage: Story = {
     if (!searchInput) {
       throw new Error('Expected users usage story to render the usage search input.')
     }
+    const headerTexts = Array.from(
+      canvasElement.querySelectorAll<HTMLTableCellElement>('.admin-users-usage-table thead th'),
+    ).map((cell) => cell.textContent?.replace(/\s+/g, ' ').trim() ?? '')
+    if (headerTexts.filter((text) => text === '1h').length !== 1) {
+      throw new Error('Expected users usage story to expose exactly one 1h column.')
+    }
+    if (!headerTexts.includes('5m 限流')) {
+      throw new Error('Expected users usage story to keep the 5m rate column.')
+    }
     if (getFirstRenderedUserLabel(canvasElement) !== 'Alice Wang') {
       throw new Error('Expected users usage story to start with Alice Wang as the first rendered row.')
     }
@@ -7075,7 +6974,11 @@ export const UserDetailSharedUsageTooltip: Story = {
 
     const hoverTooltip = canvasElement.querySelector<HTMLElement>('.admin-user-shared-usage-tooltip')
     const tooltipOpenWhileHovering = usagePanel.getAttribute('data-tooltip-open')
-    if (!hoverTooltip?.textContent?.includes('已用') || tooltipOpenWhileHovering !== 'true') {
+    if (
+      !hoverTooltip?.textContent?.includes('压力') ||
+      !hoverTooltip.textContent.includes('上限') ||
+      tooltipOpenWhileHovering !== 'true'
+    ) {
       throw new Error('Expected hovering the shared usage chart to open the floating detail bubble.')
     }
 
@@ -7137,8 +7040,8 @@ export const UserDetail: Story = {
     ) {
       throw new Error('Expected the shared usage panel content to avoid a nested card surface.')
     }
-    if (usagePanel.dataset.loadedSeries !== 'quota1h') {
-      throw new Error(`Expected the default story to lazy-load only quota1h, received ${usagePanel.dataset.loadedSeries ?? '<empty>'}.`)
+    if (usagePanel.dataset.loadedSeries !== 'businessCalls1h') {
+      throw new Error(`Expected the default story to lazy-load only businessCalls1h, received ${usagePanel.dataset.loadedSeries ?? '<empty>'}.`)
     }
     if (canvasElement.textContent?.includes('封禁数限额')) {
       throw new Error('Expected user detail story to hide the per-user blocked-key limit card.')
@@ -7146,7 +7049,7 @@ export const UserDetail: Story = {
     if (canvasElement.textContent?.includes('更早的历史超出可追溯范围')) {
       throw new Error('Expected the shared usage partial-history hint to stay out of the always-visible panel copy.')
     }
-    if (!canvasElement.textContent?.includes('账户共享请求频率、业务额度消耗与 IP 活跃趋势。')) {
+    if (!canvasElement.textContent?.includes('账户共享请求限流、每小时业务请求次数、积分消耗与 IP 活跃趋势。')) {
       throw new Error('Expected the shared usage description to summarize the business metrics without interaction instructions.')
     }
 
@@ -7186,7 +7089,7 @@ export const UserDetail: Story = {
 
     const tabLabels = Array.from(canvasElement.querySelectorAll<HTMLButtonElement>('.admin-user-shared-usage-tabs .segmented-tab'))
       .map((item) => item.textContent?.trim())
-    const expectedTabLabels = ['5m', '1h', '24h', '月', 'IP']
+    const expectedTabLabels = ['5m', '每小时', '24h', '月', 'IP']
     if (tabLabels.join('|') !== expectedTabLabels.join('|')) {
       throw new Error(`Expected shared usage tabs to be ordered ${expectedTabLabels.join(' / ')}, received ${tabLabels.join(' / ')}.`)
     }
@@ -7244,7 +7147,7 @@ export const UserDetail: Story = {
     await new Promise((resolve) => window.setTimeout(resolve, 80))
 
     const loadedSeries = usagePanel.dataset.loadedSeries?.split(',').filter(Boolean) ?? []
-    const expected = ['quota1h', 'rate5m', 'quota24h', 'quotaMonth']
+    const expected = ['businessCalls1h', 'rate5m', 'quota24h', 'quotaMonth']
     if (expected.some((value) => !loadedSeries.includes(value))) {
       throw new Error(`Expected shared usage tabs to lazy-load all series after interaction, received ${loadedSeries.join(',')}.`)
     }
@@ -7338,8 +7241,11 @@ export const UserDetailBusinessCalls1h: Story = {
     if (usagePanel?.dataset.activeSeries !== 'businessCalls1h') {
       throw new Error('Expected the business calls story to open the business 1h tab.')
     }
-    if (!canvasElement.textContent?.includes('业务 1h')) {
-      throw new Error('Expected the business calls story to include the business 1h label.')
+    if (!canvasElement.textContent?.includes('每小时')) {
+      throw new Error('Expected the business calls story to include the hourly tab label.')
+    }
+    if (!canvasElement.textContent?.includes('上限')) {
+      throw new Error('Expected the business calls story legend to expose the historical limit line.')
     }
     if (!canvasElement.textContent?.includes('36')) {
       throw new Error('Expected the business calls story to expose the business 1h total summary.')

@@ -1,3 +1,5 @@
+import '../../test/happydom'
+
 import { describe, expect, it } from 'bun:test'
 import { createElement } from 'react'
 
@@ -188,7 +190,8 @@ describe('AdminPages Storybook proofs', () => {
     )
 
     expect(markup).toContain('最近 24 小时服务器 1 小时窗口压力')
-    expect(markup).toContain('当前 1 小时活跃用户压力曲线')
+    expect(markup).toContain('当前 1 小时活跃用户压力分布曲线')
+    expect(markup).toContain('用户数')
     expect(markup).toContain('最近 7 天服务器小时压力')
     expect(markup).toContain('admin-nav-subitem-active')
     expect(markup).toContain('pressure-analysis-page')
@@ -417,10 +420,11 @@ describe('AdminPages Storybook proofs', () => {
       ),
     )
 
-    expect(markup).toContain('业务 1h')
+    expect(markup).toContain('每小时')
     expect(markup).toContain('36')
     expect(markup).toContain('34')
     expect(markup).toContain('2')
+    expect(markup).toContain('上限')
   })
 
   it('renders the user detail stories with add and delete token controls', () => {

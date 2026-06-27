@@ -610,6 +610,7 @@ function createDemoUser(
       successCount: number
       failureCount: number
       totalCount: number
+      limit: number
       windowMinutes: number
     }
     lastLoginAt: number
@@ -657,6 +658,7 @@ function createDemoUser(
       successCount: Math.max(0, Math.min(hourlyUsed, dailySuccess)),
       failureCount: Math.max(0, Math.min(2, dailyFailure)),
       totalCount: Math.max(0, Math.min(hourlyUsed, dailySuccess) + Math.max(0, Math.min(2, dailyFailure))),
+      limit: hourlyLimit,
       windowMinutes: 60,
     },
     monthlyBrokenCount: userId === 'user-ops' ? 3 : 1,
@@ -1351,6 +1353,11 @@ function demoRecentAlerts() {
     windowHours: 24,
     totalEvents: events.length,
     groupedCount: topGroups.length,
+    groupedCountWindows: [
+      { windowHours: 1, groupedCount: 1 },
+      { windowHours: 24, groupedCount: topGroups.length },
+      { windowHours: 24 * 7, groupedCount: topGroups.length + 3 },
+    ],
     countsByType: [
       { type: 'upstream_usage_limit_432', count: 4 },
       { type: 'user_request_rate_limited', count: 4 },

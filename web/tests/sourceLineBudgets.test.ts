@@ -33,9 +33,9 @@ const EXCEPTIONS = new Map<string, { max: number; reason: string }>([
   [
     'src/api/runtime.ts',
     {
-      max: 3700,
+      max: 3775,
       reason:
-        'API barrel still carries HA source settings, planned cutover node-detail contracts, admin settings, auth-token retention contracts, user-list contracts, source dialog failure normalization, and user-console overview APIs until the proxy API surface is split out.',
+        'API barrel still carries HA source settings, planned cutover node-detail contracts, admin settings, auth-token retention contracts, grouped-alert dashboard summary contracts, user-list contracts, source dialog failure normalization, and user-console overview APIs until the proxy API surface is split out.',
     },
   ],
   [
@@ -52,6 +52,14 @@ const EXCEPTIONS = new Map<string, { max: number; reason: string }>([
       max: 2260,
       reason:
         'The shared admin shell stylesheet now also carries the alerts-center layout refinements while the broader admin surface remains consolidated on the same runtime stylesheet.',
+    },
+  ],
+  [
+    'src/styles/public.css',
+    {
+      max: 2345,
+      reason:
+        'The shared public/runtime stylesheet now also carries the grouped-alert dashboard summary queue, review controls, and supporting shell refinements while those sections remain on the consolidated public surface.',
     },
   ],
   [
@@ -73,25 +81,25 @@ const EXCEPTIONS = new Map<string, { max: number; reason: string }>([
   [
     'src/i18n/translations/en.ts',
     {
-      max: 1575,
+      max: 1595,
       reason:
-        'Admin jobs maintenance copy, the expanded admin rankings grouping/dimension strings, and the auth-token retention settings copy are still stored in the shared English runtime catalog.',
+        'Admin jobs maintenance copy, the expanded admin rankings grouping/dimension strings, the dashboard grouped-alert summary copy, and the auth-token retention settings copy are still stored in the shared English runtime catalog.',
     },
   ],
   [
     'src/i18n/translations/zh.ts',
     {
-      max: 1575,
+      max: 1595,
       reason:
-        'Admin jobs maintenance copy, the expanded admin rankings grouping/dimension strings, and the auth-token retention settings copy are still stored in the shared Chinese runtime catalog.',
+        'Admin jobs maintenance copy, the expanded admin rankings grouping/dimension strings, the dashboard grouped-alert summary copy, and the auth-token retention settings copy are still stored in the shared Chinese runtime catalog.',
     },
   ],
   [
     'src/i18n/types.ts',
     {
-      max: 1760,
+      max: 1775,
       reason:
-        'HA source settings mode-specific failure copy, planned-cutover and node-detail strings, admin jobs maintenance strings, the expanded admin rankings contract, and auth-token retention settings copy remain in the shared catalog contract.',
+        'HA source settings mode-specific failure copy, planned-cutover and node-detail strings, admin jobs maintenance strings, the expanded admin rankings contract, grouped-alert dashboard summary strings, and auth-token retention settings copy remain in the shared catalog contract.',
     },
   ],
   [
@@ -104,7 +112,7 @@ const EXCEPTIONS = new Map<string, { max: number; reason: string }>([
   [
     'src/UserConsole.stories.tsx',
     {
-      max: 1860,
+      max: 1900,
       reason: 'Console Storybook proof still keeps overview, recharge, failover, and token-detail acceptance states on one stable owner-facing story surface.',
     },
   ],
