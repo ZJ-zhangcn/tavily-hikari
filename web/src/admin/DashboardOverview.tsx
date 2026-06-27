@@ -1,7 +1,8 @@
-import { useMemo } from 'react'
+import { useId, useMemo } from 'react'
 
 import type {
   ApiKeyStats,
+  AlertGroup,
   AuthToken,
   DashboardHourlyRequestWindow,
   DashboardMonthSeries,
@@ -11,7 +12,6 @@ import type {
   SummaryWindowsResponse,
 } from '../api'
 import RollingNumber from '../components/RollingNumber'
-import RequestKindBadge from '../components/RequestKindBadge'
 import { StatusBadge, type StatusTone } from '../components/StatusBadge'
 import type { AdminModuleId } from './routes'
 import { Line } from 'react-chartjs-2'
@@ -134,12 +134,30 @@ export interface DashboardOverviewStrings {
   tokenCoverageError: string
   recentAlertsTitle: string
   recentAlertsDescription: string
-  recentAlertsEvents: string
-  recentAlertsGroups: string
+  recentAlertsOverviewTitle: string
+  recentAlertsOverviewSummary: string
+  recentAlertsCurrentWindow: string
+  recentAlertsWindowLabels: {
+    hour1: string
+    hour24: string
+    day7: string
+  }
+  recentAlertsColumns: {
+    alert: string
+    requestKind: string
+    timeRange: string
+    hits: string
+    review: string
+  }
+  recentAlertsHits: string
+  recentAlertsTimeRange: string
   recentAlertsEmpty: string
   recentAlertsOpen: string
+  recentAlertsOpenGroup: string
   recentAlertsTypeLabels: Record<'upstream_rate_limited_429' | 'upstream_usage_limit_432' | 'upstream_key_blocked' | 'user_request_rate_limited' | 'user_quota_exhausted', string>
 }
+
+export type DashboardRecentAlertGroup = AlertGroup
 
 interface DashboardOverviewProps {
   strings: DashboardOverviewStrings
@@ -161,6 +179,7 @@ interface DashboardOverviewProps {
   recentAlerts: RecentAlertsSummary
   onOpenModule: (module: AdminModuleId) => void
   onOpenRecentAlerts: () => void
+  onOpenRecentAlertGroup?: (group: DashboardRecentAlertGroup) => void
   onOpenToken: (id: string) => void
   onOpenKey: (id: string) => void
   initialChartMode?: DashboardHourlyChartMode
@@ -460,6 +479,57 @@ function alertSummaryTone(type: keyof DashboardOverviewStrings['recentAlertsType
   }
 }
 
+function formatAlertRange(timestamp: number): string {
+  const parsed = new Date(timestamp * 1000)
+  const month = String(parsed.getMonth() + 1).padStart(2, '0')
+  const day = String(parsed.getDate()).padStart(2, '0')
+  const hours = String(parsed.getHours()).padStart(2, '0')
+  const minutes = String(parsed.getMinutes()).padStart(2, '0')
+  const seconds = String(parsed.getSeconds()).padStart(2, '0')
+  return `${month}/${day} ${hours}:${minutes}:${seconds}`
+}
+
+function compactWindowCountLabel(
+  strings: DashboardOverviewStrings,
+  windowHours: number,
+): string {
+  switch (windowHours) {
+    case 1:
+      return strings.recentAlertsWindowLabels.hour1.replace('Last ', '').replace('最近 ', '')
+    case 24:
+      return strings.recentAlertsWindowLabels.hour24.replace('Last ', '').replace('最近 ', '')
+    case 24 * 7:
+      return strings.recentAlertsWindowLabels.day7.replace('Last ', '').replace('最近 ', '')
+    default:
+      return `${windowHours}h`
+  }
+}
+
+function normalizeRecentAlertText(value: string | null | undefined): string {
+  return (value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, ' ')
+    .replace(/\s+/g, ' ')
+}
+
+function getRecentAlertHeadline(typeLabel: string, latestTitle: string | null | undefined): string | null {
+  const title = latestTitle?.trim()
+  if (!title) return null
+
+  const normalizedTitle = normalizeRecentAlertText(title)
+  const normalizedType = normalizeRecentAlertText(typeLabel)
+  if (!normalizedTitle) return null
+  if (!normalizedType) return title
+  if (normalizedTitle === normalizedType) return null
+  if (normalizedTitle.includes(normalizedType) || normalizedType.includes(normalizedTitle)) return null
+  return title
+}
+
+function formatAlertDateTimeIso(timestamp: number): string {
+  return new Date(timestamp * 1000).toISOString()
+}
+
 export default function DashboardOverview({
   strings,
   overviewReady,
@@ -480,6 +550,7 @@ export default function DashboardOverview({
   recentAlerts,
   onOpenModule,
   onOpenRecentAlerts,
+  onOpenRecentAlertGroup,
   onOpenToken,
   onOpenKey,
   initialChartMode,
@@ -490,6 +561,10 @@ export default function DashboardOverview({
   chartPersistenceKey,
   chartLabelTimeZone,
 }: DashboardOverviewProps): JSX.Element {
+  const recentAlertsTableId = useId()
+  const recentAlertsAlertHeaderId = `${recentAlertsTableId}-alert`
+  const recentAlertsWindowHeaderId = `${recentAlertsTableId}-window`
+  const recentAlertsReviewHeaderId = `${recentAlertsTableId}-review`
   const disabledTokens = tokens.filter((item) => !item.enabled).slice(0, 5)
   const exhaustedKeys = keys.filter((item) => item.status === 'exhausted').slice(0, 5)
   const failingJobs = jobs
@@ -539,6 +614,14 @@ export default function DashboardOverview({
       action: () => onOpenModule('jobs'),
       actionLabel: strings.recentJobs,
     })
+  }
+
+  const openRecentAlertGroup = (group: DashboardRecentAlertGroup): void => {
+    if (onOpenRecentAlertGroup) {
+      onOpenRecentAlertGroup(group)
+      return
+    }
+    onOpenRecentAlerts()
   }
 
   const hasTodaySummary = todayMetrics.length > 0
@@ -867,7 +950,7 @@ export default function DashboardOverview({
           </div>
           <p className="panel-description">
             {priorityCount > 0
-              ? `${strings.riskDescription} · ${strings.recentAlertsEvents}: ${recentAlerts.totalEvents}`
+              ? `${strings.riskDescription} · ${strings.recentAlertsHits}: ${recentAlerts.groupedCount}`
               : strings.currentStatusDescription}
           </p>
         </div>
@@ -1051,44 +1134,126 @@ export default function DashboardOverview({
           <div className="empty-state alert">{strings.recentAlertsEmpty}</div>
         ) : (
           <div className="dashboard-alerts-summary">
-            <div className="dashboard-alerts-summary__metrics">
-              <article className="dashboard-alerts-summary__metric-card">
-                <span>{strings.recentAlertsEvents}</span>
-                <strong>{recentAlerts.totalEvents}</strong>
-              </article>
-              <article className="dashboard-alerts-summary__metric-card">
-                <span>{strings.recentAlertsGroups}</span>
-                <strong>{recentAlerts.groupedCount}</strong>
-              </article>
-              {recentAlerts.countsByType.map((item) => (
-                <article className="dashboard-alerts-summary__metric-card" key={item.type}>
-                  <span>{strings.recentAlertsTypeLabels[item.type]}</span>
-                  <strong>{item.count}</strong>
-                </article>
-              ))}
-            </div>
-            <div className="dashboard-alerts-summary__groups">
-              {recentAlerts.topGroups.map((group) => (
-                <article key={group.id} className="dashboard-alerts-summary__group-card">
-                  <div className="dashboard-alerts-summary__group-header">
-                    <StatusBadge tone={alertSummaryTone(group.type)}>
-                      {strings.recentAlertsTypeLabels[group.type]}
-                    </StatusBadge>
-                    <strong>{group.subjectLabel}</strong>
-                    <span>x{group.count}</span>
-                  </div>
-                  <div className="dashboard-alerts-summary__group-body">
-                    {group.requestKind ? (
-                      <RequestKindBadge
-                        requestKindKey={group.requestKind.key}
-                        requestKindLabel={group.requestKind.label}
-                        size="sm"
-                      />
+            <div className="dashboard-alerts-summary__overview">
+              <div className="dashboard-alerts-summary__overview-copy">
+                <strong>{strings.recentAlertsOverviewTitle}</strong>
+                <p>{strings.recentAlertsOverviewSummary}</p>
+              </div>
+              <div className="dashboard-alerts-summary__metrics">
+                {recentAlerts.groupedCountWindows.map((item) => (
+                  <article
+                    className="dashboard-alerts-summary__metric-chip"
+                    data-current-window={item.windowHours === recentAlerts.windowHours ? 'true' : undefined}
+                    key={item.windowHours}
+                  >
+                    <span>{compactWindowCountLabel(strings, item.windowHours)}</span>
+                    <strong>{item.groupedCount}</strong>
+                    {item.windowHours === recentAlerts.windowHours ? (
+                      <small>{strings.recentAlertsCurrentWindow}</small>
                     ) : null}
-                    <span>{group.latestEvent.summary}</span>
-                  </div>
-                </article>
-              ))}
+                  </article>
+                ))}
+              </div>
+            </div>
+            <div className="dashboard-alerts-summary__groups" role="table" aria-label={strings.recentAlertsTitle}>
+              <div className="dashboard-alerts-summary__table-head-shell" role="rowgroup">
+                <div className="dashboard-alerts-summary__table-head" role="row">
+                  <span id={recentAlertsAlertHeaderId} role="columnheader">{strings.recentAlertsColumns.alert}</span>
+                  <span id={recentAlertsWindowHeaderId} role="columnheader">{strings.recentAlertsColumns.timeRange}</span>
+                  <span id={recentAlertsReviewHeaderId} role="columnheader">{strings.recentAlertsColumns.review}</span>
+                </div>
+              </div>
+              <div className="dashboard-alerts-summary__table-body" role="rowgroup">
+                {recentAlerts.topGroups.map((group, index) => {
+                  const typeLabel = strings.recentAlertsTypeLabels[group.type]
+                  const headline = getRecentAlertHeadline(typeLabel, group.latestEvent.title)
+                  const rowBaseId = `${recentAlertsTableId}-row-${index}`
+                  const subjectId = `${rowBaseId}-subject`
+                  const summaryId = `${rowBaseId}-summary`
+                  const windowId = `${rowBaseId}-window`
+                  const actionHintId = `${rowBaseId}-action-hint`
+                  const openGroupAriaLabel = `${strings.recentAlertsOpenGroup}: ${group.subjectLabel}`
+
+                  return (
+                    <article key={group.id} className="dashboard-alerts-summary__row" role="row">
+                      <div
+                        className="dashboard-alerts-summary__identity"
+                        role="cell"
+                        aria-labelledby={`${recentAlertsAlertHeaderId} ${subjectId}`}
+                        aria-describedby={summaryId}
+                      >
+                        <span className="dashboard-alerts-summary__field-label" aria-hidden="true">{strings.recentAlertsColumns.alert}</span>
+                        <div className="dashboard-alerts-summary__identity-head">
+                          <strong id={subjectId}>{group.subjectLabel}</strong>
+                          <div className="dashboard-alerts-summary__identity-flags">
+                            <StatusBadge
+                              tone={alertSummaryTone(group.type)}
+                              className="dashboard-alerts-summary__type-badge"
+                            >
+                              {typeLabel}
+                            </StatusBadge>
+                            <StatusBadge
+                              tone={alertSummaryTone(group.type)}
+                              className="dashboard-alerts-summary__count-badge"
+                              title={`${group.count} ${strings.recentAlertsColumns.hits}`}
+                            >
+                              <strong>{group.count}</strong>
+                              <span>{strings.recentAlertsColumns.hits}</span>
+                            </StatusBadge>
+                          </div>
+                        </div>
+                        {group.requestKind ? (
+                          <div className="dashboard-alerts-summary__identity-meta">
+                            <span className="dashboard-alerts-summary__meta-item">
+                              <span className="dashboard-alerts-summary__meta-label">
+                                {strings.recentAlertsColumns.requestKind}
+                              </span>
+                              <span className="dashboard-alerts-summary__meta-value">
+                                {group.requestKind.label}
+                              </span>
+                            </span>
+                          </div>
+                        ) : null}
+                        <div className="dashboard-alerts-summary__identity-copy" id={summaryId}>
+                          {headline ? <span className="dashboard-alerts-summary__headline">{headline}</span> : null}
+                          <span>{group.latestEvent.summary}</span>
+                        </div>
+                      </div>
+                      <div
+                        className="dashboard-alerts-summary__window"
+                        role="cell"
+                        aria-labelledby={`${recentAlertsWindowHeaderId} ${windowId}`}
+                      >
+                        <span className="dashboard-alerts-summary__field-label" aria-hidden="true">{strings.recentAlertsColumns.timeRange}</span>
+                        <strong id={windowId} className="dashboard-alerts-summary__window-range">
+                          <time dateTime={formatAlertDateTimeIso(group.firstSeen)}>{formatAlertRange(group.firstSeen)}</time>
+                          <span className="dashboard-alerts-summary__window-separator" aria-hidden="true">→</span>
+                          <time dateTime={formatAlertDateTimeIso(group.lastSeen)}>{formatAlertRange(group.lastSeen)}</time>
+                        </strong>
+                      </div>
+                      <div
+                        className="dashboard-alerts-summary__action"
+                        role="cell"
+                        aria-labelledby={recentAlertsReviewHeaderId}
+                      >
+                        <span className="dashboard-alerts-summary__field-label" aria-hidden="true">{strings.recentAlertsColumns.review}</span>
+                        <span id={actionHintId} className="sr-only">
+                          {group.subjectLabel} · {formatAlertRange(group.firstSeen)} → {formatAlertRange(group.lastSeen)}
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-ghost btn-sm dashboard-alerts-summary__action-button"
+                          onClick={() => openRecentAlertGroup(group)}
+                          aria-label={openGroupAriaLabel}
+                          aria-describedby={actionHintId}
+                        >
+                          {strings.recentAlertsOpenGroup}
+                        </button>
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
             </div>
           </div>
         )}
