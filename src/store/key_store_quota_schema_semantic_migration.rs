@@ -1,7 +1,10 @@
 impl KeyStore {
-    async fn table_columns_set(&self, table: &str) -> Result<HashSet<String>, ProxyError> {
+    async fn table_columns_set(
+        &self,
+        table: &str,
+    ) -> Result<std::collections::HashSet<String>, ProxyError> {
         if !self.main_table_exists(table).await? {
-            return Ok(HashSet::new());
+            return Ok(std::collections::HashSet::new());
         }
 
         sqlx::query_scalar::<_, String>(&format!(
