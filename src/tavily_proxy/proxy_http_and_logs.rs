@@ -1417,7 +1417,7 @@ impl TavilyProxy {
         let research_request_id = extract_research_request_id_from_path(upstream_path);
         let lease = if let Some(fixed_key_id) = fixed_research_request_key_id {
             self.key_store
-                .try_acquire_affinity_specific_key(fixed_key_id)
+                .try_acquire_specific_key(fixed_key_id)
                 .await?
                 .ok_or(ProxyError::NoAvailableKeys)?
         } else {
