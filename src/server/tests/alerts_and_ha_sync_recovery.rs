@@ -2,6 +2,77 @@ use super::*;
 use super::core_support_and_parsing::*;
 
 #[tokio::test]
+async fn dual_active_peer_sync_does_not_mark_success_when_no_peer_is_reached() {
+    let db_path = temp_db_path("ha-dual-active-no-peer-reached");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-dual-active-no-peer-reached".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("proxy created");
+
+    let closed_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let unreachable_addr = closed_listener.local_addr().unwrap();
+    drop(closed_listener);
+
+    let ha = tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig {
+        mode: tavily_hikari::HaMode::ActiveStandby,
+        node_id: "node-a".to_string(),
+        source_kind: Some(tavily_hikari::HaSourceKind::OriginGroup),
+        source_origin_group_id: Some("og-core".to_string()),
+        core_dual_active: true,
+        peer_nodes: vec![tavily_hikari::HaPeerNodeConfig {
+            node_id: "node-b".to_string(),
+            admin_base_url: format!("http://{unreachable_addr}"),
+            public_origin: "node-b:8787".to_string(),
+            role_hint: tavily_hikari::HaPeerRoleHint::StandbyCandidate,
+        }],
+        ..tavily_hikari::HaConfig::default()
+    });
+    let state = Arc::new(AppState {
+        proxy: proxy.clone(),
+        static_dir: None,
+        forward_auth: ForwardAuthConfig::new(None, None, None, None),
+        forward_auth_enabled: false,
+        builtin_admin: BuiltinAdminAuth::new(false, None, None),
+        linuxdo_oauth: LinuxDoOAuthOptions::disabled(),
+        linuxdo_credit: LinuxDoCreditOptions::disabled(),
+        ha,
+        dev_open_admin: true,
+        usage_base: "http://127.0.0.1:58088".to_string(),
+        api_key_ip_geo_origin: "https://api.country.is".to_string(),
+        dashboard_overview_cache: new_dashboard_overview_cache(),
+    });
+    let client = Client::builder()
+        .timeout(Duration::from_millis(200))
+        .build()
+        .expect("client");
+
+    let err = run_ha_peer_sync_once(&state, &client, "test-token")
+        .await
+        .expect_err("peer sync should fail when no peer can be reached");
+    assert!(
+        err.to_string().contains("reached no peers"),
+        "unexpected peer sync error: {err}"
+    );
+    let status = state.ha.status().await;
+    assert_eq!(
+        status.last_sync_at, None,
+        "failed peer sync must not refresh last_sync_at"
+    );
+    assert_eq!(
+        status.sync_lag_seconds, None,
+        "failed peer sync must not produce a fresh lag"
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+}
+
+#[tokio::test]
 async fn ha_standby_sync_resets_runtime_baseline_after_foreign_key_gap() {
     let control_baseline_ndjson = [
         serde_json::json!({

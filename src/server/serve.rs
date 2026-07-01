@@ -1026,12 +1026,16 @@ async fn run_ha_peer_sync_once(
     let local_node_id = status.node_id.clone();
     let mut peer_views = Vec::new();
     let mut control_source_node_id: Option<String> = None;
-    for peer in state
+    let peer_configs = state
         .ha
         .peer_nodes()
         .into_iter()
         .filter(|peer| peer.node_id != local_node_id)
-    {
+        .collect::<Vec<_>>();
+    if peer_configs.is_empty() {
+        return Err("HA peer sync has no configured peers".into());
+    }
+    for peer in peer_configs {
         match fetch_internal_ha_status(client, &peer, internal_token).await {
             Ok(peer_status) => {
                 if peer_status.allows_full_writes && control_source_node_id.is_none() {
@@ -1049,6 +1053,9 @@ async fn run_ha_peer_sync_once(
                 );
             }
         }
+    }
+    if peer_views.is_empty() {
+        return Err("HA peer sync reached no peers".into());
     }
     for (peer, peer_status) in peer_views {
         let is_control_source =
