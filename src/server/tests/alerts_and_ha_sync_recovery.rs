@@ -1093,3 +1093,131 @@ async fn dual_active_peer_runtime_sync_merges_mutable_quota_counter_deltas() {
     let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
     let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
 }
+
+#[tokio::test]
+async fn dual_active_runtime_counter_exports_only_local_contribution() {
+    let db_path = temp_db_path("ha-dual-active-runtime-local-counter-export");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-dual-active-runtime-local-counter-export".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("proxy created");
+    tavily_hikari::repair_ha_triggers_once(&db_str, tavily_hikari::HaMode::ActiveStandby)
+        .await
+        .expect("repair HA triggers");
+    let pool = connect_sqlite_test_pool(&db_str).await;
+
+    sqlx::query("INSERT OR IGNORE INTO ha_outbox_suppression (id) VALUES ('local')")
+        .execute(&pool)
+        .await
+        .expect("enable HA suppression for fixture setup");
+    sqlx::query(
+        r#"
+        INSERT INTO auth_tokens (id, secret, enabled, created_at)
+        VALUES ('tok-local-counter-export', 'secret-local-counter-export', 1, 1)
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("insert auth token");
+    sqlx::query(
+        r#"
+        INSERT INTO auth_token_quota (token_id, month_start, month_count)
+        VALUES ('tok-local-counter-export', 100, 10)
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("insert imported-only aggregate counter");
+    sqlx::query(
+        r#"
+        INSERT INTO ha_runtime_counter_imports (
+            peer_node_id, resource, resource_id, counter_scope, counter_value, updated_at
+        )
+        VALUES (
+            'node-b',
+            'auth_token_quota',
+            'tok-local-counter-export',
+            '100',
+            10,
+            1
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("insert peer counter shadow");
+    sqlx::query("DELETE FROM ha_outbox_suppression WHERE id = 'local'")
+        .execute(&pool)
+        .await
+        .expect("disable HA suppression");
+    sqlx::query("DELETE FROM ha_runtime_outbox")
+        .execute(&pool)
+        .await
+        .expect("clear fixture outbox");
+
+    sqlx::query(
+        "UPDATE auth_token_quota SET month_count = 15 WHERE token_id = 'tok-local-counter-export'",
+    )
+    .execute(&pool)
+    .await
+    .expect("record local counter contribution");
+
+    let baseline = proxy
+        .export_ha_baseline_ndjson(tavily_hikari::HaSyncChannel::Runtime, "node-a")
+        .await
+        .expect("export runtime baseline");
+    let mut baseline_count = None;
+    for line in baseline.ndjson.lines() {
+        let value: serde_json::Value = serde_json::from_str(line).expect("parse baseline line");
+        if value.get("kind").and_then(serde_json::Value::as_str) != Some("resource")
+            || value.get("resource").and_then(serde_json::Value::as_str)
+                != Some("auth_token_quota")
+        {
+            continue;
+        }
+        let data = value.get("data").expect("baseline resource data");
+        if data.get("token_id").and_then(serde_json::Value::as_str)
+            == Some("tok-local-counter-export")
+        {
+            baseline_count = data.get("month_count").and_then(serde_json::Value::as_i64);
+        }
+    }
+    assert_eq!(
+        baseline_count,
+        Some(5),
+        "runtime baseline must export only local counter contribution"
+    );
+
+    let events = proxy
+        .list_ha_events_after(tavily_hikari::HaSyncChannel::Runtime, 0, 10)
+        .await
+        .expect("list runtime events");
+    let counter_event = events
+        .iter()
+        .find(|event| {
+            event.resource == "auth_token_quota"
+                && event
+                    .payload
+                    .get("token_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("tok-local-counter-export")
+        })
+        .expect("runtime counter event");
+    assert_eq!(
+        counter_event
+            .payload
+            .get("month_count")
+            .and_then(serde_json::Value::as_i64),
+        Some(5),
+        "runtime events must store only local counter contribution"
+    );
+
+    pool.close().await;
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+}

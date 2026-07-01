@@ -407,7 +407,7 @@ impl KeyStore {
             if !self.table_exists(table).await? {
                 continue;
             }
-            let rows = self.fetch_ha_table_json_rows(table).await?;
+            let rows = self.fetch_ha_table_json_rows(channel, table).await?;
             for row in rows {
                 row_count += 1;
                 let row = sanitize_ha_resource_payload(table, row);
@@ -1063,6 +1063,7 @@ impl KeyStore {
 
     async fn fetch_ha_table_json_rows(
         &self,
+        channel: HaSyncChannel,
         table: &str,
     ) -> Result<Vec<serde_json::Value>, ProxyError> {
         let columns = self.table_columns(table).await?;
@@ -1071,15 +1072,9 @@ impl KeyStore {
         }
         let json_args = columns
             .iter()
-            .map(|column| {
-                format!(
-                    "{}, {}",
-                    quote_sqlite_string(column),
-                    quote_sqlite_identifier(column)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
+                .map(|column| ha_export_json_arg(channel, table, None, column))
+                .collect::<Vec<_>>()
+                .join(", ");
         let sql = ha_baseline_select_sql(table, &json_args);
         let rows = sqlx::query_scalar::<_, String>(&sql)
             .fetch_all(&self.pool)
@@ -1372,8 +1367,8 @@ impl KeyStore {
             if columns.is_empty() {
                 continue;
             }
-            let new_json = ha_trigger_json_object("NEW", &columns);
-            let old_json = ha_trigger_json_object("OLD", &columns);
+            let new_json = ha_trigger_json_object(channel, table, "NEW", &columns);
+            let old_json = ha_trigger_json_object(channel, table, "OLD", &columns);
             let new_resource_id = ha_trigger_resource_id("NEW", &columns);
             let old_resource_id = ha_trigger_resource_id("OLD", &columns);
             let table_ident = sqlite_qualified_table_name(table);
@@ -1614,11 +1609,7 @@ impl HaBaselineReadSession {
             let json_args = columns
                 .iter()
                 .map(|column| {
-                    format!(
-                        "{}, {}",
-                        quote_sqlite_string(column),
-                        quote_sqlite_identifier(column)
-                    )
+                    ha_export_json_arg(self.channel, table, None, column)
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
@@ -1849,16 +1840,94 @@ fn sanitize_ha_resource_payload(
     payload
 }
 
-fn ha_trigger_json_object(alias: &str, columns: &[String]) -> String {
+fn ha_column_ref(alias: Option<&str>, column: &str) -> String {
+    match alias {
+        Some(alias) => format!("{alias}.{}", quote_sqlite_identifier(column)),
+        None => quote_sqlite_identifier(column),
+    }
+}
+
+fn ha_runtime_counter_scope_expr(table: &str, alias: Option<&str>) -> Option<(String, String)> {
+    match table {
+        "auth_token_quota" => Some((
+            ha_column_ref(alias, "token_id"),
+            ha_column_ref(alias, "month_start"),
+        )),
+        "account_monthly_quota" => Some((
+            ha_column_ref(alias, "user_id"),
+            ha_column_ref(alias, "month_start"),
+        )),
+        "token_usage_buckets" => {
+            let bucket_start = ha_column_ref(alias, "bucket_start");
+            let granularity = ha_column_ref(alias, "granularity");
+            Some((
+                ha_column_ref(alias, "token_id"),
+                format!("CAST({granularity} AS TEXT) || ':' || CAST({bucket_start} AS TEXT)"),
+            ))
+        }
+        "account_usage_buckets" => {
+            let bucket_start = ha_column_ref(alias, "bucket_start");
+            let granularity = ha_column_ref(alias, "granularity");
+            Some((
+                ha_column_ref(alias, "user_id"),
+                format!("CAST({granularity} AS TEXT) || ':' || CAST({bucket_start} AS TEXT)"),
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn ha_runtime_counter_value_column(table: &str) -> Option<&'static str> {
+    match table {
+        "auth_token_quota" | "account_monthly_quota" => Some("month_count"),
+        "token_usage_buckets" | "account_usage_buckets" => Some("count"),
+        _ => None,
+    }
+}
+
+fn ha_runtime_counter_local_value_expr(
+    channel: HaSyncChannel,
+    table: &str,
+    alias: Option<&str>,
+    column: &str,
+) -> Option<String> {
+    if channel != HaSyncChannel::Runtime || ha_runtime_counter_value_column(table) != Some(column) {
+        return None;
+    }
+    let (resource_id_expr, counter_scope_expr) = ha_runtime_counter_scope_expr(table, alias)?;
+    let value_expr = ha_column_ref(alias, column);
+    let imported_total_expr = format!(
+        "COALESCE((SELECT SUM(counter_value) FROM ha_runtime_counter_imports \
+         WHERE resource = {} \
+           AND resource_id = CAST({resource_id_expr} AS TEXT) \
+           AND counter_scope = CAST({counter_scope_expr} AS TEXT)), 0)",
+        quote_sqlite_string(table)
+    );
+    Some(format!(
+        "MAX(0, COALESCE({value_expr}, 0) - {imported_total_expr})"
+    ))
+}
+
+fn ha_export_json_arg(
+    channel: HaSyncChannel,
+    table: &str,
+    alias: Option<&str>,
+    column: &str,
+) -> String {
+    let value_expr = ha_runtime_counter_local_value_expr(channel, table, alias, column)
+        .unwrap_or_else(|| ha_column_ref(alias, column));
+    format!("{}, {value_expr}", quote_sqlite_string(column))
+}
+
+fn ha_trigger_json_object(
+    channel: HaSyncChannel,
+    table: &str,
+    alias: &str,
+    columns: &[String],
+) -> String {
     let args = columns
         .iter()
-        .map(|column| {
-            format!(
-                "{}, {alias}.{}",
-                quote_sqlite_string(column),
-                quote_sqlite_identifier(column)
-            )
-        })
+        .map(|column| ha_export_json_arg(channel, table, Some(alias), column))
         .collect::<Vec<_>>()
         .join(", ");
     format!("json_object({args})")
