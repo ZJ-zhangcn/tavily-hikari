@@ -82,7 +82,9 @@ def wait_json(url, predicate, label, timeout=30):
 
 
 def bootstrap_dual_active_leader():
-    status, body, _headers, _raw = request("POST", f"{NODE_A}/api/admin/ha/promote", {})
+    status, body, _headers, _raw = request(
+        "POST", f"{NODE_A}/api/admin/ha/promote", {"force": True}
+    )
     if status != 200:
         raise AssertionError(
             f"dual-active bootstrap promote failed: status={status}, body={body}"

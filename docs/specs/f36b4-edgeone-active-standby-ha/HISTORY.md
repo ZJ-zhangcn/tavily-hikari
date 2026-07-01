@@ -14,7 +14,7 @@ Dual-active reduces the service-side blast radius of a node becoming standby whi
 - `ha_full_master_node_id_v1` is the control-plane authority for the current writer.
 - `full_master` remains the only control-plane and full-write node; `standby` may serve core Tavily business in dual-active mode; `recovery` stays fenced.
 - `direct` keeps the legacy active/standby/finalize flow, including `provisional_master`.
-- `planned cutover` in dual-active mode switches the leader key directly; `finalize` is rejected in that route family.
+- `planned cutover` in dual-active mode switches the leader key directly; `finalize` is rejected in that route family, and `promote` is reserved for explicit `force=true` takeover when no reachable peer still owns full writes.
 - Recovery import is mergeable-only. It must not import request or auth-token log rows, and it must not overwrite settings, current quota/token/key state, or rebalance authority state.
 - Non-force promote stays a standby operation on the legacy `direct` path. Active-node promote attempts are rejected so operator error cannot produce a local double-active state.
 

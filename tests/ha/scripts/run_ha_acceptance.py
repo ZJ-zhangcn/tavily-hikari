@@ -125,7 +125,7 @@ def wait_node_role(base, role, timeout=90):
 
 
 def promote_dual_active_leader(base):
-    status, body, _headers = request("POST", f"{base}/api/admin/ha/promote", {})
+    status, body, _headers = request("POST", f"{base}/api/admin/ha/promote", {"force": True})
     assert_status("dual-active bootstrap promote", status, 200)
     assert body["role"] == "full_master", body
     return body

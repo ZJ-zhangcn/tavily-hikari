@@ -116,6 +116,7 @@
 - Added full-master fencing for system settings, upstream key creation, user token management, user quota changes, registration settings, OAuth login start, recharge order creation, and payment notify.
 - Added basic-business fencing for external Tavily HTTP API, MCP root/subpaths, and Tavily usage routes; `standby` and `recovery` return 503 before auth/quota/upstream work.
 - Added dual-active serving eligibility so `standby` can serve core Tavily business when `HA_CORE_DUAL_ACTIVE=1` and the node is on an origin-group route, while `recovery` remains fenced and control-plane writes stay on `full_master`.
+- Restricted dual-active `promote` to explicit `force=true` takeover and reject it when any reachable peer still allows full writes, so routine leader changes must use `planned cutover`.
 - Restricted non-force promote to `standby` callers so an active node cannot demote itself through an accidental promote operation.
 - Added HA schema tables for node state, sync watermarks, failover operations, recovery batches, and EdgeOne audit logs.
 - Extended HA node state storage with direct-origin and source-group columns so the current instance can override the Env/CLI default source without joining HA sync.

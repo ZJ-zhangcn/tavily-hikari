@@ -963,8 +963,73 @@ async fn post_admin_ha_promote(
         return Err((StatusCode::FORBIDDEN, "forbidden".to_string()));
     }
     if state.ha.dual_active_enabled() {
+        if !payload.force.unwrap_or(false) {
+            return Err((
+                StatusCode::CONFLICT,
+                "dual-active promote requires force=true; use planned cutover while the current full_master is reachable".to_string(),
+            ));
+        }
         let node_id = state.ha.status().await.node_id;
         let before = state.ha.status().await;
+        let peers = state
+            .ha
+            .peer_nodes()
+            .into_iter()
+            .filter(|peer| peer.node_id != node_id)
+            .collect::<Vec<_>>();
+        if !peers.is_empty() {
+            let internal_token = state.ha.internal_token().ok_or_else(|| {
+                (
+                    StatusCode::CONFLICT,
+                    "dual-active force promote requires HA_INTERNAL_TOKEN to verify peers"
+                        .to_string(),
+                )
+            })?;
+            let client = Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap_or_else(|_| Client::new());
+            let mut peers_to_update = Vec::new();
+            for peer in peers {
+                match fetch_internal_ha_status(&client, &peer, &internal_token).await {
+                    Ok(peer_status) => {
+                        if peer_status.allows_full_writes
+                            || peer_status.full_master_node_id.as_deref()
+                                == Some(peer.node_id.as_str())
+                        {
+                            return Err((
+                                StatusCode::CONFLICT,
+                                format!(
+                                    "dual-active force promote refused because peer {} still allows full writes; use planned cutover",
+                                    peer.node_id
+                                ),
+                            ));
+                        }
+                        peers_to_update.push(peer);
+                    }
+                    Err(err) => {
+                        tracing::warn!(
+                            component = "ha",
+                            event = "dual_active_force_promote_peer_probe_failed",
+                            peer_node_id = peer.node_id,
+                            err = %err,
+                            "HA dual-active force promote could not probe peer"
+                        );
+                    }
+                }
+            }
+            for peer in peers_to_update {
+                post_internal_ha_leader_update(
+                    &client,
+                    &peer,
+                    &internal_token,
+                    &node_id,
+                    None,
+                )
+                .await
+                .map_err(|err| (StatusCode::BAD_GATEWAY, err))?;
+            }
+        }
         state
             .proxy
             .set_ha_full_master_node_id(&node_id)
@@ -985,12 +1050,13 @@ async fn post_admin_ha_promote(
                 status: tavily_hikari::HaControlPlaneEventStatus::Success,
                 node_id: Some(node_id.clone()),
                 operation_id: None,
-                summary: "Manual promote updated dual-active leader key".to_string(),
+                summary: "Force promote updated dual-active leader key".to_string(),
                 detail: status.message.clone(),
                 technical_details: Some(json!({
                     "fromRole": before.role,
                     "toRole": status.role,
                     "dualActive": true,
+                    "force": true,
                 })),
             },
         )

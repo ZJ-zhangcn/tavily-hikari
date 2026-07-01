@@ -87,7 +87,7 @@ Tavily Hikari 的高可用方案采用核心业务双活 + 控制面单写，而
 - `POST /api/admin/ha/events/ack` 仅内部或管理员认证可调用，请求体必须显式携带 `channel`，用于记录 standby 已应用的该 channel outbox seq。
 - `GET /api/internal/ha/mcp-sessions/:proxy_session_id` 仅供节点间内部控制调用，返回本地或 peer 命中的 active MCP 会话绑定，供 follow-up 和 retry window 继续使用。
 - `GET /api/internal/ha/research-requests/:request_id` 仅供节点间内部控制调用，返回本地或 peer 命中的 `{ key_id, token_id, expires_at }`，供 research 结果拉取路径继续绑定原上游 key。
-- `POST /api/admin/ha/promote` 在 legacy `direct` 路径保持 `provisional_master` 语义；dual-active 下改为更新 `ha_full_master_node_id_v1`。
+- `POST /api/admin/ha/promote` 在 legacy `direct` 路径保持 `provisional_master` 语义；dual-active 下仅作为 `force=true` takeover 入口，必须拒绝普通 promote，且探测到可达 peer 仍允许 full-write 时必须拒绝并要求使用 `planned cutover`。
 - `POST /api/admin/ha/finalize` 在 dual-active 下返回 `409`；legacy `direct` 路径继续保持管理员 finalize 语义。
 - `POST /api/admin/ha/planned-cutover` 在 dual-active 下直接切换 `ha_full_master_node_id_v1`；legacy `direct` 路径仍按现有 EdgeOne 预检 + finalize 流程执行。
 - `GET /api/admin/ha/timeline` 返回最近 7 天 HA 控制面事件，支持 `cursor`、`limit`、`nodeId`、`category` 过滤。
