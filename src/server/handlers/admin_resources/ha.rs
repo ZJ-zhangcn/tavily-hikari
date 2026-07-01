@@ -1453,16 +1453,7 @@ async fn post_admin_ha_planned_cutover(
                 format!("peer {} failed planned cutover precheck", peer.node_id),
             ));
         }
-        let peer_after = post_internal_ha_leader_update(
-            &client,
-            &peer,
-            &internal_token,
-            &peer.node_id,
-            Some(&operation_id),
-        )
-        .await
-        .map_err(|err| (StatusCode::BAD_GATEWAY, err))?;
-        let local_apply = async {
+        let local_fence = async {
             state
                 .proxy
                 .set_ha_full_master_node_id(&peer.node_id)
@@ -1478,26 +1469,81 @@ async fn post_admin_ha_planned_cutover(
             Ok::<tavily_hikari::HaStatusView, (StatusCode, String)>(local_after)
         }
         .await;
-        let local_after = match local_apply {
+        let local_after = match local_fence {
             Ok(status) => status,
             Err((status, err)) => {
-                let rollback_detail = match post_internal_ha_leader_update(
-                    &client,
-                    &peer,
-                    &internal_token,
-                    &local_node_id,
-                    Some(&format!("{operation_id}-rollback")),
-                )
+                let rollback_detail = match async {
+                    state
+                        .proxy
+                        .set_ha_full_master_node_id(&local_node_id)
+                        .await
+                        .map_err(|rollback_err| {
+                            (StatusCode::INTERNAL_SERVER_ERROR, rollback_err.to_string())
+                        })?;
+                    state
+                        .ha
+                        .apply_dual_active_leader(Some(local_node_id.clone()))
+                        .await
+                        .map_err(|rollback_err| {
+                            (StatusCode::INTERNAL_SERVER_ERROR, rollback_err)
+                        })?;
+                    let rollback_status = state.ha.status().await;
+                    persist_ha_status_snapshot(&state, &rollback_status).await?;
+                    Ok::<(), (StatusCode, String)>(())
+                }
                 .await
                 {
-                    Ok(_) => "peer rollback applied".to_string(),
-                    Err(rollback_err) => format!(
-                        "peer rollback failed after local cutover failure: {rollback_err}"
+                    Ok(()) => "local rollback applied".to_string(),
+                    Err((rollback_status, rollback_err)) => format!(
+                        "local rollback failed after fencing failure ({rollback_status}): {rollback_err}"
                     ),
                 };
                 return Err((
                     status,
-                    format!("dual-active local leader switch failed: {err}; {rollback_detail}"),
+                    format!("dual-active local fencing failed: {err}; {rollback_detail}"),
+                ));
+            }
+        };
+        let peer_after = match post_internal_ha_leader_update(
+            &client,
+            &peer,
+            &internal_token,
+            &peer.node_id,
+            Some(&operation_id),
+        )
+        .await
+        {
+            Ok(status) => status,
+            Err(err) => {
+                let rollback_detail = match async {
+                    state
+                        .proxy
+                        .set_ha_full_master_node_id(&local_node_id)
+                        .await
+                        .map_err(|rollback_err| {
+                            (StatusCode::INTERNAL_SERVER_ERROR, rollback_err.to_string())
+                        })?;
+                    state
+                        .ha
+                        .apply_dual_active_leader(Some(local_node_id.clone()))
+                        .await
+                        .map_err(|rollback_err| {
+                            (StatusCode::INTERNAL_SERVER_ERROR, rollback_err)
+                        })?;
+                    let rollback_status = state.ha.status().await;
+                    persist_ha_status_snapshot(&state, &rollback_status).await?;
+                    Ok::<(), (StatusCode, String)>(())
+                }
+                .await
+                {
+                    Ok(()) => "local rollback applied".to_string(),
+                    Err((rollback_status, rollback_err)) => format!(
+                        "local rollback failed after peer update failure ({rollback_status}): {rollback_err}"
+                    ),
+                };
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    format!("{err}; {rollback_detail}"),
                 ));
             }
         };
