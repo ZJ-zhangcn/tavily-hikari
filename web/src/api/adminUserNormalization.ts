@@ -339,7 +339,15 @@ export function normalizeAdminUserDetail(value: unknown): AdminUserDetail {
       : [],
     recharge: isRecordLike(source.recharge)
       ? (source.recharge as unknown as AdminUserDetail['recharge'])
-      : { currentMonthEntitlementCredits: 0, effectiveUntilMonthStart: null, orders: [], entitlements: [] },
+      : {
+          currentMonthEntitlementCredits: 0,
+          currentMonthEntitlementHourlyDelta: 0,
+          currentMonthEntitlementDailyDelta: 0,
+          currentMonthEntitlementMonthlyDelta: 0,
+          effectiveUntilMonthStart: null,
+          orders: [],
+          entitlements: [],
+        },
     entitlements: normalizeAdminUserEntitlements(source.entitlements),
     recentIpAddresses24h: Array.isArray(recentIpAddresses24hSource)
       ? recentIpAddresses24hSource.filter((item: unknown): item is string => typeof item === 'string')

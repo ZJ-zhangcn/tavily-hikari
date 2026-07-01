@@ -271,6 +271,9 @@ struct AdminUserDetailView {
 #[serde(rename_all = "camelCase")]
 struct AdminUserRechargeAuditView {
     current_month_entitlement_credits: i64,
+    current_month_entitlement_hourly_delta: i64,
+    current_month_entitlement_daily_delta: i64,
+    current_month_entitlement_monthly_delta: i64,
     effective_until_month_start: Option<i64>,
     orders: Vec<AdminUserRechargeOrderView>,
     entitlements: Vec<AdminUserRechargeEntitlementView>,
@@ -320,6 +323,12 @@ struct AdminUserRechargeOrderView {
     credits: i64,
     months: i64,
     money: String,
+    quote_month_start: i64,
+    final_money_cents: i64,
+    final_hourly_delta: i64,
+    final_daily_delta: i64,
+    final_monthly_delta: i64,
+    month_end_clamp_applied: bool,
     trade_no: Option<String>,
     payment_url: Option<String>,
     created_at: i64,
@@ -338,6 +347,9 @@ struct AdminUserRechargeEntitlementView {
     out_trade_no: String,
     month_start: i64,
     credits: i64,
+    hourly_delta: i64,
+    daily_delta: i64,
+    monthly_delta: i64,
     created_at: i64,
 }
 
@@ -350,6 +362,12 @@ fn build_admin_user_recharge_order_view(
         credits: order.credits,
         months: order.months,
         money: tavily_hikari::format_linuxdo_credit_money(order.money_cents),
+        quote_month_start: order.quote_month_start,
+        final_money_cents: order.final_money_cents,
+        final_hourly_delta: order.final_hourly_delta,
+        final_daily_delta: order.final_daily_delta,
+        final_monthly_delta: order.final_monthly_delta,
+        month_end_clamp_applied: order.month_end_clamp_applied,
         trade_no: order.trade_no,
         payment_url: order.payment_url,
         created_at: order.created_at,
@@ -370,6 +388,9 @@ fn build_admin_user_recharge_entitlement_view(
         out_trade_no: entitlement.out_trade_no,
         month_start: entitlement.month_start,
         credits: entitlement.credits,
+        hourly_delta: entitlement.hourly_delta,
+        daily_delta: entitlement.daily_delta,
+        monthly_delta: entitlement.monthly_delta,
         created_at: entitlement.created_at,
     }
 }

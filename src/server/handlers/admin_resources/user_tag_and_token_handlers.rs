@@ -830,6 +830,9 @@ async fn get_user_detail(
             .collect(),
         recharge: AdminUserRechargeAuditView {
             current_month_entitlement_credits: recharge.current_month_entitlement_credits,
+            current_month_entitlement_hourly_delta: recharge.current_month_entitlement_hourly_delta,
+            current_month_entitlement_daily_delta: recharge.current_month_entitlement_daily_delta,
+            current_month_entitlement_monthly_delta: recharge.current_month_entitlement_monthly_delta,
             effective_until_month_start: recharge.effective_until_month_start,
             orders: recharge
                 .orders

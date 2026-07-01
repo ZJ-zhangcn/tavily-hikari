@@ -21,7 +21,39 @@
     offer for `1 LDC`
   - `currentMonthStart`: Unix timestamp for current server-local month start in UTC
   - `currentEntitlementCredits`: current month purchased credits
+  - `currentEntitlementHourlyDelta`
+  - `currentEntitlementDailyDelta`
+  - `currentEntitlementMonthlyDelta`
   - `effectiveUntilMonthStart`: latest entitled month start, or `null`
+
+## POST /api/user/recharge/quote
+
+- Auth: `hikari_user_session`
+- Request JSON:
+  - `credits`: positive integer, multiple of `1000`
+    - normal mode: `1000..=20000`, step `1000`
+    - test pricing: additionally allows exactly `1` credit when `months` is exactly `1`
+  - `months`: integer in `1..=12`
+- Response `200`:
+  - `requestedCredits`
+  - `requestedMonths`
+  - `quoteMonthStart`
+  - `remainingDaysInclusive`
+  - `unitCredits`
+  - `unitPriceCents`
+  - `fullMonthHourlyDelta`
+  - `fullMonthDailyDelta`
+  - `fullMonthMonthlyDelta`
+  - `fullMonthMoneyCents`
+  - `currentMonthFinalHourlyDelta`
+  - `currentMonthFinalDailyDelta`
+  - `currentMonthFinalMonthlyDelta`
+  - `currentMonthFinalMoneyCents`
+  - `fullOrderMoneyCents`
+  - `finalOrderMoneyCents`
+  - `monthEndClampApplied`
+  - `orderName`
+  - `schedule[]`: month-by-month final values, full-month baseline, month discount, and clamp reason
 
 ## GET /api/user/recharge/orders
 
@@ -44,6 +76,10 @@
     - test pricing: additionally allows exactly `1` credit when `months` is exactly `1`
   - `months`: integer in `1..=12`
     - test pricing does not allow `1` credit with more than one month
+  - `quote`: complete response payload from `POST /api/user/recharge/quote`
+- Behavior:
+  - Server recomputes the canonical quote and rejects stale/mismatched quote fields.
+  - The stored order keeps both the original requested `credits/months` and final `money/hourly/daily/monthly` values for the quote month.
 - Response `200`:
   - `order`: `RechargeOrder`
   - `paymentUrl`: Linux.do Credit payment URL
@@ -63,13 +99,17 @@
   - Moves payable orders to `paid` and creates monthly recharge entitlements from the payment
     month in `account_entitlements`, mirrored to the legacy recharge entitlement table.
   - Replayed callbacks update notify audit fields only and must not move `refunding`,
-    `refunded`, or `refundOnly` orders back to `paid`.
+    `refunded`, `refundOnly`, or `expired` orders back to `paid`.
+  - If the callback arrives after the quote month has ended, the order becomes `expired` and no entitlement rows are written.
 
 ## GET /api/users/:id
 
 - Change: response adds `recharge` and `entitlements` objects.
 - Shape:
   - `recharge.currentMonthEntitlementCredits`: current-month Linux.do Credit recharge credits only
+  - `recharge.currentMonthEntitlementHourlyDelta`: current-month recharge hourly quota delta
+  - `recharge.currentMonthEntitlementDailyDelta`: current-month recharge daily quota delta
+  - `recharge.currentMonthEntitlementMonthlyDelta`: current-month recharge monthly quota delta
   - `recharge.effectiveUntilMonthStart`: latest recharge-entitled month start, or `null`
   - `recharge.orders`: recent `RechargeOrder[]`
   - `recharge.entitlements`: recent recharge-sourced entitlement rows
@@ -82,7 +122,7 @@
 
 - Auth: admin request.
 - Query:
-  - `scopeKind`: optional `month|permanent`.
+  - `scopeKind`: optional `all|month|permanent`.
   - `startMonth`: optional Unix timestamp, matched against monthly entitlement target month.
   - `endMonthBefore`: optional exclusive Unix timestamp, matched against monthly entitlement target
     month.
@@ -115,7 +155,7 @@
 - Auth: admin request.
 - Query:
   - `user`: optional search across user id/display name/username/order/trade number.
-  - `status`: optional `pending|paid|failed|refunding|refunded|refundOnly|all`.
+  - `status`: optional `pending|paid|failed|expired|refunding|refunded|refundOnly|all`.
   - `startAt`, `endAt`: optional Unix timestamps matched against order creation time.
   - `sort`: `createdAt|paidAt|refundedAt|status`; default `createdAt`.
   - `order`: `asc|desc`; default `desc`.
@@ -126,6 +166,7 @@
   - `items`: flat `AdminRechargeOrder[]`.
   - `groups`: user aggregation rows when `view=user`.
   - `total`, `page`, `perPage`.
+  - `items[]` include final `moneyCents`, `quoteMonthStart`, final `hourly/daily/monthly` deltas, and `monthEndClampApplied`.
 
 ## POST /api/admin/recharges/:out_trade_no/refund
 
@@ -192,10 +233,16 @@
 ## RechargeOrder
 
 - `outTradeNo`
-- `status`: `pending|paid|failed|refunding|refunded|refundOnly`
+- `status`: `pending|paid|failed|expired|refunding|refunded|refundOnly`
 - `credits`
 - `months`
 - `money`
+- `quoteMonthStart`
+- `finalMoneyCents`
+- `finalHourlyDelta`
+- `finalDailyDelta`
+- `finalMonthlyDelta`
+- `monthEndClampApplied`
 - `tradeNo`
 - `paymentUrl`
 - `createdAt`
