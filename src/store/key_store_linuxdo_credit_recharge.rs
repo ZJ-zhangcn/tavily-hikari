@@ -112,6 +112,42 @@ impl KeyStore {
         .execute(&self.pool)
         .await?;
         sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS account_entitlements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL,
+                scope_kind TEXT NOT NULL,
+                month_start INTEGER NOT NULL,
+                business_calls_1h_delta INTEGER NOT NULL,
+                daily_credits_delta INTEGER NOT NULL,
+                monthly_credits_delta INTEGER NOT NULL,
+                backend_note TEXT NOT NULL,
+                frontend_note TEXT NOT NULL,
+                source_kind TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                actor_user_id TEXT,
+                actor_display_name TEXT,
+                created_at INTEGER NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            r#"CREATE INDEX IF NOT EXISTS idx_account_entitlements_user_scope_month
+               ON account_entitlements(user_id, scope_kind, month_start DESC, id DESC)"#,
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
+            r#"CREATE UNIQUE INDEX IF NOT EXISTS idx_account_entitlements_recharge_source_month
+               ON account_entitlements(source_kind, source_id, month_start)
+               WHERE source_kind = 'recharge'"#,
+        )
+        .execute(&self.pool)
+        .await?;
+        sqlx::query(
             r#"CREATE INDEX IF NOT EXISTS idx_linuxdo_credit_recharge_entitlements_user_month
                ON linuxdo_credit_recharge_entitlements(user_id, month_start)"#,
         )
@@ -135,6 +171,33 @@ impl KeyStore {
         }
         self.backfill_linuxdo_credit_recharge_orders_v1().await?;
         self.backfill_linuxdo_credit_recharge_entitlements_v1().await?;
+        sqlx::query(
+            r#"
+            INSERT OR IGNORE INTO account_entitlements (
+                user_id, scope_kind, month_start, business_calls_1h_delta,
+                daily_credits_delta, monthly_credits_delta, backend_note,
+                frontend_note, source_kind, source_id, actor_user_id,
+                actor_display_name, created_at
+            )
+            SELECT
+                user_id,
+                'month',
+                month_start,
+                hourly_delta,
+                daily_delta,
+                monthly_delta,
+                'legacy recharge entitlement backfill',
+                '',
+                'recharge',
+                out_trade_no,
+                NULL,
+                NULL,
+                created_at
+            FROM linuxdo_credit_recharge_entitlements
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 
@@ -265,18 +328,23 @@ impl KeyStore {
         })
     }
 
-    fn linuxdo_credit_recharge_entitlement_from_row(
+    fn account_entitlement_from_row(
         row: &sqlx::sqlite::SqliteRow,
-    ) -> Result<LinuxDoCreditRechargeEntitlement, ProxyError> {
-        Ok(LinuxDoCreditRechargeEntitlement {
+    ) -> Result<AccountEntitlementRecord, ProxyError> {
+        Ok(AccountEntitlementRecord {
             id: row.try_get("id")?,
-            out_trade_no: row.try_get("out_trade_no")?,
             user_id: row.try_get("user_id")?,
+            scope_kind: row.try_get("scope_kind")?,
             month_start: row.try_get("month_start")?,
-            credits: row.try_get("credits")?,
-            hourly_delta: row.try_get("hourly_delta").unwrap_or(0),
-            daily_delta: row.try_get("daily_delta").unwrap_or(0),
-            monthly_delta: row.try_get("monthly_delta").unwrap_or(0),
+            business_calls_1h_delta: row.try_get("business_calls_1h_delta")?,
+            daily_credits_delta: row.try_get("daily_credits_delta")?,
+            monthly_credits_delta: row.try_get("monthly_credits_delta")?,
+            backend_note: row.try_get("backend_note")?,
+            frontend_note: row.try_get("frontend_note")?,
+            source_kind: row.try_get("source_kind")?,
+            source_id: row.try_get("source_id")?,
+            actor_user_id: row.try_get("actor_user_id")?,
+            actor_display_name: row.try_get("actor_display_name")?,
             created_at: row.try_get("created_at")?,
         })
     }
@@ -698,6 +766,32 @@ impl KeyStore {
                 .bind(paid_at)
                 .execute(&mut *tx)
                 .await?;
+                sqlx::query(
+                    r#"
+                    INSERT OR IGNORE INTO account_entitlements (
+                        user_id, scope_kind, month_start, business_calls_1h_delta,
+                        daily_credits_delta, monthly_credits_delta, backend_note,
+                        frontend_note, source_kind, source_id, actor_user_id,
+                        actor_display_name, created_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    "#,
+                )
+                .bind(&order.user_id)
+                .bind(ACCOUNT_ENTITLEMENT_SCOPE_MONTH)
+                .bind(month_start)
+                .bind(order.final_hourly_delta)
+                .bind(order.final_daily_delta)
+                .bind(monthly_delta)
+                .bind(format!("recharge:{out_trade_no}"))
+                .bind("".to_string())
+                .bind(ACCOUNT_ENTITLEMENT_SOURCE_KIND_RECHARGE)
+                .bind(out_trade_no)
+                .bind(Option::<String>::None)
+                .bind(Option::<String>::None)
+                .bind(paid_at)
+                .execute(&mut *tx)
+                .await?;
             }
         }
         tx.commit().await?;
@@ -761,6 +855,11 @@ impl KeyStore {
         .await?;
         if revoke_entitlements {
             sqlx::query("DELETE FROM linuxdo_credit_recharge_entitlements WHERE out_trade_no = ?")
+                .bind(out_trade_no)
+                .execute(&mut *tx)
+                .await?;
+            sqlx::query("DELETE FROM account_entitlements WHERE source_kind = ? AND source_id = ?")
+                .bind(ACCOUNT_ENTITLEMENT_SOURCE_KIND_RECHARGE)
                 .bind(out_trade_no)
                 .execute(&mut *tx)
                 .await?;
@@ -903,14 +1002,19 @@ impl KeyStore {
         let row = sqlx::query(
             r#"
             SELECT
-                COALESCE(SUM(hourly_delta), 0) AS hourly_delta,
-                COALESCE(SUM(daily_delta), 0) AS daily_delta,
-                COALESCE(SUM(monthly_delta), 0) AS monthly_delta
-            FROM linuxdo_credit_recharge_entitlements
-            WHERE user_id = ? AND month_start = ?
+                COALESCE(SUM(business_calls_1h_delta), 0) AS hourly_delta,
+                COALESCE(SUM(daily_credits_delta), 0) AS daily_delta,
+                COALESCE(SUM(monthly_credits_delta), 0) AS monthly_delta
+            FROM account_entitlements
+            WHERE user_id = ?
+              AND scope_kind = ?
+              AND source_kind = ?
+              AND month_start = ?
             "#,
         )
         .bind(user_id)
+        .bind(ACCOUNT_ENTITLEMENT_SCOPE_MONTH)
+        .bind(ACCOUNT_ENTITLEMENT_SOURCE_KIND_RECHARGE)
         .bind(month_start)
         .fetch_one(&self.pool)
         .await?;
@@ -919,17 +1023,6 @@ impl KeyStore {
             daily_delta: row.try_get("daily_delta")?,
             monthly_delta: row.try_get("monthly_delta")?,
         })
-    }
-
-    pub(crate) async fn sum_current_linuxdo_credit_recharge_entitlements_for_month(
-        &self,
-        user_id: &str,
-    ) -> Result<LinuxDoCreditRechargeQuotaDelta, ProxyError> {
-        self.sum_linuxdo_credit_recharge_entitlements_for_month(
-            user_id,
-            start_of_local_month_utc_ts(self.backend_time.local_now()),
-        )
-        .await
     }
 
     pub(crate) async fn sum_linuxdo_credit_recharge_entitlements_for_users(
@@ -941,8 +1034,12 @@ impl KeyStore {
             return Ok(HashMap::new());
         }
         let mut builder = QueryBuilder::new(
-            "SELECT user_id, COALESCE(SUM(hourly_delta), 0) AS hourly_delta, COALESCE(SUM(daily_delta), 0) AS daily_delta, COALESCE(SUM(monthly_delta), 0) AS monthly_delta FROM linuxdo_credit_recharge_entitlements WHERE month_start = ",
+            "SELECT user_id, COALESCE(SUM(business_calls_1h_delta), 0) AS hourly_delta, COALESCE(SUM(daily_credits_delta), 0) AS daily_delta, COALESCE(SUM(monthly_credits_delta), 0) AS monthly_delta FROM account_entitlements WHERE scope_kind = ",
         );
+        builder.push_bind(ACCOUNT_ENTITLEMENT_SCOPE_MONTH);
+        builder.push(" AND source_kind = ");
+        builder.push_bind(ACCOUNT_ENTITLEMENT_SOURCE_KIND_RECHARGE);
+        builder.push(" AND month_start = ");
         builder.push_bind(month_start);
         builder.push(" AND user_id IN (");
         {
@@ -967,15 +1064,34 @@ impl KeyStore {
         Ok(map)
     }
 
-    pub(crate) async fn sum_current_linuxdo_credit_recharge_entitlements_for_users(
+    pub(crate) async fn account_entitlement_summary_for_user(
         &self,
-        user_ids: &[String],
-    ) -> Result<HashMap<String, LinuxDoCreditRechargeQuotaDelta>, ProxyError> {
-        self.sum_linuxdo_credit_recharge_entitlements_for_users(
-            user_ids,
-            start_of_local_month_utc_ts(self.backend_time.local_now()),
+        user_id: &str,
+        current_month_start: i64,
+    ) -> Result<AccountEntitlementSummary, ProxyError> {
+        let current_month_delta = self
+            .sum_account_entitlement_deltas_for_month(user_id, current_month_start)
+            .await?;
+        let current_permanent_delta = self
+            .sum_account_entitlement_deltas_for_scope(user_id, ACCOUNT_ENTITLEMENT_SCOPE_PERMANENT)
+            .await?;
+        let effective_until_month_start = sqlx::query_scalar::<_, Option<i64>>(
+            r#"
+            SELECT MAX(month_start)
+            FROM account_entitlements
+            WHERE user_id = ? AND scope_kind = ?
+            "#,
         )
-        .await
+        .bind(user_id)
+        .bind(ACCOUNT_ENTITLEMENT_SCOPE_MONTH)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(AccountEntitlementSummary {
+            current_month_start,
+            current_month_delta,
+            current_permanent_delta,
+            effective_until_month_start,
+        })
     }
 
     pub(crate) async fn linuxdo_credit_recharge_summary_for_user(
@@ -986,15 +1102,17 @@ impl KeyStore {
         let current_month_entitlement = self
             .sum_linuxdo_credit_recharge_entitlements_for_month(user_id, current_month_start)
             .await?;
-        let effective_until_month_start = sqlx::query_scalar::<_, i64>(
+        let effective_until_month_start = sqlx::query_scalar::<_, Option<i64>>(
             r#"
             SELECT MAX(month_start)
-            FROM linuxdo_credit_recharge_entitlements
-            WHERE user_id = ?
+            FROM account_entitlements
+            WHERE user_id = ? AND scope_kind = ? AND source_kind = ?
             "#,
         )
         .bind(user_id)
-        .fetch_optional(&self.pool)
+        .bind(ACCOUNT_ENTITLEMENT_SCOPE_MONTH)
+        .bind(ACCOUNT_ENTITLEMENT_SOURCE_KIND_RECHARGE)
+        .fetch_one(&self.pool)
         .await?;
         Ok(LinuxDoCreditRechargeSummary {
             current_month_start,
@@ -1006,6 +1124,42 @@ impl KeyStore {
         })
     }
 
+    pub(crate) async fn list_account_entitlements_for_user(
+        &self,
+        user_id: &str,
+        scope_kind: Option<&str>,
+        start_month: Option<i64>,
+        end_month_before: Option<i64>,
+        limit: i64,
+    ) -> Result<Vec<AccountEntitlementRecord>, ProxyError> {
+        let mut builder = QueryBuilder::<Sqlite>::new("SELECT * FROM account_entitlements WHERE user_id = ");
+        builder.push_bind(user_id);
+        if let Some(scope_kind) = scope_kind {
+            builder.push(" AND scope_kind = ");
+            builder.push_bind(scope_kind);
+        }
+        if let Some(start_month) = start_month {
+            builder.push(" AND (scope_kind != ");
+            builder.push_bind(ACCOUNT_ENTITLEMENT_SCOPE_MONTH);
+            builder.push(" OR month_start >= ");
+            builder.push_bind(start_month);
+            builder.push(")");
+        }
+        if let Some(end_month_before) = end_month_before {
+            builder.push(" AND (scope_kind != ");
+            builder.push_bind(ACCOUNT_ENTITLEMENT_SCOPE_MONTH);
+            builder.push(" OR month_start < ");
+            builder.push_bind(end_month_before);
+            builder.push(")");
+        }
+        builder.push(" ORDER BY month_start DESC, id DESC LIMIT ");
+        builder.push_bind(limit.clamp(1, 100));
+        let rows = builder.build().fetch_all(&self.pool).await?;
+        rows.iter()
+            .map(Self::account_entitlement_from_row)
+            .collect()
+    }
+
     pub(crate) async fn list_linuxdo_credit_recharge_entitlements_for_user(
         &self,
         user_id: &str,
@@ -1013,19 +1167,47 @@ impl KeyStore {
     ) -> Result<Vec<LinuxDoCreditRechargeEntitlement>, ProxyError> {
         let rows = sqlx::query(
             r#"
-            SELECT *
-            FROM linuxdo_credit_recharge_entitlements
-            WHERE user_id = ?
-            ORDER BY month_start DESC, id DESC
+            SELECT
+                ae.id,
+                ae.source_id AS out_trade_no,
+                ae.user_id,
+                ae.month_start,
+                COALESCE(le.credits, ae.monthly_credits_delta) AS credits,
+                ae.business_calls_1h_delta AS hourly_delta,
+                ae.daily_credits_delta AS daily_delta,
+                ae.monthly_credits_delta AS monthly_delta,
+                ae.created_at
+            FROM account_entitlements ae
+            LEFT JOIN linuxdo_credit_recharge_entitlements le
+              ON le.out_trade_no = ae.source_id
+             AND le.month_start = ae.month_start
+            WHERE ae.user_id = ?
+              AND ae.scope_kind = ?
+              AND ae.source_kind = ?
+            ORDER BY ae.month_start DESC, ae.id DESC
             LIMIT ?
             "#,
         )
         .bind(user_id)
+        .bind(ACCOUNT_ENTITLEMENT_SCOPE_MONTH)
+        .bind(ACCOUNT_ENTITLEMENT_SOURCE_KIND_RECHARGE)
         .bind(limit.clamp(1, 100))
         .fetch_all(&self.pool)
         .await?;
         rows.iter()
-            .map(Self::linuxdo_credit_recharge_entitlement_from_row)
+            .map(|row| {
+                Ok(LinuxDoCreditRechargeEntitlement {
+                    id: row.try_get("id")?,
+                    out_trade_no: row.try_get("out_trade_no")?,
+                    user_id: row.try_get("user_id")?,
+                    month_start: row.try_get("month_start")?,
+                    credits: row.try_get("credits")?,
+                    hourly_delta: row.try_get("hourly_delta")?,
+                    daily_delta: row.try_get("daily_delta")?,
+                    monthly_delta: row.try_get("monthly_delta")?,
+                    created_at: row.try_get("created_at")?,
+                })
+            })
             .collect()
     }
 
@@ -1039,6 +1221,9 @@ impl KeyStore {
             .await?;
         Ok(LinuxDoCreditRechargeAdminAudit {
             current_month_entitlement_credits: summary.current_month_entitlement_credits,
+            current_month_entitlement_hourly_delta: summary.current_month_entitlement_hourly_delta,
+            current_month_entitlement_daily_delta: summary.current_month_entitlement_daily_delta,
+            current_month_entitlement_monthly_delta: summary.current_month_entitlement_monthly_delta,
             effective_until_month_start: summary.effective_until_month_start,
             orders: self
                 .list_linuxdo_credit_recharge_orders_for_user(user_id, 10)
@@ -1046,6 +1231,168 @@ impl KeyStore {
             entitlements: self
                 .list_linuxdo_credit_recharge_entitlements_for_user(user_id, 24)
                 .await?,
+        })
+    }
+
+    pub(crate) async fn create_account_entitlement(
+        &self,
+        record: &AccountEntitlementRecord,
+    ) -> Result<AccountEntitlementRecord, ProxyError> {
+        let created_id = sqlx::query_scalar::<_, i64>(
+            r#"
+            INSERT INTO account_entitlements (
+                user_id, scope_kind, month_start, business_calls_1h_delta,
+                daily_credits_delta, monthly_credits_delta, backend_note,
+                frontend_note, source_kind, source_id, actor_user_id,
+                actor_display_name, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
+            "#,
+        )
+        .bind(&record.user_id)
+        .bind(&record.scope_kind)
+        .bind(record.month_start)
+        .bind(record.business_calls_1h_delta)
+        .bind(record.daily_credits_delta)
+        .bind(record.monthly_credits_delta)
+        .bind(&record.backend_note)
+        .bind(&record.frontend_note)
+        .bind(&record.source_kind)
+        .bind(&record.source_id)
+        .bind(&record.actor_user_id)
+        .bind(&record.actor_display_name)
+        .bind(record.created_at)
+        .fetch_one(&self.pool)
+        .await?;
+        let mut created = record.clone();
+        created.id = created_id;
+        self.invalidate_account_quota_resolution(&record.user_id).await;
+        self.record_effective_account_quota_snapshot_at(&record.user_id, record.created_at)
+            .await?;
+        Ok(created)
+    }
+
+    pub(crate) async fn sum_account_entitlement_deltas_for_month(
+        &self,
+        user_id: &str,
+        month_start: i64,
+    ) -> Result<LinuxDoCreditRechargeQuotaDelta, ProxyError> {
+        let row = sqlx::query_as::<_, (i64, i64, i64)>(
+            r#"
+            SELECT
+                COALESCE(SUM(business_calls_1h_delta), 0),
+                COALESCE(SUM(daily_credits_delta), 0),
+                COALESCE(SUM(monthly_credits_delta), 0)
+            FROM account_entitlements
+            WHERE user_id = ? AND scope_kind = ? AND month_start = ?
+            "#,
+        )
+        .bind(user_id)
+        .bind(ACCOUNT_ENTITLEMENT_SCOPE_MONTH)
+        .bind(month_start)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(LinuxDoCreditRechargeQuotaDelta {
+            hourly_delta: row.0,
+            daily_delta: row.1,
+            monthly_delta: row.2,
+        })
+    }
+
+    pub(crate) async fn sum_account_entitlement_deltas_for_users(
+        &self,
+        user_ids: &[String],
+        current_month_start: i64,
+    ) -> Result<
+        HashMap<
+            String,
+            (
+                LinuxDoCreditRechargeQuotaDelta,
+                LinuxDoCreditRechargeQuotaDelta,
+            ),
+        >,
+        ProxyError,
+    > {
+        if user_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut builder = QueryBuilder::<Sqlite>::new(
+            r#"
+            SELECT
+                user_id,
+                scope_kind,
+                COALESCE(SUM(business_calls_1h_delta), 0),
+                COALESCE(SUM(daily_credits_delta), 0),
+                COALESCE(SUM(monthly_credits_delta), 0)
+            FROM account_entitlements
+            WHERE user_id IN (
+            "#,
+        );
+        {
+            let mut separated = builder.separated(", ");
+            for user_id in user_ids {
+                separated.push_bind(user_id);
+            }
+        }
+        builder.push(") AND ((scope_kind = ");
+        builder.push_bind(ACCOUNT_ENTITLEMENT_SCOPE_MONTH);
+        builder.push(" AND month_start = ");
+        builder.push_bind(current_month_start);
+        builder.push(") OR scope_kind = ");
+        builder.push_bind(ACCOUNT_ENTITLEMENT_SCOPE_PERMANENT);
+        builder.push(") GROUP BY user_id, scope_kind");
+
+        let rows = builder
+            .build_query_as::<(String, String, i64, i64, i64)>()
+            .fetch_all(&self.pool)
+            .await?;
+        let mut map: HashMap<
+            String,
+            (
+                LinuxDoCreditRechargeQuotaDelta,
+                LinuxDoCreditRechargeQuotaDelta,
+            ),
+        > = HashMap::new();
+        for (user_id, scope_kind, hourly_delta, daily_delta, monthly_delta) in rows {
+            let entry = map.entry(user_id).or_default();
+            let delta = LinuxDoCreditRechargeQuotaDelta {
+                hourly_delta,
+                daily_delta,
+                monthly_delta,
+            };
+            if scope_kind == ACCOUNT_ENTITLEMENT_SCOPE_MONTH {
+                entry.0 = delta;
+            } else if scope_kind == ACCOUNT_ENTITLEMENT_SCOPE_PERMANENT {
+                entry.1 = delta;
+            }
+        }
+        Ok(map)
+    }
+
+    pub(crate) async fn sum_account_entitlement_deltas_for_scope(
+        &self,
+        user_id: &str,
+        scope_kind: &str,
+    ) -> Result<LinuxDoCreditRechargeQuotaDelta, ProxyError> {
+        let row = sqlx::query_as::<_, (i64, i64, i64)>(
+            r#"
+            SELECT
+                COALESCE(SUM(business_calls_1h_delta), 0),
+                COALESCE(SUM(daily_credits_delta), 0),
+                COALESCE(SUM(monthly_credits_delta), 0)
+            FROM account_entitlements
+            WHERE user_id = ? AND scope_kind = ?
+            "#,
+        )
+        .bind(user_id)
+        .bind(scope_kind)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(LinuxDoCreditRechargeQuotaDelta {
+            hourly_delta: row.0,
+            daily_delta: row.1,
+            monthly_delta: row.2,
         })
     }
 }
