@@ -212,8 +212,7 @@ fn ha_can_export_channel(status: &tavily_hikari::HaStatusView, channel: tavily_h
     match channel {
         tavily_hikari::HaSyncChannel::Control => status.allows_full_writes,
         tavily_hikari::HaSyncChannel::Billing | tavily_hikari::HaSyncChannel::Runtime => {
-            status.role == tavily_hikari::HaNodeRole::FullMaster
-                || (status.dual_active_enabled && status.role == tavily_hikari::HaNodeRole::Standby)
+            status.allows_basic_business
         }
     }
 }

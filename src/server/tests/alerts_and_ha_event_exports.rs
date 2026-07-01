@@ -3,8 +3,8 @@ use super::core_support_and_parsing::*;
 use super::upstream_support_and_manual_jobs::*;
 
 #[test]
-fn dual_active_standby_can_export_billing_and_runtime_channels() {
-    let status = tavily_hikari::HaStatusView {
+fn dual_active_standby_exports_billing_and_runtime_only_when_serving() {
+    let mut status = tavily_hikari::HaStatusView {
         mode: tavily_hikari::HaMode::ActiveStandby,
         node_id: "node-b".to_string(),
         node_public_origin: None,
@@ -35,6 +35,23 @@ fn dual_active_standby_can_export_billing_and_runtime_channels() {
         peer_nodes: Vec::new(),
         planned_cutover_eligible: false,
     };
+
+    assert!(!ha_can_export_channel(
+        &status,
+        tavily_hikari::HaSyncChannel::Control
+    ));
+    assert!(!ha_can_export_channel(
+        &status,
+        tavily_hikari::HaSyncChannel::Billing
+    ));
+    assert!(!ha_can_export_channel(
+        &status,
+        tavily_hikari::HaSyncChannel::Runtime
+    ));
+
+    status.full_master_node_id = Some("node-a".to_string());
+    status.allows_basic_business = true;
+    status.message = Some("dual-active standby serving core business".to_string());
 
     assert!(!ha_can_export_channel(
         &status,
