@@ -809,6 +809,7 @@ async fn run_ha_standby_sync_once(
                 channel,
                 response,
                 tavily_hikari::HaBaselineApplyMode::Replace,
+                false,
             )
             .await?;
             next_seq = result.high_watermark;
@@ -925,7 +926,8 @@ async fn run_ha_standby_sync_once(
             )
             .into());
         }
-        let result = match apply_ha_events_response_stream(&state.proxy, channel, response).await {
+        let result =
+            match apply_ha_events_response_stream(&state.proxy, channel, response, false).await {
             Ok(result) => result,
             Err(err) if is_ha_retryable_foreign_key_gap(&*err) => {
                 let reset_detail =
@@ -1132,11 +1134,14 @@ async fn run_ha_sync_once_for_peer(
             } else {
                 tavily_hikari::HaBaselineApplyMode::Replace
             };
+            let preserve_local_runtime_counters = state.ha.dual_active_enabled()
+                && channel == tavily_hikari::HaSyncChannel::Runtime;
             let result = apply_ha_baseline_response_stream(
                 &state.proxy,
                 channel,
                 response,
                 baseline_mode,
+                preserve_local_runtime_counters,
             )
             .await?;
             next_seq = result.high_watermark;
@@ -1225,7 +1230,16 @@ async fn run_ha_sync_once_for_peer(
             )
             .into());
         }
-        let result = match apply_ha_events_response_stream(&state.proxy, channel, response).await {
+        let preserve_local_runtime_counters =
+            state.ha.dual_active_enabled() && channel == tavily_hikari::HaSyncChannel::Runtime;
+        let result = match apply_ha_events_response_stream(
+            &state.proxy,
+            channel,
+            response,
+            preserve_local_runtime_counters,
+        )
+        .await
+        {
             Ok(result) => result,
             Err(err) if is_ha_retryable_foreign_key_gap(&*err) => {
                 let reset_detail = "foreign key gap during events apply; baseline required";
@@ -1354,6 +1368,7 @@ async fn apply_ha_baseline_response_stream(
     channel: tavily_hikari::HaSyncChannel,
     response: reqwest::Response,
     mode: tavily_hikari::HaBaselineApplyMode,
+    preserve_local_runtime_counters: bool,
 ) -> Result<tavily_hikari::HaApplyResult, Box<dyn std::error::Error + Send + Sync>> {
     let started = Instant::now();
     let stream = response
@@ -1363,6 +1378,7 @@ async fn apply_ha_baseline_response_stream(
     let decoder = ZstdDecoder::new(BufReader::new(reader));
     let mut lines = BufReader::new(decoder).lines();
     let mut session = proxy.begin_ha_baseline_apply_with_mode(channel, mode).await?;
+    let mut skipped_rows = 0usize;
     loop {
         let next_line = match lines.next_line().await {
             Ok(next_line) => next_line,
@@ -1376,6 +1392,14 @@ async fn apply_ha_baseline_response_stream(
         };
         let trimmed = line.trim();
         if trimmed.is_empty() {
+            continue;
+        }
+        if preserve_local_runtime_counters
+            && serde_json::from_str::<serde_json::Value>(trimmed)
+                .ok()
+                .is_some_and(|value| should_skip_dual_active_peer_runtime_import(channel, &value))
+        {
+            skipped_rows += 1;
             continue;
         }
         if let Err(err) = session.apply_line(trimmed).await {
@@ -1396,6 +1420,7 @@ async fn apply_ha_baseline_response_stream(
             tavily_hikari::HaBaselineApplyMode::Upsert => "upsert",
         },
         row_count = result.row_count as u64,
+        skipped_rows = skipped_rows as u64,
         payload_bytes = result.payload_bytes as u64,
         outbox_row_count = outbox.row_count,
         outbox_oldest_age_secs = outbox.oldest_age_secs,
@@ -1417,6 +1442,7 @@ async fn apply_ha_events_response_stream(
     proxy: &TavilyProxy,
     channel: tavily_hikari::HaSyncChannel,
     response: reqwest::Response,
+    preserve_local_runtime_counters: bool,
 ) -> Result<tavily_hikari::HaApplyResult, Box<dyn std::error::Error + Send + Sync>> {
     let started = Instant::now();
     let stream = response
@@ -1426,6 +1452,7 @@ async fn apply_ha_events_response_stream(
     let decoder = ZstdDecoder::new(BufReader::new(reader));
     let mut lines = BufReader::new(decoder).lines();
     let mut session = proxy.begin_ha_events_apply(channel).await?;
+    let mut skipped_rows = 0usize;
     loop {
         let next_line = match lines.next_line().await {
             Ok(next_line) => next_line,
@@ -1439,6 +1466,14 @@ async fn apply_ha_events_response_stream(
         };
         let trimmed = line.trim();
         if trimmed.is_empty() {
+            continue;
+        }
+        if preserve_local_runtime_counters
+            && serde_json::from_str::<serde_json::Value>(trimmed)
+                .ok()
+                .is_some_and(|value| should_skip_dual_active_peer_runtime_import(channel, &value))
+        {
+            skipped_rows += 1;
             continue;
         }
         if let Err(err) = session.apply_line(trimmed).await {
@@ -1455,6 +1490,7 @@ async fn apply_ha_events_response_stream(
         elapsed_ms = started.elapsed().as_millis() as u64,
         channel = channel.as_str(),
         row_count = result.row_count as u64,
+        skipped_rows = skipped_rows as u64,
         payload_bytes = result.payload_bytes as u64,
         outbox_row_count = outbox.row_count,
         outbox_oldest_age_secs = outbox.oldest_age_secs,
@@ -1470,6 +1506,33 @@ async fn apply_ha_events_response_stream(
         "ha perf"
     );
     Ok(result)
+}
+
+fn should_skip_dual_active_peer_runtime_import(
+    channel: tavily_hikari::HaSyncChannel,
+    value: &serde_json::Value,
+) -> bool {
+    if channel != tavily_hikari::HaSyncChannel::Runtime {
+        return false;
+    }
+    let resource = match value.get("kind").and_then(serde_json::Value::as_str) {
+        Some("resource") => value.get("resource").and_then(serde_json::Value::as_str),
+        Some("event") => value
+            .get("event")
+            .and_then(serde_json::Value::as_object)
+            .and_then(|event| event.get("resource"))
+            .and_then(serde_json::Value::as_str),
+        _ => None,
+    };
+    resource.is_some_and(|resource| {
+        matches!(
+            resource,
+            "account_monthly_quota"
+                | "account_usage_buckets"
+                | "auth_token_quota"
+                | "token_usage_buckets"
+        )
+    })
 }
 
 fn spawn_ha_edgeone_authority_task(state: Arc<AppState>) {

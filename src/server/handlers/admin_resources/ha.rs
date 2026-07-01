@@ -1515,6 +1515,31 @@ async fn post_admin_ha_planned_cutover(
         {
             Ok(status) => status,
             Err(err) => {
+                match fetch_internal_ha_status(&client, &peer, &internal_token).await {
+                    Ok(peer_status) => {
+                        let peer_promoted = peer_status.full_master_node_id.as_deref()
+                            == Some(peer.node_id.as_str())
+                            || peer_status.role == tavily_hikari::HaNodeRole::FullMaster
+                            || peer_status.allows_full_writes;
+                        if peer_promoted {
+                            return Err((
+                                StatusCode::BAD_GATEWAY,
+                                format!(
+                                    "{err}; peer {} already reports full_master after ambiguous response, local node remains fenced",
+                                    peer.node_id
+                                ),
+                            ));
+                        }
+                    }
+                    Err(reconcile_err) => {
+                        return Err((
+                            StatusCode::BAD_GATEWAY,
+                            format!(
+                                "{err}; peer reconciliation failed ({reconcile_err}); local node remains fenced"
+                            ),
+                        ));
+                    }
+                }
                 let rollback_detail = match async {
                     state
                         .proxy
@@ -1543,7 +1568,9 @@ async fn post_admin_ha_planned_cutover(
                 };
                 return Err((
                     StatusCode::BAD_GATEWAY,
-                    format!("{err}; {rollback_detail}"),
+                    format!(
+                        "{err}; peer status after error confirmed no promotion; {rollback_detail}"
+                    ),
                 ));
             }
         };

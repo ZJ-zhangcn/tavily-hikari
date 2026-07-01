@@ -485,3 +485,268 @@ async fn dual_active_peer_runtime_baseline_does_not_delete_local_rows() {
     let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
     let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
 }
+
+#[tokio::test]
+async fn dual_active_peer_runtime_sync_preserves_local_mutable_quota_counters() {
+    let runtime_baseline_ndjson = [
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "baseline_start",
+            "channel": "runtime",
+            "nodeId": "peer-runtime-counters",
+            "highWatermark": 1
+        })
+        .to_string(),
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "resource",
+            "channel": "runtime",
+            "resource": "auth_token_quota",
+            "op": "upsert",
+            "data": {
+                "token_id": "tok-runtime-preserve",
+                "month_start": 100,
+                "month_count": 99
+            }
+        })
+        .to_string(),
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "resource",
+            "channel": "runtime",
+            "resource": "mcp_sessions",
+            "op": "upsert",
+            "data": {
+                "proxy_session_id": "sess-peer-runtime-baseline",
+                "upstream_session_id": "upstream-peer-runtime-baseline",
+                "upstream_key_id": null,
+                "auth_token_id": null,
+                "user_id": null,
+                "protocol_version": "2025-03-26",
+                "last_event_id": null,
+                "gateway_mode": "upstream_mcp",
+                "experiment_variant": "control",
+                "ab_bucket": null,
+                "routing_subject_hash": null,
+                "fallback_reason": null,
+                "rate_limited_until": null,
+                "last_rate_limited_at": null,
+                "last_rate_limit_reason": null,
+                "created_at": 1,
+                "updated_at": 1,
+                "expires_at": 3600,
+                "revoked_at": null,
+                "revoke_reason": null
+            }
+        })
+        .to_string(),
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "baseline_end",
+            "channel": "runtime",
+            "nodeId": "peer-runtime-counters",
+            "highWatermark": 1,
+            "rowCount": 2
+        })
+        .to_string(),
+    ]
+    .join("\n");
+    let runtime_events_ndjson = [
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "events_start",
+            "channel": "runtime",
+            "after": 1,
+            "limit": 1000
+        })
+        .to_string(),
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "event",
+            "channel": "runtime",
+            "event": {
+                "seq": 2,
+                "resource": "auth_token_quota",
+                "resourceId": "tok-runtime-preserve",
+                "op": "upsert",
+                "payload": {
+                    "token_id": "tok-runtime-preserve",
+                    "month_start": 100,
+                    "month_count": 101
+                },
+                "createdAt": 2,
+                "checksum": null
+            }
+        })
+        .to_string(),
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "event",
+            "channel": "runtime",
+            "event": {
+                "seq": 3,
+                "resource": "mcp_sessions",
+                "resourceId": "sess-peer-runtime-event",
+                "op": "upsert",
+                "payload": {
+                    "proxy_session_id": "sess-peer-runtime-event",
+                    "upstream_session_id": "upstream-peer-runtime-event",
+                    "upstream_key_id": null,
+                    "auth_token_id": null,
+                    "user_id": null,
+                    "protocol_version": "2025-03-26",
+                    "last_event_id": null,
+                    "gateway_mode": "upstream_mcp",
+                    "experiment_variant": "control",
+                    "ab_bucket": null,
+                    "routing_subject_hash": null,
+                    "fallback_reason": null,
+                    "rate_limited_until": null,
+                    "last_rate_limited_at": null,
+                    "last_rate_limit_reason": null,
+                    "created_at": 2,
+                    "updated_at": 2,
+                    "expires_at": 3600,
+                    "revoked_at": null,
+                    "revoke_reason": null
+                },
+                "createdAt": 2,
+                "checksum": null
+            }
+        })
+        .to_string(),
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "events_end",
+            "channel": "runtime",
+            "lastSeq": 3,
+            "eventCount": 2
+        })
+        .to_string(),
+    ]
+    .join("\n");
+    let runtime_baseline_body = zstd::stream::encode_all(runtime_baseline_ndjson.as_bytes(), 0)
+        .expect("encode runtime baseline");
+    let runtime_events_body = zstd::stream::encode_all(runtime_events_ndjson.as_bytes(), 0)
+        .expect("encode runtime events");
+
+    let app = Router::new()
+        .route(
+            "/api/admin/ha/baseline",
+            get(move |_query: Query<std::collections::HashMap<String, String>>| {
+                let runtime_baseline_body = runtime_baseline_body.clone();
+                async move {
+                    Response::builder()
+                        .header("content-encoding", "zstd")
+                        .body(Body::from(runtime_baseline_body))
+                        .expect("runtime baseline response")
+                }
+            }),
+        )
+        .route(
+            "/api/admin/ha/events",
+            get(move |_query: Query<std::collections::HashMap<String, String>>| {
+                let runtime_events_body = runtime_events_body.clone();
+                async move {
+                    Response::builder()
+                        .header("content-encoding", "zstd")
+                        .body(Body::from(runtime_events_body))
+                        .expect("runtime events response")
+                }
+            }),
+        )
+        .route("/api/admin/ha/events/ack", post(|| async { StatusCode::OK }));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let source_addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app.into_make_service())
+            .await
+            .unwrap();
+    });
+
+    let db_path = temp_db_path("ha-dual-active-runtime-preserve-quota");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-dual-active-runtime-preserve-quota".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("proxy created");
+    let pool = connect_sqlite_test_pool(&db_str).await;
+
+    sqlx::query(
+        r#"
+        INSERT INTO auth_tokens (id, secret, enabled, created_at)
+        VALUES ('tok-runtime-preserve', 'secret-runtime-preserve', 1, 1)
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("insert local auth token");
+    sqlx::query(
+        r#"
+        INSERT INTO auth_token_quota (token_id, month_start, month_count)
+        VALUES ('tok-runtime-preserve', 100, 7)
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("insert local auth token quota");
+
+    let ha = tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig {
+        mode: tavily_hikari::HaMode::ActiveStandby,
+        node_id: "node-a".to_string(),
+        source_kind: Some(tavily_hikari::HaSourceKind::OriginGroup),
+        source_origin_group_id: Some("og-core".to_string()),
+        core_dual_active: true,
+        ..tavily_hikari::HaConfig::default()
+    });
+    let state = Arc::new(AppState {
+        proxy: proxy.clone(),
+        static_dir: None,
+        forward_auth: ForwardAuthConfig::new(None, None, None, None),
+        forward_auth_enabled: false,
+        builtin_admin: BuiltinAdminAuth::new(false, None, None),
+        linuxdo_oauth: LinuxDoOAuthOptions::disabled(),
+        linuxdo_credit: LinuxDoCreditOptions::disabled(),
+        ha,
+        dev_open_admin: true,
+        usage_base: "http://127.0.0.1:58088".to_string(),
+        api_key_ip_geo_origin: "https://api.country.is".to_string(),
+        dashboard_overview_cache: new_dashboard_overview_cache(),
+    });
+
+    let client = Client::new();
+    run_ha_sync_once_for_peer(
+        &state,
+        &client,
+        &format!("http://{source_addr}"),
+        "node-b",
+        "test-token",
+        &[tavily_hikari::HaSyncChannel::Runtime],
+    )
+    .await
+    .expect("dual-active peer sync should preserve mutable quota counters");
+
+    let month_count: i64 =
+        sqlx::query_scalar("SELECT month_count FROM auth_token_quota WHERE token_id = ?")
+            .bind("tok-runtime-preserve")
+            .fetch_one(&pool)
+            .await
+            .expect("read local auth token quota");
+    assert_eq!(month_count, 7);
+
+    let imported_sessions: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM mcp_sessions WHERE proxy_session_id IN ('sess-peer-runtime-baseline', 'sess-peer-runtime-event')",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count imported peer sessions");
+    assert_eq!(imported_sessions, 2);
+
+    pool.close().await;
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+}
