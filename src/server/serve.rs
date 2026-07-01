@@ -24,38 +24,7 @@ pub async fn serve(
         builtin_auth_password_hash,
     );
     let ha = tavily_hikari::HaRuntime::new(ha_config);
-    let previous_ha_role = proxy.get_persisted_ha_node_role().await.unwrap_or_else(|err| {
-        tracing::warn!(component = "ha", event = "persisted_role_lookup_failed", err = %err, "HA persisted role lookup warning");
-        None
-    });
-    let persisted_ha_source_settings = proxy.get_ha_source_settings().await.unwrap_or_else(|err| {
-        tracing::warn!(component = "ha", event = "source_settings_lookup_failed", err = %err, "HA source settings lookup warning");
-        None
-    });
-    let startup_ha_status = reconcile_ha_startup_role(&proxy, &ha, previous_ha_role).await;
-    if let Some(settings) = persisted_ha_source_settings.as_ref()
-        && let Err(err) = ha
-            .set_local_source_settings(Some(settings.clone()))
-            .await
-    {
-        tracing::warn!(component = "ha", event = "source_settings_restore_failed", err = %err, "HA source settings restore warning");
-    }
-    if let Err(err) = async {
-        proxy
-            .persist_ha_node_state(
-                &startup_ha_status.node_id,
-                startup_ha_status.role,
-                startup_ha_status.edgeone_origin.as_deref(),
-                startup_ha_status.ha_source_effective.as_ref(),
-                startup_ha_status.message.as_deref(),
-            )
-            .await?;
-        proxy.flush_ha_state_writes().await
-    }
-    .await
-    {
-        tracing::warn!(component = "ha", event = "startup_node_state_persist_failed", err = %err, "HA startup node state persist warning");
-    }
+    let startup_ha_status = initialize_ha_startup_state(&proxy, &ha).await;
     if let Err(err) = sync_forward_proxy_runtime_for_status(proxy.clone(), &startup_ha_status).await {
         tracing::warn!(
             component = "forward_proxy",
@@ -185,6 +154,7 @@ pub async fn serve(
         .route("/api/token/metrics", get(get_token_metrics_public))
         .route("/api/ha/status", get(get_public_ha_status))
         .route("/api/internal/ha/status", get(get_internal_ha_status))
+        .route("/api/internal/ha/leader", post(post_internal_ha_leader))
         .route(
             "/api/internal/ha/mcp-sessions/:proxy_session_id",
             get(get_internal_ha_mcp_session),
@@ -605,6 +575,64 @@ async fn reconcile_ha_startup_role(
     status
 }
 
+async fn initialize_ha_startup_state(
+    proxy: &TavilyProxy,
+    ha: &tavily_hikari::HaRuntime,
+) -> tavily_hikari::HaStatusView {
+    let previous_ha_role = proxy.get_persisted_ha_node_role().await.unwrap_or_else(|err| {
+        tracing::warn!(
+            component = "ha",
+            event = "persisted_role_lookup_failed",
+            err = %err,
+            "HA persisted role lookup warning"
+        );
+        None
+    });
+    let persisted_ha_source_settings = proxy.get_ha_source_settings().await.unwrap_or_else(|err| {
+        tracing::warn!(
+            component = "ha",
+            event = "source_settings_lookup_failed",
+            err = %err,
+            "HA source settings lookup warning"
+        );
+        None
+    });
+    if let Some(settings) = persisted_ha_source_settings
+        && let Err(err) = ha.set_local_source_settings(Some(settings)).await
+    {
+        tracing::warn!(
+            component = "ha",
+            event = "source_settings_restore_failed",
+            err = %err,
+            "HA source settings restore warning"
+        );
+    }
+    // Startup role evaluation must compare against the restored node-local HA source settings.
+    let startup_ha_status = reconcile_ha_startup_role(proxy, ha, previous_ha_role).await;
+    if let Err(err) = async {
+        proxy
+            .persist_ha_node_state(
+                &startup_ha_status.node_id,
+                startup_ha_status.role,
+                startup_ha_status.edgeone_origin.as_deref(),
+                startup_ha_status.ha_source_effective.as_ref(),
+                startup_ha_status.message.as_deref(),
+            )
+            .await?;
+        proxy.flush_ha_state_writes().await
+    }
+    .await
+    {
+        tracing::warn!(
+            component = "ha",
+            event = "startup_node_state_persist_failed",
+            err = %err,
+            "HA startup node state persist warning"
+        );
+    }
+    startup_ha_status
+}
+
 async fn sync_forward_proxy_runtime_for_status(
     proxy: TavilyProxy,
     status: &tavily_hikari::HaStatusView,
@@ -678,7 +706,7 @@ fn spawn_ha_peer_sync_task(state: Arc<AppState>) {
         let client = reqwest::Client::new();
         loop {
             let status = state.ha.status().await;
-            if status.allows_basic_business
+            if ha_peer_sync_should_run(&status)
                 && let Err(err) = run_ha_peer_sync_once(&state, &client, &internal_token).await
             {
                 tracing::warn!(
@@ -691,6 +719,13 @@ fn spawn_ha_peer_sync_task(state: Arc<AppState>) {
             state.proxy.backend_time().sleep(interval).await;
         }
     });
+}
+
+fn ha_peer_sync_should_run(status: &tavily_hikari::HaStatusView) -> bool {
+    matches!(
+        status.role,
+        tavily_hikari::HaNodeRole::FullMaster | tavily_hikari::HaNodeRole::Standby
+    )
 }
 
 fn is_ha_retryable_foreign_key_gap(
@@ -769,7 +804,13 @@ async fn run_ha_standby_sync_once(
                 )
                 .into());
             }
-            let result = apply_ha_baseline_response_stream(&state.proxy, channel, response).await?;
+            let result = apply_ha_baseline_response_stream(
+                &state.proxy,
+                channel,
+                response,
+                tavily_hikari::HaBaselineApplyMode::Replace,
+            )
+            .await?;
             next_seq = result.high_watermark;
             let outbox = state
                 .proxy
@@ -1084,7 +1125,20 @@ async fn run_ha_sync_once_for_peer(
                 )
                 .into());
             }
-            let result = apply_ha_baseline_response_stream(&state.proxy, channel, response).await?;
+            let baseline_mode = if state.ha.dual_active_enabled()
+                && channel != tavily_hikari::HaSyncChannel::Control
+            {
+                tavily_hikari::HaBaselineApplyMode::Upsert
+            } else {
+                tavily_hikari::HaBaselineApplyMode::Replace
+            };
+            let result = apply_ha_baseline_response_stream(
+                &state.proxy,
+                channel,
+                response,
+                baseline_mode,
+            )
+            .await?;
             next_seq = result.high_watermark;
             state
                 .proxy
@@ -1299,6 +1353,7 @@ async fn apply_ha_baseline_response_stream(
     proxy: &TavilyProxy,
     channel: tavily_hikari::HaSyncChannel,
     response: reqwest::Response,
+    mode: tavily_hikari::HaBaselineApplyMode,
 ) -> Result<tavily_hikari::HaApplyResult, Box<dyn std::error::Error + Send + Sync>> {
     let started = Instant::now();
     let stream = response
@@ -1307,7 +1362,7 @@ async fn apply_ha_baseline_response_stream(
     let reader = StreamReader::new(stream);
     let decoder = ZstdDecoder::new(BufReader::new(reader));
     let mut lines = BufReader::new(decoder).lines();
-    let mut session = proxy.begin_ha_baseline_apply(channel).await?;
+    let mut session = proxy.begin_ha_baseline_apply_with_mode(channel, mode).await?;
     loop {
         let next_line = match lines.next_line().await {
             Ok(next_line) => next_line,
@@ -1336,6 +1391,10 @@ async fn apply_ha_baseline_response_stream(
         event = "baseline_import_completed",
         elapsed_ms = started.elapsed().as_millis() as u64,
         channel = channel.as_str(),
+        baseline_mode = match mode {
+            tavily_hikari::HaBaselineApplyMode::Replace => "replace",
+            tavily_hikari::HaBaselineApplyMode::Upsert => "upsert",
+        },
         row_count = result.row_count as u64,
         payload_bytes = result.payload_bytes as u64,
         outbox_row_count = outbox.row_count,

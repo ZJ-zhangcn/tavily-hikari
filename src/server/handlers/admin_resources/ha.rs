@@ -79,6 +79,13 @@ struct InternalHaFinalizeRequest {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct InternalHaLeaderUpdateRequest {
+    full_master_node_id: String,
+    operation_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PlannedCutoverResponse {
     operation_id: String,
     status: String,
@@ -205,7 +212,10 @@ fn ha_can_export_channel(status: &tavily_hikari::HaStatusView, channel: tavily_h
     match channel {
         tavily_hikari::HaSyncChannel::Control => status.allows_full_writes,
         tavily_hikari::HaSyncChannel::Billing | tavily_hikari::HaSyncChannel::Runtime => {
-            status.allows_basic_business
+            matches!(
+                status.role,
+                tavily_hikari::HaNodeRole::FullMaster | tavily_hikari::HaNodeRole::Standby
+            )
         }
     }
 }
@@ -291,6 +301,36 @@ async fn fetch_internal_ha_status(
         .json::<tavily_hikari::HaStatusView>()
         .await
         .map_err(|err| format!("peer {} returned invalid HA status: {err}", peer.node_id))
+}
+
+async fn post_internal_ha_leader_update(
+    client: &Client,
+    peer: &tavily_hikari::HaPeerNodeConfig,
+    internal_token: &str,
+    full_master_node_id: &str,
+    operation_id: Option<&str>,
+) -> Result<tavily_hikari::HaStatusView, String> {
+    let response = client
+        .post(format!("{}/api/internal/ha/leader", peer.admin_base_url))
+        .header("x-ha-internal-token", internal_token)
+        .json(&InternalHaLeaderUpdateRequest {
+            full_master_node_id: full_master_node_id.to_string(),
+            operation_id: operation_id.map(str::to_string),
+        })
+        .send()
+        .await
+        .map_err(|err| format!("dual-active peer leader update failed: {err}"))?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let detail = response.text().await.unwrap_or_default();
+        return Err(format!(
+            "dual-active peer leader update failed with {status}: {detail}"
+        ));
+    }
+    response
+        .json::<tavily_hikari::HaStatusView>()
+        .await
+        .map_err(|err| format!("dual-active peer leader update response invalid: {err}"))
 }
 
 async fn build_internal_ha_status(state: &Arc<AppState>) -> tavily_hikari::HaStatusView {
@@ -1091,6 +1131,72 @@ async fn post_internal_ha_finalize(
     Ok(Json(status))
 }
 
+async fn post_internal_ha_leader(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    Json(payload): Json<InternalHaLeaderUpdateRequest>,
+) -> Result<Json<tavily_hikari::HaStatusView>, (StatusCode, String)> {
+    if !is_ha_internal_request(state.as_ref(), &headers) {
+        return Err((StatusCode::FORBIDDEN, "forbidden".to_string()));
+    }
+    if !state.ha.dual_active_enabled() {
+        return Err((
+            StatusCode::CONFLICT,
+            "internal leader update requires dual-active mode".to_string(),
+        ));
+    }
+    state
+        .proxy
+        .set_ha_full_master_node_id(&payload.full_master_node_id)
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+    state
+        .ha
+        .apply_dual_active_leader(Some(payload.full_master_node_id.clone()))
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err))?;
+    let status = state.ha.status().await;
+    if let Err((status_code, err)) = persist_ha_status_snapshot(&state, &status).await {
+        tracing::warn!(
+            component = "ha",
+            event = "internal_dual_active_leader_snapshot_persist_failed",
+            http_status = status_code.as_u16(),
+            err = %err,
+            "HA internal dual-active leader snapshot persist warning"
+        );
+    }
+    if let Err((status_code, err)) = record_ha_control_plane_event(
+        &state,
+        tavily_hikari::HaControlPlaneEventInsert {
+            event_kind: "internal_dual_active_leader_update".to_string(),
+            category: tavily_hikari::HaControlPlaneEventCategory::PlannedCutover,
+            status: tavily_hikari::HaControlPlaneEventStatus::Success,
+            node_id: Some(status.node_id.clone()),
+            operation_id: payload.operation_id,
+            summary: format!(
+                "Internal dual-active leader update applied {}",
+                payload.full_master_node_id
+            ),
+            detail: status.message.clone(),
+            technical_details: Some(json!({
+                "fullMasterNodeId": payload.full_master_node_id,
+                "role": status.role,
+            })),
+        },
+    )
+    .await
+    {
+        tracing::warn!(
+            component = "ha",
+            event = "internal_dual_active_leader_event_persist_failed",
+            http_status = status_code.as_u16(),
+            err = %err,
+            "HA internal dual-active leader event persist warning"
+        );
+    }
+    Ok(Json(status))
+}
+
 async fn post_admin_ha_recovery_import(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -1278,7 +1384,9 @@ async fn post_admin_ha_planned_cutover(
         return Err((StatusCode::FORBIDDEN, "forbidden".to_string()));
     }
     if state.ha.dual_active_enabled() {
+        let operation_id = format!("dual-active-{}", state.proxy.backend_time().now_ts());
         let local_before = build_internal_ha_status(&state).await;
+        let local_node_id = local_before.node_id.clone();
         if local_before.role != tavily_hikari::HaNodeRole::FullMaster {
             return Err((
                 StatusCode::CONFLICT,
@@ -1347,18 +1455,54 @@ async fn post_admin_ha_planned_cutover(
                 format!("peer {} failed planned cutover precheck", peer.node_id),
             ));
         }
-        state
-            .proxy
-            .set_ha_full_master_node_id(&peer.node_id)
-            .await
-            .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
-        state
-            .ha
-            .apply_dual_active_leader(Some(peer.node_id.clone()))
-            .await
-            .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err))?;
-        let status = state.ha.status().await;
-        persist_ha_status_snapshot(&state, &status).await?;
+        let peer_after = post_internal_ha_leader_update(
+            &client,
+            &peer,
+            &internal_token,
+            &peer.node_id,
+            Some(&operation_id),
+        )
+        .await
+        .map_err(|err| (StatusCode::BAD_GATEWAY, err))?;
+        let local_apply = async {
+            state
+                .proxy
+                .set_ha_full_master_node_id(&peer.node_id)
+                .await
+                .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))?;
+            state
+                .ha
+                .apply_dual_active_leader(Some(peer.node_id.clone()))
+                .await
+                .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err))?;
+            let local_after = state.ha.status().await;
+            persist_ha_status_snapshot(&state, &local_after).await?;
+            Ok::<tavily_hikari::HaStatusView, (StatusCode, String)>(local_after)
+        }
+        .await;
+        let local_after = match local_apply {
+            Ok(status) => status,
+            Err((status, err)) => {
+                let rollback_detail = match post_internal_ha_leader_update(
+                    &client,
+                    &peer,
+                    &internal_token,
+                    &local_node_id,
+                    Some(&format!("{operation_id}-rollback")),
+                )
+                .await
+                {
+                    Ok(_) => "peer rollback applied".to_string(),
+                    Err(rollback_err) => format!(
+                        "peer rollback failed after local cutover failure: {rollback_err}"
+                    ),
+                };
+                return Err((
+                    status,
+                    format!("dual-active local leader switch failed: {err}; {rollback_detail}"),
+                ));
+            }
+        };
         record_ha_control_plane_event(
             &state,
             tavily_hikari::HaControlPlaneEventInsert {
@@ -1366,18 +1510,20 @@ async fn post_admin_ha_planned_cutover(
                 category: tavily_hikari::HaControlPlaneEventCategory::PlannedCutover,
                 status: tavily_hikari::HaControlPlaneEventStatus::Success,
                 node_id: Some(peer.node_id.clone()),
-                operation_id: None,
+                operation_id: Some(operation_id.clone()),
                 summary: format!("Planned cutover updated leader to {}", peer.node_id),
-                detail: status.message.clone(),
+                detail: local_after.message.clone(),
                 technical_details: Some(json!({
                     "targetNodeId": peer.node_id,
                     "dualActive": true,
+                    "localRole": local_after.role,
+                    "peerRole": peer_after.role,
                 })),
             },
         )
         .await?;
         return Ok(Json(PlannedCutoverResponse {
-            operation_id: format!("dual-active-{}", state.proxy.backend_time().now_ts()),
+            operation_id,
             status: "success".to_string(),
             detail: None,
         }));

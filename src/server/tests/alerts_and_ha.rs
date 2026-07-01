@@ -578,6 +578,8 @@ async fn admin_ha_status_surfaces_peer_source_config_target() {
                     "nodeId": "node-peer",
                     "nodePublicOrigin": "peer-public-origin:443",
                     "role": "standby",
+                    "dualActiveEnabled": false,
+                    "fullMasterNodeId": null,
                     "degraded": false,
                     "allowsBasicBusiness": false,
                     "allowsFullWrites": false,
@@ -2291,6 +2293,156 @@ async fn ha_finalize_is_rejected_in_dual_active_mode() {
     assert!(
         body.contains("dual-active mode"),
         "dual-active finalize should be rejected: {body}"
+    );
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
+async fn dual_active_planned_cutover_keeps_local_full_master_when_peer_update_fails() {
+    let peer_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind peer listener");
+    let peer_addr = peer_listener.local_addr().expect("peer addr");
+    let now = Utc::now().timestamp();
+    tokio::spawn(async move {
+        let app = Router::new()
+            .route(
+                "/api/internal/ha/status",
+                get(move || async move {
+                    Json(json!({
+                        "mode": "active_standby",
+                        "nodeId": "node-b",
+                        "nodePublicOrigin": "node-b-public:443",
+                        "role": "standby",
+                        "dualActiveEnabled": true,
+                        "fullMasterNodeId": "node-a",
+                        "degraded": false,
+                        "allowsBasicBusiness": true,
+                        "allowsFullWrites": false,
+                        "edgeoneDomain": "hikari.example.test",
+                        "edgeoneOrigin": "og-core",
+                        "edgeoneExpectedOrigin": null,
+                        "edgeoneCurrentTarget": "og-core",
+                        "edgeoneExpectedTarget": "og-core",
+                        "edgeoneCurrentSourceKind": "origin_group",
+                        "edgeoneExpectedSourceKind": "origin_group",
+                        "edgeoneCurrentOriginGroupId": "og-core",
+                        "edgeoneExpectedOriginGroupId": "og-core",
+                        "haSourceDefaults": null,
+                        "haSourceOverride": null,
+                        "haSourceEffective": {
+                            "sourceKind": "origin_group",
+                            "directOriginScheme": null,
+                            "directOriginHost": null,
+                            "directOriginPort": null,
+                            "originGroupId": "og-core",
+                            "target": "og-core"
+                        },
+                        "edgeoneApiConfigured": true,
+                        "lastEdgeoneCheckAt": now,
+                        "lastSyncAt": now,
+                        "syncLagSeconds": 0,
+                        "recoveryStatus": null,
+                        "message": "peer ready",
+                        "peerNodes": [],
+                        "plannedCutoverEligible": true
+                    }))
+                }),
+            )
+            .route(
+                "/api/internal/ha/leader",
+                post(|| async {
+                    (
+                        StatusCode::BAD_GATEWAY,
+                        Body::from("simulated peer leader update failure"),
+                    )
+                }),
+            );
+        axum::serve(peer_listener, app.into_make_service())
+            .await
+            .expect("serve peer");
+    });
+
+    let db_path = temp_db_path("ha-dual-active-cutover-peer-failure");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-dual-active-cutover-peer-failure".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("proxy created");
+    proxy
+        .set_ha_full_master_node_id("node-a")
+        .await
+        .expect("seed local leader");
+    let ha = tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig {
+        mode: tavily_hikari::HaMode::ActiveStandby,
+        node_id: "node-a".to_string(),
+        database_path: Some(db_str.clone()),
+        source_kind: Some(tavily_hikari::HaSourceKind::OriginGroup),
+        source_origin_group_id: Some("og-core".to_string()),
+        core_dual_active: true,
+        internal_token: Some("peer-token".to_string()),
+        peer_nodes: vec![tavily_hikari::HaPeerNodeConfig {
+            node_id: "node-b".to_string(),
+            admin_base_url: format!("http://{peer_addr}"),
+            public_origin: "node-b-public:443".to_string(),
+            role_hint: tavily_hikari::HaPeerRoleHint::StandbyCandidate,
+        }],
+        edgeone_zone_id: Some("zone-test".to_string()),
+        edgeone_domain: Some("hikari.example.test".to_string()),
+        edgeone_secret_id: Some("secret-id".to_string()),
+        edgeone_secret_key: Some("secret-key".to_string()),
+        edgeone_api_endpoint: "http://127.0.0.1:9".to_string(),
+        ..tavily_hikari::HaConfig::default()
+    });
+    ha.apply_dual_active_leader(Some("node-a".to_string()))
+        .await
+        .expect("apply local leader");
+    let addr = spawn_ha_admin_server(proxy, ha, true).await;
+
+    let client = Client::new();
+    let response = client
+        .post(format!("http://{addr}/api/admin/ha/planned-cutover"))
+        .json(&json!({
+            "targetNodeId": "node-b",
+        }))
+        .send()
+        .await
+        .expect("planned cutover response");
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_GATEWAY);
+    let body = response.text().await.expect("planned cutover body");
+    assert!(
+        body.contains("dual-active peer leader update failed"),
+        "unexpected planned cutover failure body: {body}"
+    );
+
+    let status_response = client
+        .get(format!("http://{addr}/api/admin/ha/status"))
+        .send()
+        .await
+        .expect("ha status response");
+    assert_eq!(status_response.status(), reqwest::StatusCode::OK);
+    let status: Value = status_response.json().await.expect("ha status body");
+    assert_eq!(status["role"], "full_master");
+    assert_eq!(status["fullMasterNodeId"], "node-a");
+    assert_eq!(status["allowsFullWrites"], true);
+
+    let leader_proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-dual-active-cutover-peer-failure".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("leader proxy created");
+    assert_eq!(
+        leader_proxy
+            .get_ha_full_master_node_id()
+            .await
+            .expect("leader key lookup"),
+        Some("node-a".to_string())
     );
 
     let _ = std::fs::remove_file(db_path);

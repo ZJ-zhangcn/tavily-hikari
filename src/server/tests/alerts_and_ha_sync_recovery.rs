@@ -291,3 +291,197 @@ async fn ha_standby_sync_resets_runtime_baseline_after_foreign_key_gap() {
     let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
     let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
 }
+
+#[tokio::test]
+async fn dual_active_peer_runtime_baseline_does_not_delete_local_rows() {
+    let runtime_baseline_ndjson = [
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "baseline_start",
+            "channel": "runtime",
+            "nodeId": "peer-empty-runtime",
+            "highWatermark": 0
+        })
+        .to_string(),
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "baseline_end",
+            "channel": "runtime",
+            "nodeId": "peer-empty-runtime",
+            "highWatermark": 0,
+            "rowCount": 0
+        })
+        .to_string(),
+    ]
+    .join("\n");
+    let runtime_events_body = zstd::stream::encode_all(
+        [
+            serde_json::json!({
+                "schemaVersion": 2,
+                "kind": "events_start",
+                "channel": "runtime",
+                "after": 0,
+                "limit": 1000
+            })
+            .to_string(),
+            serde_json::json!({
+                "schemaVersion": 2,
+                "kind": "events_end",
+                "channel": "runtime",
+                "lastSeq": 0,
+                "eventCount": 0
+            })
+            .to_string(),
+        ]
+        .join("\n")
+        .as_bytes(),
+        0,
+    )
+    .expect("encode runtime events");
+    let runtime_baseline_body = zstd::stream::encode_all(runtime_baseline_ndjson.as_bytes(), 0)
+        .expect("encode runtime baseline");
+
+    let app = Router::new()
+        .route(
+            "/api/admin/ha/baseline",
+            get(move |_query: Query<std::collections::HashMap<String, String>>| {
+                let runtime_baseline_body = runtime_baseline_body.clone();
+                async move {
+                    Response::builder()
+                        .header("content-encoding", "zstd")
+                        .body(Body::from(runtime_baseline_body))
+                        .expect("runtime baseline response")
+                }
+            }),
+        )
+        .route(
+            "/api/admin/ha/events",
+            get(move |_query: Query<std::collections::HashMap<String, String>>| {
+                let runtime_events_body = runtime_events_body.clone();
+                async move {
+                    Response::builder()
+                        .header("content-encoding", "zstd")
+                        .body(Body::from(runtime_events_body))
+                        .expect("runtime events response")
+                }
+            }),
+        )
+        .route("/api/admin/ha/events/ack", post(|| async { StatusCode::OK }));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let source_addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app.into_make_service())
+            .await
+            .unwrap();
+    });
+
+    let db_path = temp_db_path("ha-dual-active-runtime-baseline-upsert");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-dual-active-runtime-baseline-upsert".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("proxy created");
+    let pool = connect_sqlite_test_pool(&db_str).await;
+
+    sqlx::query(
+        r#"
+        INSERT INTO mcp_sessions (
+            proxy_session_id,
+            upstream_session_id,
+            upstream_key_id,
+            auth_token_id,
+            user_id,
+            protocol_version,
+            last_event_id,
+            gateway_mode,
+            experiment_variant,
+            ab_bucket,
+            routing_subject_hash,
+            fallback_reason,
+            rate_limited_until,
+            last_rate_limited_at,
+            last_rate_limit_reason,
+            created_at,
+            updated_at,
+            expires_at,
+            revoked_at,
+            revoke_reason
+        ) VALUES (
+            'sess-local-dual-active',
+            'upstream-local-dual-active',
+            NULL,
+            NULL,
+            NULL,
+            '2025-03-26',
+            NULL,
+            'upstream_mcp',
+            'control',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            1,
+            1,
+            86400,
+            NULL,
+            NULL
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("insert local runtime session");
+
+    let ha = tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig {
+        mode: tavily_hikari::HaMode::ActiveStandby,
+        node_id: "node-a".to_string(),
+        source_kind: Some(tavily_hikari::HaSourceKind::OriginGroup),
+        source_origin_group_id: Some("og-core".to_string()),
+        core_dual_active: true,
+        ..tavily_hikari::HaConfig::default()
+    });
+    let state = Arc::new(AppState {
+        proxy: proxy.clone(),
+        static_dir: None,
+        forward_auth: ForwardAuthConfig::new(None, None, None, None),
+        forward_auth_enabled: false,
+        builtin_admin: BuiltinAdminAuth::new(false, None, None),
+        linuxdo_oauth: LinuxDoOAuthOptions::disabled(),
+        linuxdo_credit: LinuxDoCreditOptions::disabled(),
+        ha,
+        dev_open_admin: true,
+        usage_base: "http://127.0.0.1:58088".to_string(),
+        api_key_ip_geo_origin: "https://api.country.is".to_string(),
+        dashboard_overview_cache: new_dashboard_overview_cache(),
+    });
+
+    let client = Client::new();
+    run_ha_sync_once_for_peer(
+        &state,
+        &client,
+        &format!("http://{source_addr}"),
+        "node-b",
+        "test-token",
+        &[tavily_hikari::HaSyncChannel::Runtime],
+    )
+    .await
+    .expect("dual-active peer sync should preserve local runtime rows");
+
+    let row_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM mcp_sessions WHERE proxy_session_id = 'sess-local-dual-active'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count preserved dual-active runtime row");
+    assert_eq!(row_count, 1);
+
+    pool.close().await;
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+}

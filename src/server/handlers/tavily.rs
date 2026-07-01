@@ -425,10 +425,39 @@ async fn tavily_http_research_result(
     let research_lookup = if using_dev_open_admin_fallback {
         None
     } else {
-        match lookup_research_request_local_or_peer(&state, &request_id)
-            .await
-        {
-            Ok(value) => value,
+        match lookup_research_request_local_or_peer(&state, &request_id).await {
+            Ok(Some(lookup)) => {
+                if auth_token_id.as_deref() != Some(lookup.token_id.as_str()) {
+                    if let Some(tid) = auth_token_id.as_deref() {
+                        let _ = state
+                            .proxy
+                            .record_token_attempt(
+                                tid,
+                                &method,
+                                &path,
+                                None,
+                                Some(StatusCode::NOT_FOUND.as_u16() as i64),
+                                Some(StatusCode::NOT_FOUND.as_u16() as i64),
+                                false,
+                                "error",
+                                Some("research request not found"),
+                            )
+                            .await;
+                    }
+                    let payload = json!({
+                        "error": "research_request_not_found",
+                        "message": "research request not found",
+                    });
+                    let resp = Response::builder()
+                        .status(StatusCode::NOT_FOUND)
+                        .header(CONTENT_TYPE, "application/json; charset=utf-8")
+                        .body(Body::from(payload.to_string()))
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                    return Ok(resp);
+                }
+                Some(lookup)
+            }
+            Ok(None) => None,
             Err(err) => {
                 eprintln!("research request owner check failed for {path}: {err}");
                 if let Some(tid) = auth_token_id.as_deref() {

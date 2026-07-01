@@ -2,6 +2,54 @@ use super::*;
 use super::core_support_and_parsing::*;
 use super::upstream_support_and_manual_jobs::*;
 
+#[test]
+fn dual_active_standby_can_export_billing_and_runtime_channels() {
+    let status = tavily_hikari::HaStatusView {
+        mode: tavily_hikari::HaMode::ActiveStandby,
+        node_id: "node-b".to_string(),
+        node_public_origin: None,
+        role: tavily_hikari::HaNodeRole::Standby,
+        dual_active_enabled: true,
+        full_master_node_id: None,
+        degraded: false,
+        allows_basic_business: false,
+        allows_full_writes: false,
+        edgeone_domain: None,
+        edgeone_origin: Some("og-core".to_string()),
+        edgeone_expected_origin: None,
+        edgeone_current_target: Some("og-core".to_string()),
+        edgeone_expected_target: Some("og-core".to_string()),
+        edgeone_current_source_kind: Some(tavily_hikari::HaSourceKind::OriginGroup),
+        edgeone_expected_source_kind: Some(tavily_hikari::HaSourceKind::OriginGroup),
+        edgeone_current_origin_group_id: Some("og-core".to_string()),
+        edgeone_expected_origin_group_id: Some("og-core".to_string()),
+        ha_source_defaults: None,
+        ha_source_override: None,
+        ha_source_effective: None,
+        edgeone_api_configured: true,
+        last_edgeone_check_at: None,
+        last_sync_at: None,
+        sync_lag_seconds: None,
+        recovery_status: None,
+        message: Some("dual-active leader key is missing; serving stays fenced until seeded".to_string()),
+        peer_nodes: Vec::new(),
+        planned_cutover_eligible: false,
+    };
+
+    assert!(!ha_can_export_channel(
+        &status,
+        tavily_hikari::HaSyncChannel::Control
+    ));
+    assert!(ha_can_export_channel(
+        &status,
+        tavily_hikari::HaSyncChannel::Billing
+    ));
+    assert!(ha_can_export_channel(
+        &status,
+        tavily_hikari::HaSyncChannel::Runtime
+    ));
+}
+
 #[tokio::test]
 async fn ha_events_endpoint_returns_zstd_ndjson() {
     let db_path = temp_db_path("ha-events");

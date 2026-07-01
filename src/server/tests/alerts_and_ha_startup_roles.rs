@@ -68,6 +68,48 @@ async fn standby_server_startup_does_not_spawn_business_scheduled_jobs() {
     let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
 }
 
+#[test]
+fn dual_active_peer_sync_runs_for_fenced_standby_until_leader_is_seeded() {
+    let status = tavily_hikari::HaStatusView {
+        mode: tavily_hikari::HaMode::ActiveStandby,
+        node_id: "node-standby-sync".to_string(),
+        node_public_origin: None,
+        role: tavily_hikari::HaNodeRole::Standby,
+        dual_active_enabled: true,
+        full_master_node_id: None,
+        degraded: false,
+        allows_basic_business: false,
+        allows_full_writes: false,
+        edgeone_domain: None,
+        edgeone_origin: Some("og-core".to_string()),
+        edgeone_expected_origin: None,
+        edgeone_current_target: Some("og-core".to_string()),
+        edgeone_expected_target: Some("og-core".to_string()),
+        edgeone_current_source_kind: Some(tavily_hikari::HaSourceKind::OriginGroup),
+        edgeone_expected_source_kind: Some(tavily_hikari::HaSourceKind::OriginGroup),
+        edgeone_current_origin_group_id: Some("og-core".to_string()),
+        edgeone_expected_origin_group_id: Some("og-core".to_string()),
+        ha_source_defaults: None,
+        ha_source_override: None,
+        ha_source_effective: None,
+        edgeone_api_configured: true,
+        last_edgeone_check_at: None,
+        last_sync_at: None,
+        sync_lag_seconds: None,
+        recovery_status: None,
+        message: Some(
+            "dual-active leader key is missing; serving stays fenced until seeded".to_string(),
+        ),
+        peer_nodes: Vec::new(),
+        planned_cutover_eligible: false,
+    };
+
+    assert!(
+        super::ha_peer_sync_should_run(&status),
+        "dual-active standby should keep peer sync alive before leader seeding"
+    );
+}
+
 #[tokio::test]
 async fn startup_restores_persisted_ha_source_settings_before_role_check() {
     let edgeone_app = Router::new().fallback(post(|| async {

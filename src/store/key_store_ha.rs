@@ -30,6 +30,12 @@ pub struct HaApplyResult {
     pub payload_bytes: usize,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HaBaselineApplyMode {
+    Replace,
+    Upsert,
+}
+
 #[derive(Debug)]
 pub struct HaBaselineApplySession {
     channel: HaSyncChannel,
@@ -571,7 +577,9 @@ impl KeyStore {
         channel: HaSyncChannel,
         ndjson: &str,
     ) -> Result<HaApplyResult, ProxyError> {
-        let mut session = self.begin_ha_baseline_apply(channel).await?;
+        let mut session = self
+            .begin_ha_baseline_apply_with_mode(channel, HaBaselineApplyMode::Replace)
+            .await?;
         for line in ndjson.lines().filter(|line| !line.trim().is_empty()) {
             if let Err(err) = session.apply_line(line).await {
                 let _ = session.abort().await;
@@ -1245,6 +1253,15 @@ impl KeyStore {
         &self,
         channel: HaSyncChannel,
     ) -> Result<HaBaselineApplySession, ProxyError> {
+        self.begin_ha_baseline_apply_with_mode(channel, HaBaselineApplyMode::Replace)
+            .await
+    }
+
+    pub(crate) async fn begin_ha_baseline_apply_with_mode(
+        &self,
+        channel: HaSyncChannel,
+        mode: HaBaselineApplyMode,
+    ) -> Result<HaBaselineApplySession, ProxyError> {
         let mut conn = self.pool.acquire().await?;
         sqlx::query("PRAGMA foreign_keys = OFF")
             .execute(&mut *conn)
@@ -1252,18 +1269,20 @@ impl KeyStore {
         sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
         let init_result = async {
             insert_ha_outbox_suppression_on_conn(&mut conn).await?;
-            for table in ha_baseline_tables(channel) {
-                if Self::table_exists_on_conn(&mut conn, table).await? {
-                    let sql = if *table == "meta" {
-                        format!(
-                            "DELETE FROM {} WHERE key IN ({})",
-                            quote_sqlite_identifier(table),
-                            ha_meta_key_list_sql()
-                        )
-                    } else {
-                        format!("DELETE FROM {}", quote_sqlite_identifier(table))
-                    };
-                    sqlx::query(&sql).execute(&mut *conn).await?;
+            if mode == HaBaselineApplyMode::Replace {
+                for table in ha_baseline_tables(channel) {
+                    if Self::table_exists_on_conn(&mut conn, table).await? {
+                        let sql = if *table == "meta" {
+                            format!(
+                                "DELETE FROM {} WHERE key IN ({})",
+                                quote_sqlite_identifier(table),
+                                ha_meta_key_list_sql()
+                            )
+                        } else {
+                            format!("DELETE FROM {}", quote_sqlite_identifier(table))
+                        };
+                        sqlx::query(&sql).execute(&mut *conn).await?;
+                    }
                 }
             }
             Ok::<(), ProxyError>(())

@@ -731,6 +731,7 @@ impl HaRuntime {
                 state.message = None;
             }
             Some(_) => {
+                state.role = HaNodeRole::Standby;
                 state.recovery_status = None;
                 state.message = Some("dual-active leader key points to a peer".to_string());
             }
@@ -885,6 +886,7 @@ impl HaRuntime {
                     state.message = None;
                 }
                 (Some(_), false, HaNodeRole::FullMaster | HaNodeRole::ProvisionalMaster) => {
+                    state.role = HaNodeRole::Standby;
                     state.recovery_status = None;
                     state.message = Some("dual-active leader key points to a peer".to_string());
                 }
@@ -892,6 +894,7 @@ impl HaRuntime {
                     state.message = None;
                 }
                 (Some(_), false, HaNodeRole::Recovery) => {
+                    state.role = HaNodeRole::Standby;
                     state.message = Some("dual-active leader key points to a peer".to_string());
                 }
                 (None, _, _) => {
@@ -903,6 +906,7 @@ impl HaRuntime {
                     );
                 }
             }
+            drop(state);
             return Ok((self.status().await, None));
         }
 
@@ -1895,6 +1899,77 @@ mod tests {
         assert_eq!(
             status.message.as_deref(),
             Some("EdgeOne origin now points to this node; finalize required")
+        );
+    }
+
+    #[tokio::test]
+    async fn dual_active_authority_refresh_returns_without_deadlocking_status_reads() {
+        let runtime = HaRuntime::new(HaConfig {
+            mode: HaMode::ActiveStandby,
+            node_id: "node-a".to_string(),
+            source_kind: Some(HaSourceKind::OriginGroup),
+            source_origin_group_id: Some("og-core".to_string()),
+            core_dual_active: true,
+            edgeone_zone_id: Some("zone-test".to_string()),
+            edgeone_domain: Some("hikari.example.test".to_string()),
+            edgeone_secret_id: Some("secret-id".to_string()),
+            edgeone_secret_key: Some("secret-key".to_string()),
+            ..HaConfig::default()
+        });
+
+        runtime
+            .apply_dual_active_leader(Some("node-a".to_string()))
+            .await
+            .expect("seed leader");
+
+        let refreshed = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            runtime.refresh_authoritative_role(),
+        )
+        .await
+        .expect("refresh_authoritative_role should not deadlock")
+        .expect("refresh role");
+
+        assert_eq!(refreshed.role, HaNodeRole::FullMaster);
+        assert!(refreshed.allows_basic_business);
+        assert!(refreshed.allows_full_writes);
+    }
+
+    #[tokio::test]
+    async fn dual_active_leader_switch_to_peer_demotes_local_full_master() {
+        let runtime = HaRuntime::new(HaConfig {
+            mode: HaMode::ActiveStandby,
+            node_id: "node-a".to_string(),
+            source_kind: Some(HaSourceKind::OriginGroup),
+            source_origin_group_id: Some("og-core".to_string()),
+            core_dual_active: true,
+            edgeone_zone_id: Some("zone-test".to_string()),
+            edgeone_domain: Some("hikari.example.test".to_string()),
+            edgeone_secret_id: Some("secret-id".to_string()),
+            edgeone_secret_key: Some("secret-key".to_string()),
+            ..HaConfig::default()
+        });
+
+        runtime
+            .apply_dual_active_leader(Some("node-a".to_string()))
+            .await
+            .expect("seed self as leader");
+        let before = runtime.status().await;
+        assert_eq!(before.role, HaNodeRole::FullMaster);
+        assert!(before.allows_full_writes);
+
+        runtime
+            .apply_dual_active_leader(Some("node-b".to_string()))
+            .await
+            .expect("switch leader to peer");
+        let after = runtime.status().await;
+        assert_eq!(after.role, HaNodeRole::Standby);
+        assert!(after.allows_basic_business);
+        assert!(!after.allows_full_writes);
+        assert_eq!(after.full_master_node_id.as_deref(), Some("node-b"));
+        assert_eq!(
+            after.message.as_deref(),
+            Some("dual-active leader key points to a peer")
         );
     }
 

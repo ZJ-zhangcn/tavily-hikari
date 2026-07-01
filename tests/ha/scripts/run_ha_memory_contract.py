@@ -69,6 +69,45 @@ def read_counts(db_path):
         conn.close()
 
 
+def wait_json(url, predicate, label, timeout=30):
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        status, body, _headers, _raw = request("GET", url)
+        last = {"status": status, "body": body}
+        if status == 200 and predicate(body):
+            return body
+        time.sleep(1)
+    raise AssertionError(f"timed out waiting for {label}: {json.dumps(last, ensure_ascii=False)}")
+
+
+def bootstrap_dual_active_leader():
+    status, body, _headers, _raw = request("POST", f"{NODE_A}/api/admin/ha/promote", {})
+    if status != 200:
+        raise AssertionError(
+            f"dual-active bootstrap promote failed: status={status}, body={body}"
+        )
+    if body["role"] != "full_master":
+        raise AssertionError(f"unexpected node-a role after promote: {body}")
+
+    wait_json(
+        f"{NODE_A}/api/admin/ha/status",
+        lambda payload: payload["role"] == "full_master"
+        and payload["allowsFullWrites"] is True
+        and payload.get("fullMasterNodeId") == "node-a",
+        "node-a dual-active full master",
+        timeout=30,
+    )
+    wait_json(
+        f"{NODE_B}/api/admin/ha/status",
+        lambda payload: payload["role"] == "standby"
+        and payload["allowsBasicBusiness"] is True
+        and payload.get("fullMasterNodeId") == "node-a",
+        "node-b dual-active serving standby",
+        timeout=30,
+    )
+
+
 def wait_for_sync(expected, timeout, settle_seconds):
     deadline = time.time() + timeout
     last = {}
@@ -148,6 +187,7 @@ def main():
         "billing": args.expected_billing,
     }
 
+    bootstrap_dual_active_leader()
     synced = wait_for_sync(expected, args.sync_timeout_seconds, args.settle_seconds)
     exports = stress_billing_export(
         args.expected_billing,

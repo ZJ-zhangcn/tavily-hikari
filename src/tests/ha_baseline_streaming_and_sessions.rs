@@ -114,3 +114,112 @@ async fn write_ha_baseline_ndjson_closes_read_snapshot_before_reusing_connection
     let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
     let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
 }
+
+#[tokio::test]
+async fn runtime_baseline_upsert_preserves_existing_rows() {
+    let db_path = temp_db_path("ha-runtime-baseline-upsert-preserves-existing");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-runtime-baseline-upsert".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("proxy created");
+
+    sqlx::query(
+        r#"
+        INSERT INTO mcp_sessions (
+            proxy_session_id,
+            upstream_session_id,
+            upstream_key_id,
+            auth_token_id,
+            user_id,
+            protocol_version,
+            last_event_id,
+            gateway_mode,
+            experiment_variant,
+            ab_bucket,
+            routing_subject_hash,
+            fallback_reason,
+            rate_limited_until,
+            last_rate_limited_at,
+            last_rate_limit_reason,
+            created_at,
+            updated_at,
+            expires_at,
+            revoked_at,
+            revoke_reason
+        ) VALUES (
+            'sess-local',
+            'upstream-local',
+            NULL,
+            NULL,
+            NULL,
+            '2025-03-26',
+            NULL,
+            'upstream_mcp',
+            'control',
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            NULL,
+            1,
+            1,
+            86400,
+            NULL,
+            NULL
+        )
+        "#,
+    )
+    .execute(&proxy.key_store.pool)
+    .await
+    .expect("insert local session");
+
+    let empty_runtime_baseline = [
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "baseline_start",
+            "channel": "runtime",
+            "nodeId": "peer-empty",
+            "highWatermark": 0
+        })
+        .to_string(),
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "baseline_end",
+            "channel": "runtime",
+            "nodeId": "peer-empty",
+            "highWatermark": 0,
+            "rowCount": 0
+        })
+        .to_string(),
+    ]
+    .join("\n");
+
+    let mut session = proxy
+        .begin_ha_baseline_apply_with_mode(HaSyncChannel::Runtime, HaBaselineApplyMode::Upsert)
+        .await
+        .expect("begin upsert baseline apply");
+    for line in empty_runtime_baseline.lines() {
+        session.apply_line(line).await.expect("apply baseline line");
+    }
+    session.finish().await.expect("finish baseline apply");
+
+    let row_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM mcp_sessions WHERE proxy_session_id = 'sess-local'",
+    )
+    .fetch_one(&proxy.key_store.pool)
+    .await
+    .expect("count preserved session");
+    assert_eq!(
+        row_count, 1,
+        "upsert baseline should not delete local runtime rows"
+    );
+
+    let _ = std::fs::remove_file(db_path.clone());
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+}
