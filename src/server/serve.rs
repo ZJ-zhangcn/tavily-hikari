@@ -1141,8 +1141,11 @@ async fn run_ha_sync_once_for_peer(
             } else {
                 tavily_hikari::HaBaselineApplyMode::Replace
             };
-            let peer_runtime_counter_merge_node_id = if state.ha.dual_active_enabled()
-                && channel == tavily_hikari::HaSyncChannel::Runtime
+            let peer_import_node_id = if state.ha.dual_active_enabled()
+                && matches!(
+                    channel,
+                    tavily_hikari::HaSyncChannel::Billing | tavily_hikari::HaSyncChannel::Runtime
+                )
             {
                 Some(peer_node_id)
             } else {
@@ -1153,7 +1156,7 @@ async fn run_ha_sync_once_for_peer(
                 channel,
                 response,
                 baseline_mode,
-                peer_runtime_counter_merge_node_id,
+                peer_import_node_id,
             )
             .await?;
             next_seq = result.high_watermark;
@@ -1242,8 +1245,11 @@ async fn run_ha_sync_once_for_peer(
             )
             .into());
         }
-        let peer_runtime_counter_merge_node_id = if state.ha.dual_active_enabled()
-            && channel == tavily_hikari::HaSyncChannel::Runtime
+        let peer_import_node_id = if state.ha.dual_active_enabled()
+            && matches!(
+                channel,
+                tavily_hikari::HaSyncChannel::Billing | tavily_hikari::HaSyncChannel::Runtime
+            )
         {
             Some(peer_node_id)
         } else {
@@ -1253,7 +1259,7 @@ async fn run_ha_sync_once_for_peer(
             &state.proxy,
             channel,
             response,
-            peer_runtime_counter_merge_node_id,
+            peer_import_node_id,
         )
         .await
         {
@@ -1385,7 +1391,7 @@ async fn apply_ha_baseline_response_stream(
     channel: tavily_hikari::HaSyncChannel,
     response: reqwest::Response,
     mode: tavily_hikari::HaBaselineApplyMode,
-    peer_runtime_counter_merge_node_id: Option<&str>,
+    peer_import_node_id: Option<&str>,
 ) -> Result<tavily_hikari::HaApplyResult, Box<dyn std::error::Error + Send + Sync>> {
     let started = Instant::now();
     let stream = response
@@ -1410,10 +1416,8 @@ async fn apply_ha_baseline_response_stream(
         if trimmed.is_empty() {
             continue;
         }
-        let apply_result = if let Some(peer_node_id) = peer_runtime_counter_merge_node_id {
-            session
-                .apply_line_with_peer_runtime_counter_merge(trimmed, peer_node_id)
-                .await
+        let apply_result = if let Some(peer_node_id) = peer_import_node_id {
+            session.apply_line_with_peer_import(trimmed, peer_node_id).await
         } else {
             session.apply_line(trimmed).await
         };
@@ -1435,7 +1439,7 @@ async fn apply_ha_baseline_response_stream(
             tavily_hikari::HaBaselineApplyMode::Upsert => "upsert",
         },
         row_count = result.row_count as u64,
-        peer_runtime_counter_merge = peer_runtime_counter_merge_node_id.unwrap_or(""),
+        peer_import_node = peer_import_node_id.unwrap_or(""),
         payload_bytes = result.payload_bytes as u64,
         outbox_row_count = outbox.row_count,
         outbox_oldest_age_secs = outbox.oldest_age_secs,
@@ -1457,7 +1461,7 @@ async fn apply_ha_events_response_stream(
     proxy: &TavilyProxy,
     channel: tavily_hikari::HaSyncChannel,
     response: reqwest::Response,
-    peer_runtime_counter_merge_node_id: Option<&str>,
+    peer_import_node_id: Option<&str>,
 ) -> Result<tavily_hikari::HaApplyResult, Box<dyn std::error::Error + Send + Sync>> {
     let started = Instant::now();
     let stream = response
@@ -1482,10 +1486,8 @@ async fn apply_ha_events_response_stream(
         if trimmed.is_empty() {
             continue;
         }
-        let apply_result = if let Some(peer_node_id) = peer_runtime_counter_merge_node_id {
-            session
-                .apply_line_with_peer_runtime_counter_merge(trimmed, peer_node_id)
-                .await
+        let apply_result = if let Some(peer_node_id) = peer_import_node_id {
+            session.apply_line_with_peer_import(trimmed, peer_node_id).await
         } else {
             session.apply_line(trimmed).await
         };
@@ -1503,7 +1505,7 @@ async fn apply_ha_events_response_stream(
         elapsed_ms = started.elapsed().as_millis() as u64,
         channel = channel.as_str(),
         row_count = result.row_count as u64,
-        peer_runtime_counter_merge = peer_runtime_counter_merge_node_id.unwrap_or(""),
+        peer_import_node = peer_import_node_id.unwrap_or(""),
         payload_bytes = result.payload_bytes as u64,
         outbox_row_count = outbox.row_count,
         outbox_oldest_age_secs = outbox.oldest_age_secs,

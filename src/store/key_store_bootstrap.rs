@@ -2800,6 +2800,20 @@ impl KeyStore {
         )
         .execute(&self.pool)
         .await?;
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS ha_billing_ledger_imports (
+                peer_node_id TEXT NOT NULL,
+                peer_auth_token_log_id INTEGER NOT NULL,
+                local_auth_token_log_id INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                PRIMARY KEY (peer_node_id, peer_auth_token_log_id),
+                UNIQUE (local_auth_token_log_id)
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
         for sql in [
             r#"CREATE INDEX IF NOT EXISTS idx_ha_outbox_resource
                ON ha_outbox(resource, resource_id, seq)"#,
@@ -2811,6 +2825,8 @@ impl KeyStore {
                ON ha_billing_outbox(created_at, seq)"#,
             r#"CREATE INDEX IF NOT EXISTS idx_ha_runtime_outbox_created
                ON ha_runtime_outbox(created_at, seq)"#,
+            r#"CREATE INDEX IF NOT EXISTS idx_ha_billing_ledger_imports_local
+               ON ha_billing_ledger_imports(local_auth_token_log_id)"#,
         ] {
             self.create_index(sql).await?;
         }

@@ -1080,18 +1080,7 @@ impl KeyStore {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        let sql = if table == "meta" {
-            format!(
-                "SELECT json_object({json_args}) AS row_json FROM {} WHERE key IN ({}) ORDER BY key ASC",
-                quote_sqlite_identifier(table),
-                ha_meta_key_list_sql()
-            )
-        } else {
-            format!(
-                "SELECT json_object({json_args}) AS row_json FROM {} ORDER BY rowid ASC",
-                quote_sqlite_identifier(table)
-            )
-        };
+        let sql = ha_baseline_select_sql(table, &json_args);
         let rows = sqlx::query_scalar::<_, String>(&sql)
             .fetch_all(&self.pool)
             .await?;
@@ -1144,15 +1133,7 @@ impl KeyStore {
             if !Self::table_exists_on_conn(conn, table).await? {
                 continue;
             }
-            let sql = if *table == "meta" {
-                format!(
-                    "SELECT COUNT(*) FROM {} WHERE key IN ({})",
-                    quote_sqlite_identifier(table),
-                    ha_meta_key_list_sql()
-                )
-            } else {
-                format!("SELECT COUNT(*) FROM {}", quote_sqlite_identifier(table))
-            };
+            let sql = ha_baseline_count_sql(table);
             total += sqlx::query_scalar::<_, i64>(&sql)
                 .fetch_one(&mut **conn)
                 .await?;
@@ -1397,11 +1378,6 @@ impl KeyStore {
             let old_resource_id = ha_trigger_resource_id("OLD", &columns);
             let table_ident = sqlite_qualified_table_name(table);
             let table_lit = quote_sqlite_string(table);
-            let meta_filter = if *table == "meta" {
-                Some(format!("key IN ({})", ha_meta_key_list_sql()))
-            } else {
-                None
-            };
             for (suffix, timing, row_json, resource_id, op) in [
                 ("insert", "AFTER INSERT", new_json.as_str(), new_resource_id.as_str(), "upsert"),
                 ("update", "AFTER UPDATE", new_json.as_str(), new_resource_id.as_str(), "upsert"),
@@ -1413,10 +1389,13 @@ impl KeyStore {
                     suffix,
                 ));
                 let row_alias = if timing == "AFTER DELETE" { "OLD" } else { "NEW" };
-                let row_filter = meta_filter
-                    .as_ref()
-                    .map(|filter| format!(" AND {row_alias}.{filter}"))
-                    .unwrap_or_default();
+                let row_filter = match *table {
+                    "meta" => format!(" AND {row_alias}.key IN ({})", ha_meta_key_list_sql()),
+                    "billing_ledger" => {
+                        format!(" AND {row_alias}.auth_token_log_id > 0")
+                    }
+                    _ => String::new(),
+                };
                 let sql = format!(
                     r#"
                     CREATE TRIGGER IF NOT EXISTS {trigger}
@@ -1521,6 +1500,43 @@ fn ha_meta_key_list_sql() -> String {
         .join(", ")
 }
 
+fn ha_baseline_select_sql(table: &str, json_args: &str) -> String {
+    if table == "meta" {
+        return format!(
+            "SELECT json_object({json_args}) AS row_json FROM {} WHERE key IN ({}) ORDER BY key ASC",
+            quote_sqlite_identifier(table),
+            ha_meta_key_list_sql()
+        );
+    }
+    if table == "billing_ledger" {
+        return format!(
+            "SELECT json_object({json_args}) AS row_json FROM {} WHERE auth_token_log_id > 0 ORDER BY rowid ASC",
+            quote_sqlite_identifier(table)
+        );
+    }
+    format!(
+        "SELECT json_object({json_args}) AS row_json FROM {} ORDER BY rowid ASC",
+        quote_sqlite_identifier(table)
+    )
+}
+
+fn ha_baseline_count_sql(table: &str) -> String {
+    if table == "meta" {
+        return format!(
+            "SELECT COUNT(*) FROM {} WHERE key IN ({})",
+            quote_sqlite_identifier(table),
+            ha_meta_key_list_sql()
+        );
+    }
+    if table == "billing_ledger" {
+        return format!(
+            "SELECT COUNT(*) FROM {} WHERE auth_token_log_id > 0",
+            quote_sqlite_identifier(table)
+        );
+    }
+    format!("SELECT COUNT(*) FROM {}", quote_sqlite_identifier(table))
+}
+
 fn ensure_ha_resource_whitelisted(
     channel: HaSyncChannel,
     resource: &str,
@@ -1606,18 +1622,7 @@ impl HaBaselineReadSession {
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            let sql = if *table == "meta" {
-                format!(
-                    "SELECT json_object({json_args}) AS row_json FROM {} WHERE key IN ({}) ORDER BY key ASC",
-                    quote_sqlite_identifier(table),
-                    ha_meta_key_list_sql()
-                )
-            } else {
-                format!(
-                    "SELECT json_object({json_args}) AS row_json FROM {} ORDER BY rowid ASC",
-                    quote_sqlite_identifier(table)
-                )
-            };
+            let sql = ha_baseline_select_sql(table, &json_args);
             let mut rows = sqlx::query_scalar::<_, String>(&sql).fetch(&mut *self.conn);
             while let Some(raw_row) = rows.try_next().await? {
                 let row: serde_json::Value = serde_json::from_str(&raw_row)
@@ -1875,13 +1880,172 @@ fn ha_trigger_resource_id(alias: &str, columns: &[String]) -> String {
     }
 }
 
+async fn lookup_peer_billing_ledger_local_id_on_conn(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    peer_node_id: &str,
+    peer_auth_token_log_id: i64,
+) -> Result<Option<i64>, ProxyError> {
+    sqlx::query_scalar(
+        r#"
+        SELECT local_auth_token_log_id
+        FROM ha_billing_ledger_imports
+        WHERE peer_node_id = ? AND peer_auth_token_log_id = ?
+        LIMIT 1
+        "#,
+    )
+    .bind(peer_node_id)
+    .bind(peer_auth_token_log_id)
+    .fetch_optional(&mut **conn)
+    .await
+    .map_err(ProxyError::from)
+}
+
+async fn get_or_create_peer_billing_ledger_local_id_on_conn(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    peer_node_id: &str,
+    peer_auth_token_log_id: i64,
+) -> Result<i64, ProxyError> {
+    if let Some(local_id) =
+        lookup_peer_billing_ledger_local_id_on_conn(conn, peer_node_id, peer_auth_token_log_id)
+            .await?
+    {
+        sqlx::query(
+            r#"
+            UPDATE ha_billing_ledger_imports
+            SET updated_at = CAST(strftime('%s','now') AS INTEGER)
+            WHERE peer_node_id = ? AND peer_auth_token_log_id = ?
+            "#,
+        )
+        .bind(peer_node_id)
+        .bind(peer_auth_token_log_id)
+        .execute(&mut **conn)
+        .await?;
+        return Ok(local_id);
+    }
+
+    let min_ledger_id = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT MIN(auth_token_log_id) FROM billing_ledger WHERE auth_token_log_id < 0",
+    )
+    .fetch_one(&mut **conn)
+    .await?
+    .unwrap_or(0);
+    let min_mapping_id = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT MIN(local_auth_token_log_id) FROM ha_billing_ledger_imports",
+    )
+    .fetch_one(&mut **conn)
+    .await?
+    .unwrap_or(0);
+    let min_existing_id = min_ledger_id.min(min_mapping_id).min(0);
+    if min_existing_id == i64::MIN {
+        return Err(ProxyError::Other(
+            "HA billing ledger import id namespace exhausted".to_string(),
+        ));
+    }
+    let local_id = min_existing_id - 1;
+    sqlx::query(
+        r#"
+        INSERT INTO ha_billing_ledger_imports (
+            peer_node_id, peer_auth_token_log_id, local_auth_token_log_id, updated_at
+        )
+        VALUES (?, ?, ?, CAST(strftime('%s','now') AS INTEGER))
+        "#,
+    )
+    .bind(peer_node_id)
+    .bind(peer_auth_token_log_id)
+    .bind(local_id)
+    .execute(&mut **conn)
+    .await?;
+    Ok(local_id)
+}
+
+async fn prepare_peer_billing_ledger_row_on_conn(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    peer_node_id: &str,
+    op: &str,
+    row: serde_json::Value,
+) -> Result<Option<serde_json::Value>, ProxyError> {
+    let Some(object) = row.as_object() else {
+        return Err(ProxyError::Other(
+            "HA billing ledger payload must be a JSON object".to_string(),
+        ));
+    };
+    let peer_auth_token_log_id =
+        ha_json_i64_field(object, "billing_ledger", "auth_token_log_id")?;
+    if peer_auth_token_log_id <= 0 {
+        return Ok(None);
+    }
+    let local_auth_token_log_id = match op {
+        "upsert" => {
+            get_or_create_peer_billing_ledger_local_id_on_conn(
+                conn,
+                peer_node_id,
+                peer_auth_token_log_id,
+            )
+            .await?
+        }
+        "delete" => {
+            let Some(local_id) = lookup_peer_billing_ledger_local_id_on_conn(
+                conn,
+                peer_node_id,
+                peer_auth_token_log_id,
+            )
+            .await?
+            else {
+                return Ok(None);
+            };
+            local_id
+        }
+        _ => return Ok(Some(row)),
+    };
+
+    let mut object = object.clone();
+    object.insert(
+        "auth_token_log_id".to_string(),
+        serde_json::json!(local_auth_token_log_id),
+    );
+    if object.contains_key("request_log_id") {
+        object.insert("request_log_id".to_string(), serde_json::Value::Null);
+    }
+    Ok(Some(serde_json::Value::Object(object)))
+}
+
+async fn prepare_peer_import_row_on_conn(
+    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
+    peer_node_id: Option<&str>,
+    channel: HaSyncChannel,
+    table: &str,
+    op: &str,
+    row: serde_json::Value,
+) -> Result<Option<serde_json::Value>, ProxyError> {
+    if channel == HaSyncChannel::Billing
+        && table == "billing_ledger"
+        && let Some(peer_node_id) = peer_node_id
+    {
+        return prepare_peer_billing_ledger_row_on_conn(conn, peer_node_id, op, row).await;
+    }
+    Ok(Some(row))
+}
+
 async fn insert_json_row_on_conn(
     conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
     channel: HaSyncChannel,
     table: &str,
     row: &serde_json::Value,
+    peer_import_node_id: Option<&str>,
 ) -> Result<(), ProxyError> {
     ensure_ha_resource_whitelisted(channel, table)?;
+    let Some(row) = prepare_peer_import_row_on_conn(
+        conn,
+        peer_import_node_id,
+        channel,
+        table,
+        "upsert",
+        row.clone(),
+    )
+    .await?
+    else {
+        return Ok(());
+    };
     let Some(object) = row.as_object() else {
         return Err(ProxyError::Other(
             "HA row payload must be a JSON object".to_string(),
@@ -1968,8 +2132,21 @@ async fn delete_json_row_on_conn(
     table: &str,
     resource_id: &str,
     row: &serde_json::Value,
+    peer_import_node_id: Option<&str>,
 ) -> Result<(), ProxyError> {
     ensure_ha_resource_whitelisted(channel, table)?;
+    let Some(row) = prepare_peer_import_row_on_conn(
+        conn,
+        peer_import_node_id,
+        channel,
+        table,
+        "delete",
+        row.clone(),
+    )
+    .await?
+    else {
+        return Ok(());
+    };
     let columns = table_column_info_on_conn(conn, table).await?;
     let mut primary_key_columns = columns
         .iter()
@@ -2377,7 +2554,7 @@ impl HaBaselineApplySession {
         self.apply_line_inner(line, None).await
     }
 
-    pub async fn apply_line_with_peer_runtime_counter_merge(
+    pub async fn apply_line_with_peer_import(
         &mut self,
         line: &str,
         peer_node_id: &str,
@@ -2388,7 +2565,7 @@ impl HaBaselineApplySession {
     async fn apply_line_inner(
         &mut self,
         line: &str,
-        peer_runtime_counter_merge_node_id: Option<&str>,
+        peer_import_node_id: Option<&str>,
     ) -> Result<(), ProxyError> {
         self.payload_bytes += line.len();
         let value: serde_json::Value = serde_json::from_str(line)
@@ -2417,7 +2594,7 @@ impl HaBaselineApplySession {
                     .map(|bytes| bytes.len())
                     .unwrap_or_default();
                 let merged_counter =
-                    if let Some(peer_node_id) = peer_runtime_counter_merge_node_id {
+                    if let Some(peer_node_id) = peer_import_node_id {
                         merge_peer_runtime_counter_on_conn(
                             &mut self.conn,
                             peer_node_id,
@@ -2431,7 +2608,14 @@ impl HaBaselineApplySession {
                         false
                     };
                 if !merged_counter {
-                    insert_json_row_on_conn(&mut self.conn, self.channel, resource, &data).await?;
+                    insert_json_row_on_conn(
+                        &mut self.conn,
+                        self.channel,
+                        resource,
+                        &data,
+                        peer_import_node_id,
+                    )
+                    .await?;
                 }
                 self.row_count += 1;
             }
@@ -2499,7 +2683,7 @@ impl HaEventsApplySession {
         self.apply_line_inner(line, None).await
     }
 
-    pub async fn apply_line_with_peer_runtime_counter_merge(
+    pub async fn apply_line_with_peer_import(
         &mut self,
         line: &str,
         peer_node_id: &str,
@@ -2510,7 +2694,7 @@ impl HaEventsApplySession {
     async fn apply_line_inner(
         &mut self,
         line: &str,
-        peer_runtime_counter_merge_node_id: Option<&str>,
+        peer_import_node_id: Option<&str>,
     ) -> Result<(), ProxyError> {
         self.payload_bytes += line.len();
         let value: serde_json::Value = serde_json::from_str(line)
@@ -2552,7 +2736,7 @@ impl HaEventsApplySession {
                     .unwrap_or(self.high_watermark)
                     .max(self.high_watermark);
                 let merged_counter =
-                    if let Some(peer_node_id) = peer_runtime_counter_merge_node_id {
+                    if let Some(peer_node_id) = peer_import_node_id {
                         merge_peer_runtime_counter_on_conn(
                             &mut self.conn,
                             peer_node_id,
@@ -2574,6 +2758,7 @@ impl HaEventsApplySession {
                                 resource,
                                 resource_id,
                                 &payload,
+                                peer_import_node_id,
                             )
                             .await?
                         }
@@ -2583,6 +2768,7 @@ impl HaEventsApplySession {
                                 self.channel,
                                 resource,
                                 &payload,
+                                peer_import_node_id,
                             )
                             .await?
                         }

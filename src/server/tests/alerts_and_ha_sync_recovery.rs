@@ -558,6 +558,260 @@ async fn dual_active_peer_runtime_baseline_does_not_delete_local_rows() {
 }
 
 #[tokio::test]
+async fn dual_active_peer_billing_sync_namespaces_peer_log_ids() {
+    let billing_baseline_ndjson = [
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "baseline_start",
+            "channel": "billing",
+            "nodeId": "peer-billing",
+            "highWatermark": 1
+        })
+        .to_string(),
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "resource",
+            "channel": "billing",
+            "resource": "billing_ledger",
+            "op": "upsert",
+            "data": {
+                "auth_token_log_id": 1,
+                "token_id": "tok-peer-billing",
+                "billing_subject": "token:tok-peer-billing",
+                "billing_state": "pending",
+                "business_credits": 7,
+                "request_user_id": null,
+                "api_key_id": "key-peer-billing",
+                "request_log_id": 88,
+                "result_status": "success",
+                "created_at": 10,
+                "updated_at": 10,
+                "settled_at": null,
+                "error_message": null
+            }
+        })
+        .to_string(),
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "baseline_end",
+            "channel": "billing",
+            "nodeId": "peer-billing",
+            "highWatermark": 1,
+            "rowCount": 1
+        })
+        .to_string(),
+    ]
+    .join("\n");
+    let billing_events_ndjson = [
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "events_start",
+            "channel": "billing",
+            "after": 1,
+            "limit": 1000
+        })
+        .to_string(),
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "event",
+            "channel": "billing",
+            "event": {
+                "channel": "billing",
+                "seq": 2,
+                "kind": "state",
+                "resource": "billing_ledger",
+                "resourceId": "1",
+                "op": "upsert",
+                "payload": {
+                    "auth_token_log_id": 1,
+                    "token_id": "tok-peer-billing",
+                    "billing_subject": "token:tok-peer-billing",
+                    "billing_state": "charged",
+                    "business_credits": 8,
+                    "request_user_id": null,
+                    "api_key_id": "key-peer-billing",
+                    "request_log_id": 89,
+                    "result_status": "success",
+                    "created_at": 10,
+                    "updated_at": 20,
+                    "settled_at": 20,
+                    "error_message": null
+                },
+                "createdAt": 20,
+                "checksum": null
+            }
+        })
+        .to_string(),
+        serde_json::json!({
+            "schemaVersion": 2,
+            "kind": "events_end",
+            "channel": "billing",
+            "lastSeq": 2,
+            "eventCount": 1
+        })
+        .to_string(),
+    ]
+    .join("\n");
+    let billing_baseline_body = zstd::stream::encode_all(billing_baseline_ndjson.as_bytes(), 0)
+        .expect("encode billing baseline");
+    let billing_events_body = zstd::stream::encode_all(billing_events_ndjson.as_bytes(), 0)
+        .expect("encode billing events");
+
+    let app = Router::new()
+        .route(
+            "/api/admin/ha/baseline",
+            get(move |_query: Query<std::collections::HashMap<String, String>>| {
+                let billing_baseline_body = billing_baseline_body.clone();
+                async move {
+                    Response::builder()
+                        .header("content-encoding", "zstd")
+                        .body(Body::from(billing_baseline_body))
+                        .expect("billing baseline response")
+                }
+            }),
+        )
+        .route(
+            "/api/admin/ha/events",
+            get(move |_query: Query<std::collections::HashMap<String, String>>| {
+                let billing_events_body = billing_events_body.clone();
+                async move {
+                    Response::builder()
+                        .header("content-encoding", "zstd")
+                        .body(Body::from(billing_events_body))
+                        .expect("billing events response")
+                }
+            }),
+        )
+        .route("/api/admin/ha/events/ack", post(|| async { StatusCode::OK }));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let source_addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app.into_make_service())
+            .await
+            .unwrap();
+    });
+
+    let db_path = temp_db_path("ha-dual-active-billing-peer-id-namespace");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-dual-active-billing-peer-id-namespace".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("proxy created");
+    let pool = connect_sqlite_test_pool(&db_str).await;
+    sqlx::query(
+        r#"
+        INSERT INTO billing_ledger (
+            auth_token_log_id,
+            token_id,
+            billing_subject,
+            billing_state,
+            business_credits,
+            request_user_id,
+            api_key_id,
+            request_log_id,
+            result_status,
+            created_at,
+            updated_at,
+            settled_at,
+            error_message
+        ) VALUES (
+            1,
+            'tok-local-billing',
+            'token:tok-local-billing',
+            'charged',
+            3,
+            NULL,
+            'key-local-billing',
+            NULL,
+            'success',
+            1,
+            1,
+            1,
+            NULL
+        )
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("insert local billing row");
+
+    let ha = tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig {
+        mode: tavily_hikari::HaMode::ActiveStandby,
+        node_id: "node-a".to_string(),
+        source_kind: Some(tavily_hikari::HaSourceKind::OriginGroup),
+        source_origin_group_id: Some("og-core".to_string()),
+        core_dual_active: true,
+        ..tavily_hikari::HaConfig::default()
+    });
+    let state = Arc::new(AppState {
+        proxy: proxy.clone(),
+        static_dir: None,
+        forward_auth: ForwardAuthConfig::new(None, None, None, None),
+        forward_auth_enabled: false,
+        builtin_admin: BuiltinAdminAuth::new(false, None, None),
+        linuxdo_oauth: LinuxDoOAuthOptions::disabled(),
+        linuxdo_credit: LinuxDoCreditOptions::disabled(),
+        ha,
+        dev_open_admin: true,
+        usage_base: "http://127.0.0.1:58088".to_string(),
+        api_key_ip_geo_origin: "https://api.country.is".to_string(),
+        dashboard_overview_cache: new_dashboard_overview_cache(),
+    });
+
+    let client = Client::new();
+    run_ha_sync_once_for_peer(
+        &state,
+        &client,
+        &format!("http://{source_addr}"),
+        "node-b",
+        "test-token",
+        &[tavily_hikari::HaSyncChannel::Billing],
+    )
+    .await
+    .expect("dual-active peer billing sync should namespace peer ids");
+
+    let local_token: String =
+        sqlx::query_scalar("SELECT token_id FROM billing_ledger WHERE auth_token_log_id = 1")
+            .fetch_one(&pool)
+            .await
+            .expect("read local billing row");
+    assert_eq!(local_token, "tok-local-billing");
+    let peer_row: (i64, String, String, i64, Option<i64>) = sqlx::query_as(
+        r#"
+        SELECT auth_token_log_id, token_id, billing_state, business_credits, request_log_id
+        FROM billing_ledger
+        WHERE token_id = 'tok-peer-billing'
+        LIMIT 1
+        "#,
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read peer billing row");
+    assert!(peer_row.0 < 0, "peer billing row should use negative local id");
+    assert_eq!(peer_row.2, "charged");
+    assert_eq!(peer_row.3, 8);
+    assert_eq!(peer_row.4, None);
+
+    let baseline = proxy
+        .export_ha_baseline_ndjson(tavily_hikari::HaSyncChannel::Billing, "node-a")
+        .await
+        .expect("export local billing baseline");
+    assert!(baseline.ndjson.contains("tok-local-billing"));
+    assert!(
+        !baseline.ndjson.contains("tok-peer-billing"),
+        "peer-imported billing rows must not be exported back to peers"
+    );
+
+    pool.close().await;
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+}
+
+#[tokio::test]
 async fn dual_active_peer_runtime_sync_merges_mutable_quota_counter_deltas() {
     let runtime_baseline_ndjson = [
         serde_json::json!({
