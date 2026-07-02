@@ -979,8 +979,16 @@ impl HaRuntime {
         });
         let dual_active_enabled = self.config.dual_active_enabled();
         let allows_basic_business = if dual_active_enabled {
-            state.full_master_node_id.is_some()
-                && matches!(state.role, HaNodeRole::FullMaster | HaNodeRole::Standby)
+            match state.role {
+                HaNodeRole::FullMaster => state
+                    .full_master_node_id
+                    .as_deref()
+                    .is_some_and(|node_id| node_id == self.config.node_id),
+                HaNodeRole::Standby => {
+                    state.full_master_node_id.is_some() && state.last_sync_at.is_some()
+                }
+                HaNodeRole::ProvisionalMaster | HaNodeRole::Recovery => false,
+            }
         } else {
             state.role.allows_basic_business_legacy()
         };
@@ -1965,13 +1973,19 @@ mod tests {
             .expect("switch leader to peer");
         let after = runtime.status().await;
         assert_eq!(after.role, HaNodeRole::Standby);
-        assert!(after.allows_basic_business);
+        assert!(!after.allows_basic_business);
         assert!(!after.allows_full_writes);
         assert_eq!(after.full_master_node_id.as_deref(), Some("node-b"));
         assert_eq!(
             after.message.as_deref(),
             Some("dual-active leader key points to a peer")
         );
+
+        runtime.mark_sync_success().await;
+        let after_sync = runtime.status().await;
+        assert_eq!(after_sync.role, HaNodeRole::Standby);
+        assert!(after_sync.allows_basic_business);
+        assert!(!after_sync.allows_full_writes);
     }
 
     #[tokio::test]
