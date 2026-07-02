@@ -218,6 +218,70 @@ async fn startup_restores_persisted_ha_source_settings_before_role_check() {
 }
 
 #[tokio::test]
+async fn startup_keeps_persisted_recovery_fenced_after_role_check() {
+    let db_path = temp_db_path("ha-startup-persisted-recovery");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-startup-persisted-recovery".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("proxy created");
+    proxy
+        .persist_ha_node_state(
+            "node-recovery",
+            tavily_hikari::HaNodeRole::Recovery,
+            None,
+            None,
+            Some("previous recovery role persisted"),
+        )
+        .await
+        .expect("persist previous recovery state");
+    proxy
+        .set_ha_full_master_node_id("node-recovery")
+        .await
+        .expect("seed dual-active leader");
+    proxy
+        .flush_ha_state_writes()
+        .await
+        .expect("flush previous recovery state");
+
+    let ha = tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig {
+        mode: tavily_hikari::HaMode::ActiveStandby,
+        node_id: "node-recovery".to_string(),
+        database_path: Some(db_str.clone()),
+        source_kind: Some(tavily_hikari::HaSourceKind::OriginGroup),
+        source_origin_group_id: Some("og-core".to_string()),
+        core_dual_active: true,
+        ..tavily_hikari::HaConfig::default()
+    });
+
+    let status = initialize_ha_startup_state(&proxy, &ha).await;
+    assert_eq!(status.role, tavily_hikari::HaNodeRole::Recovery);
+    assert_eq!(status.full_master_node_id.as_deref(), Some("node-recovery"));
+    assert!(!status.allows_basic_business);
+    assert!(!status.allows_full_writes);
+    assert_eq!(
+        status.recovery_status.as_deref(),
+        Some("previous recovery role persisted; recovery import required")
+    );
+
+    let pool = connect_sqlite_test_pool(&db_str).await;
+    let persisted_role: String =
+        sqlx::query_scalar("SELECT role FROM ha_node_state WHERE id = 'local'")
+            .fetch_one(&pool)
+            .await
+            .expect("read persisted recovery role");
+    assert_eq!(persisted_role, "recovery");
+    pool.close().await;
+
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+}
+
+#[tokio::test]
 async fn persist_ha_status_snapshot_spawns_post_ready_pressure_rebuild_for_serving_roles() {
     let db_path = temp_db_path("ha-post-ready-pressure-rebuild");
     let db_str = db_path.to_string_lossy().to_string();

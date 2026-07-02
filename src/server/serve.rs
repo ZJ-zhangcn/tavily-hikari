@@ -552,6 +552,11 @@ async fn reconcile_ha_startup_role(
             );
         }
     }
+    if previous_ha_role == Some(tavily_hikari::HaNodeRole::Recovery) {
+        return ha
+            .enter_recovery("previous recovery role persisted; recovery import required".to_string())
+            .await;
+    }
     let mut status = ha.status().await;
     if startup_role_checked
         && status.edgeone_api_configured
