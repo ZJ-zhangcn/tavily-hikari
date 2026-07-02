@@ -1801,6 +1801,7 @@ impl KeyStore {
             SELECT auth_token_log_id
             FROM billing_ledger
             WHERE billing_state = ? AND billing_subject = ? AND COALESCE(business_credits, 0) > 0
+              AND auth_token_log_id > 0
             ORDER BY auth_token_log_id ASC
             "#,
         )
@@ -1823,6 +1824,7 @@ impl KeyStore {
               AND token_id = ?
               AND billing_subject IS NOT NULL
               AND COALESCE(business_credits, 0) > 0
+              AND auth_token_log_id > 0
             ORDER BY billing_subject ASC
             "#,
         )

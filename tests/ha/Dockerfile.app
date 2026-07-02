@@ -12,17 +12,13 @@ RUN mkdir -p src \
     && cargo fetch --locked
 
 COPY src ./src
-RUN cargo build --release --locked --bin tavily-hikari --bin observability_sidecar_migrate
+RUN cargo build --release --locked --bin tavily-hikari --bin observability_sidecar_migrate \
+    && install -m 0755 /app/target/release/tavily-hikari /usr/local/bin/tavily-hikari \
+    && install -m 0755 /app/target/release/observability_sidecar_migrate /usr/local/bin/observability_sidecar_migrate
 
-FROM debian:bookworm-slim
-
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl libsqlite3-0 \
-    && rm -rf /var/lib/apt/lists/*
+FROM builder AS runtime
 
 WORKDIR /srv/app
-COPY --from=builder /app/target/release/tavily-hikari /usr/local/bin/tavily-hikari
-COPY --from=builder /app/target/release/observability_sidecar_migrate /usr/local/bin/observability_sidecar_migrate
 
 ENV PROXY_BIND=0.0.0.0 \
     PROXY_PORT=8787 \

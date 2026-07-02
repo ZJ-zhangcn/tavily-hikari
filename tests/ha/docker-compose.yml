@@ -1,39 +1,50 @@
 services:
   edgeone-mock:
-    image: python:3.12-slim
-    working_dir: /work
-    command: ["python", "/work/scripts/edgeone_mock.py"]
-    environment:
-      EDGEONE_INITIAL_ORIGIN: node-a:8787
-    volumes:
-      - ./scripts:/work/scripts:ro
-      - edgeone-state:/state
+    build:
+      context: ../..
+      dockerfile: tests/ha/Dockerfile.mock
+    command:
+      - /usr/local/bin/mock_edgeone
+      - --bind
+      - 0.0.0.0:9000
+      - --initial-direct-origin
+      - node-a:8787
+      - --initial-origin-group-id
+      - og-core
+      - --initial-source-kind
+      - ${HA_EDGEONE_INITIAL_SOURCE_KIND:-direct}
 
   edgeone-ingress:
-    image: python:3.12-slim
-    working_dir: /work
-    command: ["python", "/work/scripts/edgeone_ingress.py"]
-    environment:
-      EDGEONE_MOCK_URL: http://edgeone-mock:9000
-      INGRESS_PORT: 8080
-    volumes:
-      - ./scripts:/work/scripts:ro
+    build:
+      context: ../..
+      dockerfile: tests/ha/Dockerfile.mock
+    command:
+      - /usr/local/bin/mock_edgeone_ingress
+      - --bind
+      - 0.0.0.0:8080
+      - --edgeone-mock-url
+      - http://edgeone-mock:9000
     depends_on:
       - edgeone-mock
       - node-a
       - node-b
 
   upstream-mock:
-    image: python:3.12-slim
-    working_dir: /work
-    command: ["python", "/work/scripts/upstream_mock.py"]
-    volumes:
-      - ./scripts:/work/scripts:ro
+    build:
+      context: ../..
+      dockerfile: tests/ha/Dockerfile.mock
+    environment:
+      MOCK_TAVILY_PRESEEDED_KEYS: tvly-node-a-seed,tvly-node-b-seed
+    command:
+      - /usr/local/bin/mock_tavily
+      - --bind
+      - 0.0.0.0:9001
 
   node-a:
     build:
       context: ../..
       dockerfile: tests/ha/Dockerfile.app
+    user: "${HA_RUNTIME_UID:-0}:${HA_RUNTIME_GID:-0}"
     environment:
       TAVILY_API_KEYS: tvly-node-a-seed
       TAVILY_UPSTREAM: http://upstream-mock:9001
@@ -56,11 +67,14 @@ services:
       EDGEONE_SECRET_KEY: secret-key
       EDGEONE_API_ENDPOINT: http://edgeone-mock:9000
       HA_INTERNAL_TOKEN: ha-internal-token
-      HA_SYNC_INTERVAL_SECS: 5
+      HA_SYNC_INTERVAL_SECS: 2
+      HA_SOURCE_KIND: ${HA_SOURCE_KIND:-direct}
+      HA_CORE_DUAL_ACTIVE: ${HA_CORE_DUAL_ACTIVE:-0}
+      HA_SOURCE_ORIGIN_GROUP_ID: ${HA_SOURCE_ORIGIN_GROUP_ID:-}
       HA_PEER_NODES_JSON: >-
         [{"nodeId":"node-b","adminBaseUrl":"http://node-b:8787","publicOrigin":"node-b:8787","roleHint":"standby_candidate"}]
     volumes:
-      - node-a-data:/srv/app/data
+      - ${HA_RUNTIME_DIR:?set HA_RUNTIME_DIR}/node-a:/srv/app/data
     depends_on:
       - edgeone-mock
       - upstream-mock
@@ -69,6 +83,7 @@ services:
     build:
       context: ../..
       dockerfile: tests/ha/Dockerfile.app
+    user: "${HA_RUNTIME_UID:-0}:${HA_RUNTIME_GID:-0}"
     environment:
       TAVILY_API_KEYS: tvly-node-b-seed
       TAVILY_UPSTREAM: http://upstream-mock:9001
@@ -90,32 +105,15 @@ services:
       EDGEONE_SECRET_ID: secret-id
       EDGEONE_SECRET_KEY: secret-key
       EDGEONE_API_ENDPOINT: http://edgeone-mock:9000
-      HA_SYNC_SOURCE_URL: http://node-a:8787
       HA_INTERNAL_TOKEN: ha-internal-token
-      HA_SYNC_INTERVAL_SECS: 5
+      HA_SYNC_INTERVAL_SECS: 2
+      HA_SOURCE_KIND: ${HA_SOURCE_KIND:-direct}
+      HA_CORE_DUAL_ACTIVE: ${HA_CORE_DUAL_ACTIVE:-0}
+      HA_SOURCE_ORIGIN_GROUP_ID: ${HA_SOURCE_ORIGIN_GROUP_ID:-}
       HA_PEER_NODES_JSON: >-
-        [{"nodeId":"node-a","adminBaseUrl":"http://node-a:8787","publicOrigin":"node-a:8787","roleHint":"standby_candidate"}]
+        [{"nodeId":"node-a","adminBaseUrl":"http://node-a:8787","publicOrigin":"node-a:8787","roleHint":"observer"}]
     volumes:
-      - node-b-data:/srv/app/data
+      - ${HA_RUNTIME_DIR:?set HA_RUNTIME_DIR}/node-b:/srv/app/data
     depends_on:
       - edgeone-mock
       - upstream-mock
-
-  ha-test-runner:
-    image: python:3.12-slim
-    working_dir: /work
-    command: ["sleep", "infinity"]
-    environment:
-      INGRESS_URL: http://edgeone-ingress:8080
-      EDGEONE_MOCK_URL: http://edgeone-mock:9000
-      NODE_A_URL: http://node-a:8787
-      NODE_B_URL: http://node-b:8787
-    volumes:
-      - ./scripts:/work/scripts:ro
-    depends_on:
-      - edgeone-ingress
-
-volumes:
-  edgeone-state:
-  node-a-data:
-  node-b-data:

@@ -578,6 +578,8 @@ async fn admin_ha_status_surfaces_peer_source_config_target() {
                     "nodeId": "node-peer",
                     "nodePublicOrigin": "peer-public-origin:443",
                     "role": "standby",
+                    "dualActiveEnabled": false,
+                    "fullMasterNodeId": null,
                     "degraded": false,
                     "allowsBasicBusiness": false,
                     "allowsFullWrites": false,
@@ -2129,6 +2131,8 @@ async fn ha_startup_role_check_failure_does_not_recover_previous_active() {
             .unwrap();
     });
 
+    let db_path = temp_db_path("ha-startup-role-check-failure");
+    let db_str = db_path.to_string_lossy().to_string();
     let ha = tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig {
         mode: tavily_hikari::HaMode::ActiveStandby,
         node_id: "node-previous-active".to_string(),
@@ -2142,8 +2146,19 @@ async fn ha_startup_role_check_failure_does_not_recover_previous_active() {
         ..tavily_hikari::HaConfig::default()
     });
 
-    let status =
-        reconcile_ha_startup_role(&ha, Some(tavily_hikari::HaNodeRole::FullMaster)).await;
+    let proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-alerts-ha-startup-role".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .unwrap();
+    let status = reconcile_ha_startup_role(
+        &proxy,
+        &ha,
+        Some(tavily_hikari::HaNodeRole::FullMaster),
+    )
+    .await;
     assert_eq!(status.role, tavily_hikari::HaNodeRole::Standby);
     assert!(
         status
@@ -2242,11 +2257,11 @@ async fn ha_promote_records_edgeone_request_response_audit() {
 }
 
 #[tokio::test]
-async fn ha_source_endpoint_persists_origin_group_settings() {
-    let db_path = temp_db_path("ha-source-origin-group");
+async fn ha_finalize_is_rejected_in_dual_active_mode() {
+    let db_path = temp_db_path("ha-dual-active-finalize-rejected");
     let db_str = db_path.to_string_lossy().to_string();
     let proxy = TavilyProxy::with_endpoint(
-        vec!["tvly-ha-source-origin-group".to_string()],
+        vec!["tvly-ha-dual-active-finalize-rejected".to_string()],
         DEFAULT_UPSTREAM,
         &db_str,
     )
@@ -2254,45 +2269,95 @@ async fn ha_source_endpoint_persists_origin_group_settings() {
     .expect("proxy created");
     let ha = tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig {
         mode: tavily_hikari::HaMode::ActiveStandby,
-        node_id: "node-source-group".to_string(),
+        node_id: "node-dual-finalize".to_string(),
         database_path: Some(db_str.clone()),
+        source_kind: Some(tavily_hikari::HaSourceKind::OriginGroup),
+        source_origin_group_id: Some("eo-group-dual-finalize".to_string()),
+        core_dual_active: true,
+        edgeone_zone_id: Some("zone-test".to_string()),
+        edgeone_domain: Some("hikari.example.test".to_string()),
+        edgeone_secret_id: Some("secret-id".to_string()),
+        edgeone_secret_key: Some("secret-key".to_string()),
+        edgeone_api_endpoint: "http://127.0.0.1:9".to_string(),
         ..tavily_hikari::HaConfig::default()
     });
     let addr = spawn_ha_admin_server(proxy, ha, true).await;
 
     let response = Client::new()
-        .put(format!("http://{addr}/api/admin/ha/source"))
-        .json(&serde_json::json!({
-            "sourceKind": "origin_group",
-            "originGroupId": "eo-group-api-test",
-            "applyToEdgeone": false
-        }))
+        .post(format!("http://{addr}/api/admin/ha/finalize"))
         .send()
         .await
-        .expect("source settings response");
-    let status = response.status();
-    let body = response.text().await.expect("source settings body text");
+        .expect("finalize response");
+    assert_eq!(response.status(), reqwest::StatusCode::CONFLICT);
+    let body = response.text().await.expect("finalize body");
     assert!(
-        status.is_success(),
-        "source settings request should succeed, got {status}: {body}"
+        body.contains("dual-active mode"),
+        "dual-active finalize should be rejected: {body}"
     );
-    let response: Value = serde_json::from_str(&body).expect("source settings body");
-
-    assert_eq!(response["haSourceOverride"]["sourceKind"], "origin_group");
-    assert_eq!(response["haSourceOverride"]["originGroupId"], "eo-group-api-test");
-    assert_eq!(response["haSourceEffective"]["target"], "eo-group-api-test");
-    assert_eq!(response["edgeoneExpectedOrigin"], "eo-group-api-test");
-    assert_eq!(response["edgeoneExpectedSourceKind"], "origin_group");
 
     let _ = std::fs::remove_file(db_path);
 }
 
 #[tokio::test]
-async fn ha_source_endpoint_accepts_lowercase_direct_origin_scheme() {
-    let db_path = temp_db_path("ha-source-direct-scheme");
+async fn dual_active_promote_rejects_non_force_and_reachable_full_writer_peer() {
+    let peer_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind peer listener");
+    let peer_addr = peer_listener.local_addr().expect("peer addr");
+    let now = Utc::now().timestamp();
+    tokio::spawn(async move {
+        let app = Router::new().route(
+            "/api/internal/ha/status",
+            get(move || async move {
+                Json(json!({
+                    "mode": "active_standby",
+                    "nodeId": "node-b",
+                    "nodePublicOrigin": "node-b-public:443",
+                    "role": "full_master",
+                    "dualActiveEnabled": true,
+                    "fullMasterNodeId": "node-b",
+                    "degraded": false,
+                    "allowsBasicBusiness": true,
+                    "allowsFullWrites": true,
+                    "edgeoneDomain": "hikari.example.test",
+                    "edgeoneOrigin": "og-core",
+                    "edgeoneExpectedOrigin": null,
+                    "edgeoneCurrentTarget": "og-core",
+                    "edgeoneExpectedTarget": "og-core",
+                    "edgeoneCurrentSourceKind": "origin_group",
+                    "edgeoneExpectedSourceKind": "origin_group",
+                    "edgeoneCurrentOriginGroupId": "og-core",
+                    "edgeoneExpectedOriginGroupId": "og-core",
+                    "haSourceDefaults": null,
+                    "haSourceOverride": null,
+                    "haSourceEffective": {
+                        "sourceKind": "origin_group",
+                        "directOriginScheme": null,
+                        "directOriginHost": null,
+                        "directOriginPort": null,
+                        "originGroupId": "og-core",
+                        "target": "og-core"
+                    },
+                    "edgeoneApiConfigured": true,
+                    "lastEdgeoneCheckAt": now,
+                    "lastSyncAt": now,
+                    "syncLagSeconds": 0,
+                    "recoveryStatus": null,
+                    "message": null,
+                    "peerNodes": [],
+                    "plannedCutoverEligible": false
+                }))
+            }),
+        );
+        axum::serve(peer_listener, app.into_make_service())
+            .await
+            .expect("serve peer");
+    });
+
+    let db_path = temp_db_path("ha-dual-active-promote-split-brain");
     let db_str = db_path.to_string_lossy().to_string();
     let proxy = TavilyProxy::with_endpoint(
-        vec!["tvly-ha-source-direct-scheme".to_string()],
+        vec!["tvly-ha-dual-active-promote-split-brain".to_string()],
         DEFAULT_UPSTREAM,
         &db_str,
     )
@@ -2300,281 +2365,592 @@ async fn ha_source_endpoint_accepts_lowercase_direct_origin_scheme() {
     .expect("proxy created");
     let ha = tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig {
         mode: tavily_hikari::HaMode::ActiveStandby,
-        node_id: "node-source-direct".to_string(),
+        node_id: "node-a".to_string(),
         database_path: Some(db_str.clone()),
+        source_kind: Some(tavily_hikari::HaSourceKind::OriginGroup),
+        source_origin_group_id: Some("og-core".to_string()),
+        core_dual_active: true,
+        internal_token: Some("test-token".to_string()),
+        peer_nodes: vec![tavily_hikari::HaPeerNodeConfig {
+            node_id: "node-b".to_string(),
+            admin_base_url: format!("http://{peer_addr}"),
+            public_origin: "node-b-public:443".to_string(),
+            role_hint: tavily_hikari::HaPeerRoleHint::StandbyCandidate,
+        }],
+        edgeone_zone_id: Some("zone-test".to_string()),
+        edgeone_domain: Some("hikari.example.test".to_string()),
+        edgeone_secret_id: Some("secret-id".to_string()),
+        edgeone_secret_key: Some("secret-key".to_string()),
+        edgeone_api_endpoint: "http://127.0.0.1:9".to_string(),
         ..tavily_hikari::HaConfig::default()
     });
-    let addr = spawn_ha_admin_server(proxy, ha, true).await;
-
-    let response = Client::new()
-        .put(format!("http://{addr}/api/admin/ha/source"))
-        .json(&serde_json::json!({
-            "sourceKind": "direct",
-            "directOriginScheme": "https",
-            "directOriginHost": "gz.ivanli.cc",
-            "directOriginPort": 1443,
-            "applyToEdgeone": false
-        }))
-        .send()
+    ha.apply_dual_active_leader(Some("node-b".to_string()))
         .await
-        .expect("source settings response");
-    let status = response.status();
-    let body = response.text().await.expect("source settings body text");
-    assert!(
-        status.is_success(),
-        "direct source settings request should succeed, got {status}: {body}"
-    );
-    let response: Value = serde_json::from_str(&body).expect("source settings body");
-
-    assert_eq!(response["haSourceOverride"]["sourceKind"], "direct");
-    assert_eq!(response["haSourceOverride"]["directOriginScheme"], "https");
-    assert_eq!(response["haSourceOverride"]["directOriginHost"], "gz.ivanli.cc");
-    assert_eq!(response["haSourceOverride"]["directOriginPort"], 1443);
-    assert_eq!(response["haSourceEffective"]["directOriginScheme"], "https");
-    assert_eq!(response["edgeoneExpectedSourceKind"], "direct");
-
-    let _ = std::fs::remove_file(db_path);
-}
-
-#[tokio::test]
-async fn ha_recovery_import_is_idempotent_and_keeps_importer_active() {
-    let db_path = temp_db_path("ha-recovery-idempotent");
-    let db_str = db_path.to_string_lossy().to_string();
-    let proxy = TavilyProxy::with_endpoint(
-        vec!["tvly-ha-recovery-idempotent".to_string()],
-        DEFAULT_UPSTREAM,
-        &db_str,
-    )
-    .await
-    .expect("proxy created");
-    let ha = tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig {
-        node_id: "node-new".to_string(),
-        database_path: Some(db_str.clone()),
-        ..tavily_hikari::HaConfig::default()
-    });
+        .expect("apply peer leader");
     let addr = spawn_ha_admin_server(proxy, ha, true).await;
     let client = Client::new();
-    let payload = serde_json::json!({
-        "batchId": "old-master-batch-1",
-        "sourceNodeId": "node-old",
-        "message": "usage/log/event recovery batch imported",
-        "requestLogs": [{
-            "authTokenId": "old-token",
-            "method": "POST",
-            "path": "/api/tavily/search",
-            "statusCode": 200,
-            "tavilyStatusCode": 200,
-            "resultStatus": "success",
-            "requestKindKey": "tavily_search",
-            "requestKindLabel": "Tavily Search",
-            "requestKindDetail": "POST /api/tavily/search",
-            "businessCredits": 1,
-            "requestBody": "{\"query\":\"old-master\"}",
-            "responseBody": "{\"answer\":\"ok\"}",
-            "forwardedHeaders": "[]",
-            "droppedHeaders": "[]",
-            "visibility": "visible",
-            "createdAt": Utc::now().timestamp() - 60
-        }],
-        "authTokenLogs": [{
-            "tokenId": "old-token",
-            "method": "POST",
-            "path": "/api/tavily/search",
-            "httpStatus": 200,
-            "mcpStatus": 200,
-            "requestKindKey": "tavily_search",
-            "requestKindLabel": "Tavily Search",
-            "requestKindDetail": "POST /api/tavily/search",
-            "resultStatus": "success",
-            "countsBusinessQuota": 1,
-            "businessCredits": 1,
-            "billingState": "charged",
-            "createdAt": Utc::now().timestamp() - 60
-        }]
-    });
 
-    let rejected = client
-        .post(format!("http://{addr}/api/admin/ha/recovery/import"))
-        .json(&payload)
+    let non_force = client
+        .post(format!("http://{addr}/api/admin/ha/promote"))
+        .json(&json!({}))
         .send()
         .await
-        .expect("rejected recovery import");
-    assert_eq!(rejected.status(), reqwest::StatusCode::BAD_REQUEST);
-    let rejected_body = rejected.text().await.expect("rejected recovery body");
+        .expect("non-force promote response");
+    assert_eq!(non_force.status(), reqwest::StatusCode::CONFLICT);
+    let non_force_body = non_force.text().await.expect("non-force body");
     assert!(
-        rejected_body.contains("request_logs") && rejected_body.contains("auth_token_logs"),
-        "legacy log recovery payload should be explicitly rejected: {rejected_body}"
+        non_force_body.contains("requires force=true"),
+        "unexpected non-force promote body: {non_force_body}"
     );
 
-    let ledger_payload = serde_json::json!({
-        "batchId": "old-master-batch-1",
-        "sourceNodeId": "node-old",
-        "message": "ledger recovery batch imported"
-    });
-
-    let first: Value = client
-        .post(format!("http://{addr}/api/admin/ha/recovery/import"))
-        .json(&ledger_payload)
+    let forced = client
+        .post(format!("http://{addr}/api/admin/ha/promote"))
+        .json(&json!({ "force": true }))
         .send()
         .await
-        .expect("first ledger recovery import")
-        .json()
-        .await
-        .expect("first ledger recovery response");
-    assert_eq!(first["imported"], true);
-    assert_eq!(first["eventCount"], 0);
-    assert_eq!(first["status"]["role"], "full_master");
+        .expect("force promote response");
+    assert_eq!(forced.status(), reqwest::StatusCode::CONFLICT);
+    let forced_body = forced.text().await.expect("force body");
+    assert!(
+        forced_body.contains("still allows full writes"),
+        "unexpected force promote body: {forced_body}"
+    );
 
-    let second: Value = client
-        .post(format!("http://{addr}/api/admin/ha/recovery/import"))
-        .json(&ledger_payload)
+    let status_response = client
+        .get(format!("http://{addr}/api/admin/ha/status"))
         .send()
         .await
-        .expect("second ledger recovery import")
-        .json()
-        .await
-        .expect("second ledger recovery response");
-    assert_eq!(second["imported"], false);
+        .expect("ha status response");
+    assert_eq!(status_response.status(), reqwest::StatusCode::OK);
+    let status: Value = status_response.json().await.expect("ha status body");
+    assert_eq!(status["role"], "standby");
+    assert_eq!(status["fullMasterNodeId"], "node-b");
+    assert_eq!(status["allowsFullWrites"], false);
 
-    let pool = connect_sqlite_test_pool(&db_str).await;
-    let row: (String, i64) = sqlx::query_as(
-        "SELECT status, event_count FROM ha_recovery_batches WHERE id = 'old-master-batch-1'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("fetch recovery batch");
-    assert_eq!(row.0, "imported");
-    assert_eq!(row.1, 0);
-    let request_log_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM request_logs WHERE auth_token_id = 'old-token'")
-            .fetch_one(&pool)
-            .await
-            .expect("fetch rejected request logs");
-    assert_eq!(request_log_count, 0);
-    let token_log_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM auth_token_logs WHERE token_id = 'old-token'")
-            .fetch_one(&pool)
-            .await
-            .expect("fetch rejected auth token logs");
-    assert_eq!(token_log_count, 0);
-    pool.close().await;
     let _ = std::fs::remove_file(db_path);
 }
 
 #[tokio::test]
-async fn compute_signatures_tracks_recent_alert_summary_changes() {
-    let db_path = temp_db_path("summary-signatures-recent-alerts");
+async fn dual_active_planned_cutover_keeps_local_full_master_when_peer_update_fails() {
+    let peer_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind peer listener");
+    let peer_addr = peer_listener.local_addr().expect("peer addr");
+    let now = Utc::now().timestamp();
+    tokio::spawn(async move {
+        let app = Router::new()
+            .route(
+                "/api/internal/ha/status",
+                get(move || async move {
+                    Json(json!({
+                        "mode": "active_standby",
+                        "nodeId": "node-b",
+                        "nodePublicOrigin": "node-b-public:443",
+                        "role": "standby",
+                        "dualActiveEnabled": true,
+                        "fullMasterNodeId": "node-a",
+                        "degraded": false,
+                        "allowsBasicBusiness": true,
+                        "allowsFullWrites": false,
+                        "edgeoneDomain": "hikari.example.test",
+                        "edgeoneOrigin": "og-core",
+                        "edgeoneExpectedOrigin": null,
+                        "edgeoneCurrentTarget": "og-core",
+                        "edgeoneExpectedTarget": "og-core",
+                        "edgeoneCurrentSourceKind": "origin_group",
+                        "edgeoneExpectedSourceKind": "origin_group",
+                        "edgeoneCurrentOriginGroupId": "og-core",
+                        "edgeoneExpectedOriginGroupId": "og-core",
+                        "haSourceDefaults": null,
+                        "haSourceOverride": null,
+                        "haSourceEffective": {
+                            "sourceKind": "origin_group",
+                            "directOriginScheme": null,
+                            "directOriginHost": null,
+                            "directOriginPort": null,
+                            "originGroupId": "og-core",
+                            "target": "og-core"
+                        },
+                        "edgeoneApiConfigured": true,
+                        "lastEdgeoneCheckAt": now,
+                        "lastSyncAt": now,
+                        "syncLagSeconds": 0,
+                        "recoveryStatus": null,
+                        "message": "peer ready",
+                        "peerNodes": [],
+                        "plannedCutoverEligible": true
+                    }))
+                }),
+            )
+            .route(
+                "/api/internal/ha/leader",
+                post(|| async {
+                    (
+                        StatusCode::BAD_GATEWAY,
+                        Body::from("simulated peer leader update failure"),
+                    )
+                }),
+            );
+        axum::serve(peer_listener, app.into_make_service())
+            .await
+            .expect("serve peer");
+    });
+
+    let db_path = temp_db_path("ha-dual-active-cutover-peer-failure");
     let db_str = db_path.to_string_lossy().to_string();
     let proxy = TavilyProxy::with_endpoint(
-        vec!["tvly-signature-recent-alerts".to_string()],
+        vec!["tvly-ha-dual-active-cutover-peer-failure".to_string()],
         DEFAULT_UPSTREAM,
         &db_str,
     )
     .await
     .expect("proxy created");
-
-    let user = proxy
-        .upsert_oauth_account(&OAuthAccountProfile {
-            provider: "linuxdo".to_string(),
-            provider_user_id: "linuxdo-signature-alert-user".to_string(),
-            username: Some("sig_alert".to_string()),
-            name: Some("Sig Alert".to_string()),
-            avatar_template: None,
-            active: true,
-            trust_level: Some(1),
-            raw_payload_json: None,
-        })
+    proxy
+        .set_ha_full_master_node_id("node-a")
         .await
-        .expect("upsert oauth user");
-    let token = proxy
-        .ensure_user_token_binding(&user.user_id, Some("signature-alert-bound"))
+        .expect("seed local leader");
+    let ha = tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig {
+        mode: tavily_hikari::HaMode::ActiveStandby,
+        node_id: "node-a".to_string(),
+        database_path: Some(db_str.clone()),
+        source_kind: Some(tavily_hikari::HaSourceKind::OriginGroup),
+        source_origin_group_id: Some("og-core".to_string()),
+        core_dual_active: true,
+        internal_token: Some("peer-token".to_string()),
+        peer_nodes: vec![tavily_hikari::HaPeerNodeConfig {
+            node_id: "node-b".to_string(),
+            admin_base_url: format!("http://{peer_addr}"),
+            public_origin: "node-b-public:443".to_string(),
+            role_hint: tavily_hikari::HaPeerRoleHint::StandbyCandidate,
+        }],
+        edgeone_zone_id: Some("zone-test".to_string()),
+        edgeone_domain: Some("hikari.example.test".to_string()),
+        edgeone_secret_id: Some("secret-id".to_string()),
+        edgeone_secret_key: Some("secret-key".to_string()),
+        edgeone_api_endpoint: "http://127.0.0.1:9".to_string(),
+        ..tavily_hikari::HaConfig::default()
+    });
+    ha.apply_dual_active_leader(Some("node-a".to_string()))
         .await
-        .expect("ensure token binding");
+        .expect("apply local leader");
+    let addr = spawn_ha_admin_server(proxy, ha, true).await;
 
-    let state = Arc::new(AppState {
-        proxy: proxy.clone(),
-        static_dir: None,
-        forward_auth: ForwardAuthConfig::new(None, None, None, None),
-        forward_auth_enabled: false,
-        builtin_admin: BuiltinAdminAuth::new(false, None, None),
-        linuxdo_oauth: LinuxDoOAuthOptions::disabled(),
-        linuxdo_credit: LinuxDoCreditOptions::disabled(),
-        ha: tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig::default()),
-        dev_open_admin: false,
-        usage_base: "http://127.0.0.1:58088".to_string(),
-        api_key_ip_geo_origin: "https://api.country.is".to_string(),
-        dashboard_overview_cache: new_dashboard_overview_cache(),
+    let client = Client::new();
+    let response = client
+        .post(format!("http://{addr}/api/admin/ha/planned-cutover"))
+        .json(&json!({
+            "targetNodeId": "node-b",
+        }))
+        .send()
+        .await
+        .expect("planned cutover response");
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_GATEWAY);
+    let body = response.text().await.expect("planned cutover body");
+    assert!(
+        body.contains("dual-active peer leader update failed"),
+        "unexpected planned cutover failure body: {body}"
+    );
+
+    let status_response = client
+        .get(format!("http://{addr}/api/admin/ha/status"))
+        .send()
+        .await
+        .expect("ha status response");
+    assert_eq!(status_response.status(), reqwest::StatusCode::OK);
+    let status: Value = status_response.json().await.expect("ha status body");
+    assert_eq!(status["role"], "full_master");
+    assert_eq!(status["fullMasterNodeId"], "node-a");
+    assert_eq!(status["allowsFullWrites"], true);
+
+    let leader_proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-dual-active-cutover-peer-failure".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("leader proxy created");
+    assert_eq!(
+        leader_proxy
+            .get_ha_full_master_node_id()
+            .await
+            .expect("leader key lookup"),
+        Some("node-a".to_string())
+    );
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
+async fn dual_active_planned_cutover_fences_local_writer_before_peer_promotion() {
+    let local_status_base = std::sync::Arc::new(tokio::sync::Mutex::new(None::<String>));
+    let observed_local_full_writes = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let peer_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind peer listener");
+    let peer_addr = peer_listener.local_addr().expect("peer addr");
+    let now = Utc::now().timestamp();
+    let local_status_base_for_peer = local_status_base.clone();
+    let observed_local_full_writes_for_peer = observed_local_full_writes.clone();
+    tokio::spawn(async move {
+        let app = Router::new()
+            .route(
+                "/api/internal/ha/status",
+                get(move || async move {
+                    Json(json!({
+                        "mode": "active_standby",
+                        "nodeId": "node-b",
+                        "nodePublicOrigin": "node-b-public:443",
+                        "role": "standby",
+                        "dualActiveEnabled": true,
+                        "fullMasterNodeId": "node-a",
+                        "degraded": false,
+                        "allowsBasicBusiness": true,
+                        "allowsFullWrites": false,
+                        "edgeoneDomain": "hikari.example.test",
+                        "edgeoneOrigin": "og-core",
+                        "edgeoneExpectedOrigin": null,
+                        "edgeoneCurrentTarget": "og-core",
+                        "edgeoneExpectedTarget": "og-core",
+                        "edgeoneCurrentSourceKind": "origin_group",
+                        "edgeoneExpectedSourceKind": "origin_group",
+                        "edgeoneCurrentOriginGroupId": "og-core",
+                        "edgeoneExpectedOriginGroupId": "og-core",
+                        "haSourceDefaults": null,
+                        "haSourceOverride": null,
+                        "haSourceEffective": {
+                            "sourceKind": "origin_group",
+                            "directOriginScheme": null,
+                            "directOriginHost": null,
+                            "directOriginPort": null,
+                            "originGroupId": "og-core",
+                            "target": "og-core"
+                        },
+                        "edgeoneApiConfigured": true,
+                        "lastEdgeoneCheckAt": now,
+                        "lastSyncAt": now,
+                        "syncLagSeconds": 0,
+                        "recoveryStatus": null,
+                        "message": "peer ready",
+                        "peerNodes": [],
+                        "plannedCutoverEligible": true
+                    }))
+                }),
+            )
+            .route(
+                "/api/internal/ha/leader",
+                post(move || {
+                    let local_status_base_for_peer = local_status_base_for_peer.clone();
+                    let observed_local_full_writes_for_peer =
+                        observed_local_full_writes_for_peer.clone();
+                    async move {
+                        let local_status_base = loop {
+                            let current = local_status_base_for_peer.lock().await.clone();
+                            if let Some(base) = current {
+                                break base;
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        };
+                        let status: Value = Client::new()
+                            .get(format!("{local_status_base}/api/admin/ha/status"))
+                            .send()
+                            .await
+                            .expect("fetch local ha status during peer promotion")
+                            .json()
+                            .await
+                            .expect("decode local ha status during peer promotion");
+                        observed_local_full_writes_for_peer.store(
+                            status["allowsFullWrites"].as_bool().unwrap_or(true),
+                            std::sync::atomic::Ordering::SeqCst,
+                        );
+                        Json(json!({
+                            "mode": "active_standby",
+                            "nodeId": "node-b",
+                            "nodePublicOrigin": "node-b-public:443",
+                            "role": "full_master",
+                            "dualActiveEnabled": true,
+                            "fullMasterNodeId": "node-b",
+                            "degraded": false,
+                            "allowsBasicBusiness": true,
+                            "allowsFullWrites": true,
+                            "edgeoneDomain": "hikari.example.test",
+                            "edgeoneOrigin": "og-core",
+                            "edgeoneExpectedOrigin": null,
+                            "edgeoneCurrentTarget": "og-core",
+                            "edgeoneExpectedTarget": "og-core",
+                            "edgeoneCurrentSourceKind": "origin_group",
+                            "edgeoneExpectedSourceKind": "origin_group",
+                            "edgeoneCurrentOriginGroupId": "og-core",
+                            "edgeoneExpectedOriginGroupId": "og-core",
+                            "haSourceDefaults": null,
+                            "haSourceOverride": null,
+                            "haSourceEffective": {
+                                "sourceKind": "origin_group",
+                                "directOriginScheme": null,
+                                "directOriginHost": null,
+                                "directOriginPort": null,
+                                "originGroupId": "og-core",
+                                "target": "og-core"
+                            },
+                            "edgeoneApiConfigured": true,
+                            "lastEdgeoneCheckAt": now,
+                            "lastSyncAt": now,
+                            "syncLagSeconds": 0,
+                            "recoveryStatus": null,
+                            "message": "peer promoted",
+                            "peerNodes": [],
+                            "plannedCutoverEligible": true
+                        }))
+                    }
+                }),
+            );
+        axum::serve(peer_listener, app.into_make_service())
+            .await
+            .expect("serve peer");
     });
 
-    let (before_sig, _) = compute_signatures(&state)
+    let db_path = temp_db_path("ha-dual-active-cutover-local-fence");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-dual-active-cutover-local-fence".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("proxy created");
+    proxy
+        .set_ha_full_master_node_id("node-a")
         .await
-        .expect("compute signatures before alerts");
-    let before_sig = before_sig.expect("summary signature before alerts");
-    assert_eq!(before_sig.freshness.recent_alerts_total_events, 0);
-    assert_eq!(before_sig.freshness.recent_alerts_grouped_count, 0);
+        .expect("seed local leader");
+    let ha = tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig {
+        mode: tavily_hikari::HaMode::ActiveStandby,
+        node_id: "node-a".to_string(),
+        database_path: Some(db_str.clone()),
+        source_kind: Some(tavily_hikari::HaSourceKind::OriginGroup),
+        source_origin_group_id: Some("og-core".to_string()),
+        core_dual_active: true,
+        internal_token: Some("peer-token".to_string()),
+        peer_nodes: vec![tavily_hikari::HaPeerNodeConfig {
+            node_id: "node-b".to_string(),
+            admin_base_url: format!("http://{peer_addr}"),
+            public_origin: "node-b-public:443".to_string(),
+            role_hint: tavily_hikari::HaPeerRoleHint::StandbyCandidate,
+        }],
+        edgeone_zone_id: Some("zone-test".to_string()),
+        edgeone_domain: Some("hikari.example.test".to_string()),
+        edgeone_secret_id: Some("secret-id".to_string()),
+        edgeone_secret_key: Some("secret-key".to_string()),
+        edgeone_api_endpoint: "http://127.0.0.1:9".to_string(),
+        ..tavily_hikari::HaConfig::default()
+    });
+    ha.apply_dual_active_leader(Some("node-a".to_string()))
+        .await
+        .expect("apply local leader");
+    let addr = spawn_ha_admin_server(proxy, ha, true).await;
+    *local_status_base.lock().await = Some(format!("http://{addr}"));
 
-    let now = Utc::now().timestamp();
-    let pool = connect_sqlite_test_pool(&db_str).await;
-    sqlx::query(
-            r#"
-            INSERT INTO auth_token_logs (
-                token_id,
-                method,
-                path,
-                query,
-                http_status,
-                mcp_status,
-                request_kind_key,
-                request_kind_label,
-                request_kind_detail,
-                result_status,
-                error_message,
-                key_effect_code,
-                binding_effect_code,
-                selection_effect_code,
-                counts_business_quota,
-                created_at
-            ) VALUES (?, 'POST', '/mcp', NULL, 429, -1, 'mcp_search', 'MCP Search', 'POST /mcp', 'quota_exhausted', 'hourly any-request limit exceeded', 'none', 'none', 'none', 0, ?)
-            "#,
-        )
-        .bind(&token.id)
-        .bind(now)
-        .execute(&pool)
+    let client = Client::new();
+    let response = client
+        .post(format!("http://{addr}/api/admin/ha/planned-cutover"))
+        .json(&json!({
+            "targetNodeId": "node-b",
+        }))
+        .send()
         .await
-        .expect("insert recent alert auth token log");
+        .expect("planned cutover response");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
 
-    let (after_sig, _) = compute_signatures(&state)
-        .await
-        .expect("compute signatures after alerts");
-    let after_sig = after_sig.expect("summary signature after alerts");
-    assert_eq!(after_sig.freshness.recent_alerts_total_events, 1);
-    assert_eq!(after_sig.freshness.recent_alerts_grouped_count, 1);
-    assert_eq!(
-        after_sig.freshness.recent_alerts_counts,
-        vec![
-            (
-                tavily_hikari::ALERT_TYPE_UPSTREAM_RATE_LIMITED_429.to_string(),
-                0
-            ),
-            (
-                tavily_hikari::ALERT_TYPE_UPSTREAM_USAGE_LIMIT_432.to_string(),
-                0
-            ),
-            (
-                tavily_hikari::ALERT_TYPE_UPSTREAM_KEY_BLOCKED.to_string(),
-                0
-            ),
-            (
-                tavily_hikari::ALERT_TYPE_USER_REQUEST_RATE_LIMITED.to_string(),
-                1
-            ),
-            (
-                tavily_hikari::ALERT_TYPE_USER_QUOTA_EXHAUSTED.to_string(),
-                0
-            ),
-        ]
+    assert!(
+        !observed_local_full_writes.load(std::sync::atomic::Ordering::SeqCst),
+        "local node should already be fenced when peer starts accepting full writes"
     );
-    assert_ne!(before_sig, after_sig);
+
+    let status_response = client
+        .get(format!("http://{addr}/api/admin/ha/status"))
+        .send()
+        .await
+        .expect("ha status response");
+    assert_eq!(status_response.status(), reqwest::StatusCode::OK);
+    let status: Value = status_response.json().await.expect("ha status body");
+    assert_eq!(status["role"], "standby");
+    assert_eq!(status["fullMasterNodeId"], "node-b");
+    assert_eq!(status["allowsFullWrites"], false);
+
+    let leader_proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-dual-active-cutover-local-fence".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("leader proxy created");
+    assert_eq!(
+        leader_proxy
+            .get_ha_full_master_node_id()
+            .await
+            .expect("leader key lookup"),
+        Some("node-b".to_string())
+    );
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
+async fn dual_active_planned_cutover_keeps_local_fenced_when_peer_response_is_ambiguous() {
+    let peer_promoted = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let peer_listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind peer listener");
+    let peer_addr = peer_listener.local_addr().expect("peer addr");
+    let now = Utc::now().timestamp();
+    let peer_promoted_for_status = peer_promoted.clone();
+    let peer_promoted_for_leader = peer_promoted.clone();
+    tokio::spawn(async move {
+        let app = Router::new()
+            .route(
+                "/api/internal/ha/status",
+                get(move || {
+                    let peer_promoted_for_status = peer_promoted_for_status.clone();
+                    async move {
+                        let promoted = peer_promoted_for_status
+                            .load(std::sync::atomic::Ordering::SeqCst);
+                        Json(json!({
+                            "mode": "active_standby",
+                            "nodeId": "node-b",
+                            "nodePublicOrigin": "node-b-public:443",
+                            "role": if promoted { "full_master" } else { "standby" },
+                            "dualActiveEnabled": true,
+                            "fullMasterNodeId": if promoted { "node-b" } else { "node-a" },
+                            "degraded": false,
+                            "allowsBasicBusiness": true,
+                            "allowsFullWrites": promoted,
+                            "edgeoneDomain": "hikari.example.test",
+                            "edgeoneOrigin": "og-core",
+                            "edgeoneExpectedOrigin": null,
+                            "edgeoneCurrentTarget": "og-core",
+                            "edgeoneExpectedTarget": "og-core",
+                            "edgeoneCurrentSourceKind": "origin_group",
+                            "edgeoneExpectedSourceKind": "origin_group",
+                            "edgeoneCurrentOriginGroupId": "og-core",
+                            "edgeoneExpectedOriginGroupId": "og-core",
+                            "haSourceDefaults": null,
+                            "haSourceOverride": null,
+                            "haSourceEffective": {
+                                "sourceKind": "origin_group",
+                                "directOriginScheme": null,
+                                "directOriginHost": null,
+                                "directOriginPort": null,
+                                "originGroupId": "og-core",
+                                "target": "og-core"
+                            },
+                            "edgeoneApiConfigured": true,
+                            "lastEdgeoneCheckAt": now,
+                            "lastSyncAt": now,
+                            "syncLagSeconds": 0,
+                            "recoveryStatus": null,
+                            "message": if promoted { "peer promoted" } else { "peer ready" },
+                            "peerNodes": [],
+                            "plannedCutoverEligible": true
+                        }))
+                    }
+                }),
+            )
+            .route(
+                "/api/internal/ha/leader",
+                post(move || {
+                    let peer_promoted_for_leader = peer_promoted_for_leader.clone();
+                    async move {
+                        peer_promoted_for_leader.store(true, std::sync::atomic::Ordering::SeqCst);
+                        Response::builder()
+                            .status(StatusCode::OK)
+                            .body(Body::from("not-json"))
+                            .expect("ambiguous peer leader response")
+                    }
+                }),
+            );
+        axum::serve(peer_listener, app.into_make_service())
+            .await
+            .expect("serve peer");
+    });
+
+    let db_path = temp_db_path("ha-dual-active-cutover-ambiguous-peer-response");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-dual-active-cutover-ambiguous-peer-response".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("proxy created");
+    proxy
+        .set_ha_full_master_node_id("node-a")
+        .await
+        .expect("seed local leader");
+    let ha = tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig {
+        mode: tavily_hikari::HaMode::ActiveStandby,
+        node_id: "node-a".to_string(),
+        database_path: Some(db_str.clone()),
+        source_kind: Some(tavily_hikari::HaSourceKind::OriginGroup),
+        source_origin_group_id: Some("og-core".to_string()),
+        core_dual_active: true,
+        internal_token: Some("peer-token".to_string()),
+        peer_nodes: vec![tavily_hikari::HaPeerNodeConfig {
+            node_id: "node-b".to_string(),
+            admin_base_url: format!("http://{peer_addr}"),
+            public_origin: "node-b-public:443".to_string(),
+            role_hint: tavily_hikari::HaPeerRoleHint::StandbyCandidate,
+        }],
+        edgeone_zone_id: Some("zone-test".to_string()),
+        edgeone_domain: Some("hikari.example.test".to_string()),
+        edgeone_secret_id: Some("secret-id".to_string()),
+        edgeone_secret_key: Some("secret-key".to_string()),
+        edgeone_api_endpoint: "http://127.0.0.1:9".to_string(),
+        ..tavily_hikari::HaConfig::default()
+    });
+    ha.apply_dual_active_leader(Some("node-a".to_string()))
+        .await
+        .expect("apply local leader");
+    let addr = spawn_ha_admin_server(proxy, ha, true).await;
+
+    let client = Client::new();
+    let response = client
+        .post(format!("http://{addr}/api/admin/ha/planned-cutover"))
+        .json(&json!({
+            "targetNodeId": "node-b",
+        }))
+        .send()
+        .await
+        .expect("planned cutover response");
+    assert_eq!(response.status(), reqwest::StatusCode::BAD_GATEWAY);
+    let body = response.text().await.expect("planned cutover body");
+    assert!(
+        body.contains("local node remains fenced"),
+        "unexpected planned cutover failure body: {body}"
+    );
+
+    let status_response = client
+        .get(format!("http://{addr}/api/admin/ha/status"))
+        .send()
+        .await
+        .expect("ha status response");
+    assert_eq!(status_response.status(), reqwest::StatusCode::OK);
+    let status: Value = status_response.json().await.expect("ha status body");
+    assert_eq!(status["role"], "standby");
+    assert_eq!(status["fullMasterNodeId"], "node-b");
+    assert_eq!(status["allowsFullWrites"], false);
+
+    let leader_proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-ha-dual-active-cutover-ambiguous-peer-response".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("leader proxy created");
+    assert_eq!(
+        leader_proxy
+            .get_ha_full_master_node_id()
+            .await
+            .expect("leader key lookup"),
+        Some("node-b".to_string())
+    );
 
     let _ = std::fs::remove_file(db_path);
 }

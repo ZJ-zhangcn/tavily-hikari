@@ -2,8 +2,12 @@
 set -euo pipefail
 
 COMPOSE_FILE="${COMPOSE_FILE:-tests/ha/docker-compose.yml}"
+DUAL_ACTIVE_COMPOSE_FILE="${DUAL_ACTIVE_COMPOSE_FILE:-tests/ha/docker-compose.dual-active.yml}"
 MEMORY_COMPOSE_FILE="${MEMORY_COMPOSE_FILE:-tests/ha/docker-compose.memory.yml}"
 COMPOSE_PROJECT="${COMPOSE_PROJECT:?COMPOSE_PROJECT is required}"
+HA_RUNTIME_DIR="${HA_RUNTIME_DIR:?HA_RUNTIME_DIR is required}"
+export HA_RUNTIME_UID="${HA_RUNTIME_UID:-$(id -u)}"
+export HA_RUNTIME_GID="${HA_RUNTIME_GID:-$(id -g)}"
 
 USER_ROWS="${HA_MEMORY_USER_ROWS:-2000}"
 TOKEN_ROWS="${HA_MEMORY_TOKEN_ROWS:-2000}"
@@ -18,11 +22,24 @@ HA_INTERNAL_TOKEN="${HA_INTERNAL_TOKEN:-ha-internal-token}"
 TMP_DIR="$(mktemp -d)"
 CAPS_OVERRIDE_FILE="${TMP_DIR}/caps-compat.yml"
 NETWORK_OVERRIDE_FILE="${TMP_DIR}/network-override.yml"
+NODE_A_DIR="${HA_RUNTIME_DIR}/node-a"
+NODE_B_DIR="${HA_RUNTIME_DIR}/node-b"
+NODE_A_DB="${NODE_A_DIR}/node-a.db"
+NODE_B_DB="${NODE_B_DIR}/node-b.db"
+
+docker_compose_cmd() {
+  if docker compose version >/dev/null 2>&1; then
+    HA_RUNTIME_DIR="${HA_RUNTIME_DIR}" docker compose "$@"
+  else
+    HA_RUNTIME_DIR="${HA_RUNTIME_DIR}" docker-compose "$@"
+  fi
+}
 
 compose() {
-  docker compose \
+  docker_compose_cmd \
     -p "${COMPOSE_PROJECT}" \
     -f "${COMPOSE_FILE}" \
+    -f "${DUAL_ACTIVE_COMPOSE_FILE}" \
     -f "${MEMORY_COMPOSE_FILE}" \
     -f "${CAPS_OVERRIDE_FILE}" \
     -f "${NETWORK_OVERRIDE_FILE}" \
@@ -37,7 +54,7 @@ trap cleanup EXIT
 
 generate_caps_override() {
   local services
-  services="$(docker compose -f "${COMPOSE_FILE}" -f "${MEMORY_COMPOSE_FILE}" config --services)"
+  services="$(docker_compose_cmd -f "${COMPOSE_FILE}" -f "${DUAL_ACTIVE_COMPOSE_FILE}" -f "${MEMORY_COMPOSE_FILE}" config --services)"
   {
     echo "services:"
     while IFS= read -r service; do
@@ -100,9 +117,6 @@ networks:
 YAML
 }
 
-generate_caps_override
-generate_network_override
-
 wait_for_health() {
   local service="$1"
   for _ in $(seq 1 90); do
@@ -113,6 +127,12 @@ wait_for_health() {
   done
   echo "timed out waiting for ${service} health" >&2
   return 1
+}
+
+service_ip() {
+  local service="$1"
+  docker inspect "$(compose ps -q "${service}")" \
+    --format '{{range.NetworkSettings.Networks}}{{.IPAddress}}{{end}}'
 }
 
 sample_memory() {
@@ -130,26 +150,34 @@ sample_memory() {
   done
 }
 
-compose build node-a node-b
-compose up -d edgeone-mock upstream-mock ha-test-runner node-a
+rm -rf "${NODE_A_DIR}" "${NODE_B_DIR}"
+mkdir -p "${NODE_A_DIR}" "${NODE_B_DIR}"
+
+generate_caps_override
+generate_network_override
+
+compose build node-a node-b edgeone-mock edgeone-ingress upstream-mock
+compose up -d edgeone-mock upstream-mock node-a
 wait_for_health node-a
 compose stop node-a
 
-compose cp tests/ha/scripts/seed_large_ha_fixture.py ha-test-runner:/tmp/seed_large_ha_fixture.py
-compose cp tests/ha/scripts/run_ha_memory_contract.py ha-test-runner:/tmp/run_ha_memory_contract.py
-
-compose exec -T ha-test-runner python /tmp/seed_large_ha_fixture.py \
-  --db /volumes/node-a/node-a.db \
+python3 tests/ha/scripts/seed_large_ha_fixture.py \
+  --db "${NODE_A_DB}" \
   --user-rows "${USER_ROWS}" \
   --token-rows "${TOKEN_ROWS}" \
   --runtime-rows "${RUNTIME_ROWS}" \
   --billing-rows "${BILLING_ROWS}" \
   --runtime-text-bytes "${RUNTIME_TEXT_BYTES}" \
-  --billing-error-bytes "${BILLING_ERROR_BYTES}"
+  --billing-error-bytes "${BILLING_ERROR_BYTES}" \
+  > "${TMP_DIR}/fixture-result.json"
 
-compose up -d node-a node-b
+compose up -d node-a node-b edgeone-ingress
 wait_for_health node-a
 wait_for_health node-b
+
+NODE_A_IP="$(service_ip node-a)"
+NODE_B_IP="$(service_ip node-b)"
+INGRESS_IP="$(service_ip edgeone-ingress)"
 
 NODE_A_CID="$(compose ps -q node-a)"
 NODE_B_CID="$(compose ps -q node-b)"
@@ -159,7 +187,11 @@ sample_memory "${NODE_B_CID}" "${TMP_DIR}/node-b.mem" &
 NODE_B_SAMPLER_PID="$!"
 
 set +e
-compose exec -T ha-test-runner python /tmp/run_ha_memory_contract.py \
+INGRESS_URL="http://${INGRESS_IP}:8080" \
+NODE_A_URL="http://${NODE_A_IP}:8787" \
+NODE_B_URL="http://${NODE_B_IP}:8787" \
+STANDBY_DB_PATH="${NODE_B_DB}" \
+python3 tests/ha/scripts/run_ha_memory_contract.py \
   --expected-users "${USER_ROWS}" \
   --expected-tokens "${TOKEN_ROWS}" \
   --expected-sessions "${RUNTIME_ROWS}" \
@@ -180,13 +212,14 @@ node_b_peak="$(awk 'max < $2 { max = $2 } END { print max + 0 }' "${TMP_DIR}/nod
 node_a_oom="$(docker inspect "${NODE_A_CID}" --format '{{.State.OOMKilled}}')"
 node_b_oom="$(docker inspect "${NODE_B_CID}" --format '{{.State.OOMKilled}}')"
 
-python - <<'PY' \
+python3 - <<'PY' \
   "${CONTRACT_STATUS}" \
   "${MEMORY_LIMIT_BYTES}" \
   "${node_a_peak}" \
   "${node_b_peak}" \
   "${node_a_oom}" \
   "${node_b_oom}" \
+  "${TMP_DIR}/fixture-result.json" \
   "${TMP_DIR}/contract-result.json"
 import json
 import pathlib
@@ -198,7 +231,8 @@ node_a_peak = int(sys.argv[3])
 node_b_peak = int(sys.argv[4])
 node_a_oom = sys.argv[5].strip().lower() == "true"
 node_b_oom = sys.argv[6].strip().lower() == "true"
-result_path = pathlib.Path(sys.argv[7])
+fixture_path = pathlib.Path(sys.argv[7])
+result_path = pathlib.Path(sys.argv[8])
 
 payload = {
     "contractStatus": contract_status,
@@ -208,6 +242,12 @@ payload = {
     "nodeAOomKilled": node_a_oom,
     "nodeBOomKilled": node_b_oom,
 }
+if fixture_path.exists():
+    fixture_raw = fixture_path.read_text().strip()
+    try:
+        payload["fixtureResult"] = json.loads(fixture_raw)
+    except json.JSONDecodeError:
+        payload["fixtureResultRaw"] = fixture_raw
 if result_path.exists():
     payload["contractResult"] = json.loads(result_path.read_text())
 else:

@@ -25,7 +25,7 @@ pub async fn serve(
     );
     let ha = tavily_hikari::HaRuntime::new(ha_config);
     let startup_ha_status = initialize_ha_startup_state(&proxy, &ha).await;
-    if let Err(err) = sync_forward_proxy_runtime_for_role(proxy.clone(), startup_ha_status.role).await {
+    if let Err(err) = sync_forward_proxy_runtime_for_status(proxy.clone(), &startup_ha_status).await {
         tracing::warn!(
             component = "forward_proxy",
             event = "startup_runtime_role_sync_failed",
@@ -154,6 +154,15 @@ pub async fn serve(
         .route("/api/token/metrics", get(get_token_metrics_public))
         .route("/api/ha/status", get(get_public_ha_status))
         .route("/api/internal/ha/status", get(get_internal_ha_status))
+        .route("/api/internal/ha/leader", post(post_internal_ha_leader))
+        .route(
+            "/api/internal/ha/mcp-sessions/:proxy_session_id",
+            get(get_internal_ha_mcp_session),
+        )
+        .route(
+            "/api/internal/ha/research-requests/:request_id",
+            get(get_internal_ha_research_request),
+        )
         .route("/api/events", get(sse_dashboard))
         .route("/api/version", get(get_versions))
         .route("/api/profile", get(get_profile))
@@ -473,7 +482,7 @@ pub async fn serve(
     spawn_ha_edgeone_authority_task(state.clone());
     spawn_ha_control_plane_gc_task(state.clone());
     spawn_background_tasks_for_current_role(state.clone()).await;
-    let _ = spawn_post_ready_serving_tasks_for_role(state.clone(), startup_ha_status.role);
+    let _ = spawn_post_ready_serving_tasks_for_status(state.clone(), &startup_ha_status);
 
     axum::serve(
         listener,
@@ -493,6 +502,7 @@ pub async fn serve(
 }
 
 async fn reconcile_ha_startup_role(
+    proxy: &TavilyProxy,
     ha: &tavily_hikari::HaRuntime,
     previous_ha_role: Option<tavily_hikari::HaNodeRole>,
 ) -> tavily_hikari::HaStatusView {
@@ -508,9 +518,49 @@ async fn reconcile_ha_startup_role(
             false
         }
     };
+    if ha.dual_active_enabled() {
+        let leader = proxy.get_ha_full_master_node_id().await.unwrap_or_else(|err| {
+            tracing::warn!(
+                component = "ha",
+                event = "leader_key_lookup_failed",
+                err = %err,
+                "HA leader key lookup warning"
+            );
+            None
+        });
+        let persisted_role = previous_ha_role.unwrap_or(tavily_hikari::HaNodeRole::Standby);
+        if leader.is_none()
+            && persisted_role == tavily_hikari::HaNodeRole::FullMaster
+            && let Err(err) = proxy
+                .set_ha_full_master_node_id(&ha.status().await.node_id)
+                .await
+        {
+            tracing::warn!(
+                component = "ha",
+                event = "leader_key_seed_failed",
+                err = %err,
+                "HA leader key seed warning"
+            );
+        }
+        let leader = proxy.get_ha_full_master_node_id().await.unwrap_or(None);
+        if let Err(err) = ha.apply_dual_active_leader(leader).await {
+            tracing::warn!(
+                component = "ha",
+                event = "dual_active_leader_apply_failed",
+                err = %err,
+                "HA dual-active leader apply warning"
+            );
+        }
+    }
+    if previous_ha_role == Some(tavily_hikari::HaNodeRole::Recovery) {
+        return ha
+            .enter_recovery("previous recovery role persisted; recovery import required".to_string())
+            .await;
+    }
     let mut status = ha.status().await;
     if startup_role_checked
         && status.edgeone_api_configured
+        && !status.dual_active_enabled
         && matches!(
             previous_ha_role,
             Some(
@@ -535,21 +585,35 @@ async fn initialize_ha_startup_state(
     ha: &tavily_hikari::HaRuntime,
 ) -> tavily_hikari::HaStatusView {
     let previous_ha_role = proxy.get_persisted_ha_node_role().await.unwrap_or_else(|err| {
-        tracing::warn!(component = "ha", event = "persisted_role_lookup_failed", err = %err, "HA persisted role lookup warning");
+        tracing::warn!(
+            component = "ha",
+            event = "persisted_role_lookup_failed",
+            err = %err,
+            "HA persisted role lookup warning"
+        );
         None
     });
     let persisted_ha_source_settings = proxy.get_ha_source_settings().await.unwrap_or_else(|err| {
-        tracing::warn!(component = "ha", event = "source_settings_lookup_failed", err = %err, "HA source settings lookup warning");
+        tracing::warn!(
+            component = "ha",
+            event = "source_settings_lookup_failed",
+            err = %err,
+            "HA source settings lookup warning"
+        );
         None
     });
     if let Some(settings) = persisted_ha_source_settings
         && let Err(err) = ha.set_local_source_settings(Some(settings)).await
     {
-        tracing::warn!(component = "ha", event = "source_settings_restore_failed", err = %err, "HA source settings restore warning");
+        tracing::warn!(
+            component = "ha",
+            event = "source_settings_restore_failed",
+            err = %err,
+            "HA source settings restore warning"
+        );
     }
-    // Startup authority must compare against the restored node-local source override rather than
-    // the env default source, otherwise a restart can clobber the persisted override.
-    let startup_ha_status = reconcile_ha_startup_role(ha, previous_ha_role).await;
+    // Startup role evaluation must compare against the restored node-local HA source settings.
+    let startup_ha_status = reconcile_ha_startup_role(proxy, ha, previous_ha_role).await;
     if let Err(err) = async {
         proxy
             .persist_ha_node_state(
@@ -564,19 +628,25 @@ async fn initialize_ha_startup_state(
     }
     .await
     {
-        tracing::warn!(component = "ha", event = "startup_node_state_persist_failed", err = %err, "HA startup node state persist warning");
+        tracing::warn!(
+            component = "ha",
+            event = "startup_node_state_persist_failed",
+            err = %err,
+            "HA startup node state persist warning"
+        );
     }
     startup_ha_status
 }
 
-async fn sync_forward_proxy_runtime_for_role(
+async fn sync_forward_proxy_runtime_for_status(
     proxy: TavilyProxy,
-    role: tavily_hikari::HaNodeRole,
+    status: &tavily_hikari::HaStatusView,
 ) -> Result<(), ProxyError> {
+    let allows_basic_business = status.allows_basic_business;
     let handle = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || {
         handle.block_on(async move {
-            if role.allows_basic_business() {
+            if allows_basic_business {
                 proxy.ensure_forward_proxy_runtime_started().await
             } else {
                 proxy.shutdown_forward_proxy_runtime().await
@@ -588,6 +658,10 @@ async fn sync_forward_proxy_runtime_for_role(
 }
 
 fn spawn_ha_standby_sync_task(state: Arc<AppState>) {
+    if state.ha.dual_active_enabled() {
+        spawn_ha_peer_sync_task(state);
+        return;
+    }
     let Some(source_url) = state.ha.sync_source_url() else {
         return;
     };
@@ -620,6 +694,43 @@ fn spawn_ha_standby_sync_task(state: Arc<AppState>) {
             state.proxy.backend_time().sleep(interval).await;
         }
     });
+}
+
+fn spawn_ha_peer_sync_task(state: Arc<AppState>) {
+    let Some(internal_token) = state.ha.internal_token() else {
+        tracing::warn!(
+            component = "ha",
+            event = "peer_sync_disabled",
+            reason = "missing_internal_token",
+            "HA peer sync disabled because HA_INTERNAL_TOKEN is required in dual-active mode"
+        );
+        return;
+    };
+    let interval = std::time::Duration::from_secs(state.ha.sync_interval_secs().max(1));
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        loop {
+            let status = state.ha.status().await;
+            if ha_peer_sync_should_run(&status)
+                && let Err(err) = run_ha_peer_sync_once(&state, &client, &internal_token).await
+            {
+                tracing::warn!(
+                    component = "ha",
+                    event = "peer_sync_failed",
+                    err = %err,
+                    "HA peer sync failed"
+                );
+            }
+            state.proxy.backend_time().sleep(interval).await;
+        }
+    });
+}
+
+fn ha_peer_sync_should_run(status: &tavily_hikari::HaStatusView) -> bool {
+    matches!(
+        status.role,
+        tavily_hikari::HaNodeRole::FullMaster | tavily_hikari::HaNodeRole::Standby
+    )
 }
 
 fn is_ha_retryable_foreign_key_gap(
@@ -698,7 +809,14 @@ async fn run_ha_standby_sync_once(
                 )
                 .into());
             }
-            let result = apply_ha_baseline_response_stream(&state.proxy, channel, response).await?;
+            let result = apply_ha_baseline_response_stream(
+                &state.proxy,
+                channel,
+                response,
+                tavily_hikari::HaBaselineApplyMode::Replace,
+                None,
+            )
+            .await?;
             next_seq = result.high_watermark;
             let outbox = state
                 .proxy
@@ -813,7 +931,8 @@ async fn run_ha_standby_sync_once(
             )
             .into());
         }
-        let result = match apply_ha_events_response_stream(&state.proxy, channel, response).await {
+        let result =
+            match apply_ha_events_response_stream(&state.proxy, channel, response, None).await {
             Ok(result) => result,
             Err(err) if is_ha_retryable_foreign_key_gap(&*err) => {
                 let reset_detail =
@@ -903,6 +1022,309 @@ async fn run_ha_standby_sync_once(
     Ok(())
 }
 
+async fn run_ha_peer_sync_once(
+    state: &Arc<AppState>,
+    client: &reqwest::Client,
+    internal_token: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let status = state.ha.status().await;
+    let local_node_id = status.node_id.clone();
+    let mut peer_views = Vec::new();
+    let mut control_source_node_id: Option<String> = None;
+    let peer_configs = state
+        .ha
+        .peer_nodes()
+        .into_iter()
+        .filter(|peer| peer.node_id != local_node_id)
+        .collect::<Vec<_>>();
+    if peer_configs.is_empty() {
+        return Err("HA peer sync has no configured peers".into());
+    }
+    for peer in peer_configs {
+        match fetch_internal_ha_status(client, &peer, internal_token).await {
+            Ok(peer_status) => {
+                if peer_status.allows_full_writes && control_source_node_id.is_none() {
+                    control_source_node_id = Some(peer.node_id.clone());
+                }
+                peer_views.push((peer, peer_status));
+            }
+            Err(err) => {
+                tracing::warn!(
+                    component = "ha",
+                    event = "peer_status_discovery_failed",
+                    peer_node_id = peer.node_id,
+                    err = %err,
+                    "HA peer status discovery failed"
+                );
+            }
+        }
+    }
+    if peer_views.is_empty() {
+        return Err("HA peer sync reached no peers".into());
+    }
+    for (peer, peer_status) in peer_views {
+        let is_control_source =
+            control_source_node_id.as_deref() == Some(peer.node_id.as_str())
+                || peer_status.allows_full_writes;
+        let channels = if is_control_source {
+            vec![
+                tavily_hikari::HaSyncChannel::Control,
+                tavily_hikari::HaSyncChannel::Billing,
+                tavily_hikari::HaSyncChannel::Runtime,
+            ]
+        } else {
+            vec![
+                tavily_hikari::HaSyncChannel::Billing,
+                tavily_hikari::HaSyncChannel::Runtime,
+            ]
+        };
+        run_ha_sync_once_for_peer(
+            state,
+            client,
+            &peer.admin_base_url,
+            &peer.node_id,
+            internal_token,
+            &channels,
+        )
+        .await?;
+    }
+    state.ha.mark_sync_success().await;
+    state.proxy.flush_ha_state_writes().await?;
+    Ok(())
+}
+
+async fn run_ha_sync_once_for_peer(
+    state: &Arc<AppState>,
+    client: &reqwest::Client,
+    source_url: &str,
+    peer_node_id: &str,
+    internal_token: &str,
+    channels: &[tavily_hikari::HaSyncChannel],
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let local_node_id = state.ha.status().await.node_id;
+    for &channel in channels {
+        let seq_key = format!("peer_{peer_node_id}_{}_applied_seq", channel.as_str());
+        let baseline_key = format!("peer_{peer_node_id}_{}_baseline_applied", channel.as_str());
+        let baseline_report_key = format!("peer_{peer_node_id}_{}_baseline", channel.as_str());
+        let applied_seq = state
+            .proxy
+            .get_ha_sync_watermark(&seq_key)
+            .await?
+            .unwrap_or(0);
+        let baseline_applied = state
+            .proxy
+            .get_ha_sync_watermark(&baseline_key)
+            .await?
+            .unwrap_or(0)
+            > 0;
+        let mut next_seq = applied_seq;
+
+        if !baseline_applied {
+            let target = format!(
+                "{}/api/admin/ha/baseline?channel={}",
+                source_url.trim_end_matches('/'),
+                channel.as_str()
+            );
+            let response = client
+                .get(target)
+                .header("x-ha-internal-token", internal_token)
+                .send()
+                .await?;
+            if !response.status().is_success() {
+                return Err(format!(
+                    "peer baseline request failed for {} from {} with {}",
+                    channel.as_str(),
+                    peer_node_id,
+                    response.status()
+                )
+                .into());
+            }
+            let baseline_mode = if state.ha.dual_active_enabled()
+                && channel != tavily_hikari::HaSyncChannel::Control
+            {
+                tavily_hikari::HaBaselineApplyMode::Upsert
+            } else {
+                tavily_hikari::HaBaselineApplyMode::Replace
+            };
+            let peer_import_node_id = if state.ha.dual_active_enabled()
+                && matches!(
+                    channel,
+                    tavily_hikari::HaSyncChannel::Billing | tavily_hikari::HaSyncChannel::Runtime
+                )
+            {
+                Some(peer_node_id)
+            } else {
+                None
+            };
+            let result = apply_ha_baseline_response_stream(
+                &state.proxy,
+                channel,
+                response,
+                baseline_mode,
+                peer_import_node_id,
+            )
+            .await?;
+            next_seq = result.high_watermark;
+            state
+                .proxy
+                .persist_ha_sync_watermark(
+                    &baseline_report_key,
+                    Some(source_url),
+                    Some(&local_node_id),
+                    result.high_watermark,
+                    Some(&format!("rows={}", result.row_count)),
+                )
+                .await?;
+            state
+                .proxy
+                .persist_ha_sync_watermark(
+                    &seq_key,
+                    Some(source_url),
+                    Some(&local_node_id),
+                    result.high_watermark,
+                    Some("baseline"),
+                )
+                .await?;
+            state
+                .proxy
+                .persist_ha_sync_watermark(
+                    &baseline_key,
+                    Some(source_url),
+                    Some(&local_node_id),
+                    1,
+                    Some("baseline applied"),
+                )
+                .await?;
+            state.proxy.flush_ha_state_writes().await?;
+        }
+
+        let target = format!(
+            "{}/api/admin/ha/events?channel={}&after={}&limit=1000",
+            source_url.trim_end_matches('/'),
+            channel.as_str(),
+            next_seq
+        );
+        let response = client
+            .get(target)
+            .header("x-ha-internal-token", internal_token)
+            .send()
+            .await?;
+        if matches!(
+            response.status(),
+            reqwest::StatusCode::GONE | reqwest::StatusCode::PAYLOAD_TOO_LARGE
+        ) {
+            let reset_detail = if response.status() == reqwest::StatusCode::PAYLOAD_TOO_LARGE {
+                "events batch too large; baseline required"
+            } else {
+                "retention window missed; baseline required"
+            };
+            state
+                .proxy
+                .persist_ha_sync_watermark(
+                    &seq_key,
+                    Some(source_url),
+                    Some(&local_node_id),
+                    0,
+                    Some(reset_detail),
+                )
+                .await?;
+            state
+                .proxy
+                .persist_ha_sync_watermark(
+                    &baseline_key,
+                    Some(source_url),
+                    Some(&local_node_id),
+                    0,
+                    Some(reset_detail),
+                )
+                .await?;
+            state.proxy.flush_ha_state_writes().await?;
+            continue;
+        }
+        if !response.status().is_success() {
+            return Err(format!(
+                "peer events request failed for {} from {} with {}",
+                channel.as_str(),
+                peer_node_id,
+                response.status()
+            )
+            .into());
+        }
+        let peer_import_node_id = if state.ha.dual_active_enabled()
+            && matches!(
+                channel,
+                tavily_hikari::HaSyncChannel::Billing | tavily_hikari::HaSyncChannel::Runtime
+            )
+        {
+            Some(peer_node_id)
+        } else {
+            None
+        };
+        let result = match apply_ha_events_response_stream(
+            &state.proxy,
+            channel,
+            response,
+            peer_import_node_id,
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(err) if is_ha_retryable_foreign_key_gap(&*err) => {
+                let reset_detail = "foreign key gap during events apply; baseline required";
+                state
+                    .proxy
+                    .persist_ha_sync_watermark(
+                        &seq_key,
+                        Some(source_url),
+                        Some(&local_node_id),
+                        0,
+                        Some(reset_detail),
+                    )
+                    .await?;
+                state
+                    .proxy
+                    .persist_ha_sync_watermark(
+                        &baseline_key,
+                        Some(source_url),
+                        Some(&local_node_id),
+                        0,
+                        Some(reset_detail),
+                    )
+                    .await?;
+                state.proxy.flush_ha_state_writes().await?;
+                continue;
+            }
+            Err(err) => return Err(err),
+        };
+        if result.high_watermark > next_seq {
+            next_seq = result.high_watermark;
+            state
+                .proxy
+                .persist_ha_sync_watermark(
+                    &seq_key,
+                    Some(source_url),
+                    Some(&local_node_id),
+                    next_seq,
+                    Some(&format!("events={}", result.row_count)),
+                )
+                .await?;
+            state.proxy.flush_ha_state_writes().await?;
+        }
+        let ack_target = format!("{}/api/admin/ha/events/ack", source_url.trim_end_matches('/'));
+        let _ = client
+            .post(ack_target)
+            .header("x-ha-internal-token", internal_token)
+            .json(&serde_json::json!({
+                "channel": channel,
+                "peerNodeId": local_node_id,
+                "ackedSeq": next_seq
+            }))
+            .send()
+            .await?;
+    }
+    Ok(())
+}
+
 fn spawn_business_background_tasks(state: Arc<AppState>) {
     spawn_maintenance_worker(state.clone());
     spawn_quota_sync_scheduler(state.clone());
@@ -934,7 +1356,7 @@ fn background_tasks_disabled_via_env() -> bool {
 }
 
 async fn spawn_background_tasks_for_current_role(state: Arc<AppState>) -> bool {
-    if !state.ha.role().await.allows_basic_business() {
+    if !state.ha.allows_full_writes().await {
         return false;
     }
     if background_tasks_disabled_via_env() {
@@ -949,11 +1371,11 @@ async fn spawn_background_tasks_for_current_role(state: Arc<AppState>) -> bool {
     true
 }
 
-fn spawn_post_ready_serving_tasks_for_role(
+fn spawn_post_ready_serving_tasks_for_status(
     state: Arc<AppState>,
-    role: tavily_hikari::HaNodeRole,
+    status: &tavily_hikari::HaStatusView,
 ) -> bool {
-    if !role.allows_basic_business() {
+    if !status.allows_full_writes {
         return false;
     }
     if background_tasks_disabled_via_env() {
@@ -973,6 +1395,8 @@ async fn apply_ha_baseline_response_stream(
     proxy: &TavilyProxy,
     channel: tavily_hikari::HaSyncChannel,
     response: reqwest::Response,
+    mode: tavily_hikari::HaBaselineApplyMode,
+    peer_import_node_id: Option<&str>,
 ) -> Result<tavily_hikari::HaApplyResult, Box<dyn std::error::Error + Send + Sync>> {
     let started = Instant::now();
     let stream = response
@@ -981,7 +1405,7 @@ async fn apply_ha_baseline_response_stream(
     let reader = StreamReader::new(stream);
     let decoder = ZstdDecoder::new(BufReader::new(reader));
     let mut lines = BufReader::new(decoder).lines();
-    let mut session = proxy.begin_ha_baseline_apply(channel).await?;
+    let mut session = proxy.begin_ha_baseline_apply_with_mode(channel, mode).await?;
     loop {
         let next_line = match lines.next_line().await {
             Ok(next_line) => next_line,
@@ -997,7 +1421,12 @@ async fn apply_ha_baseline_response_stream(
         if trimmed.is_empty() {
             continue;
         }
-        if let Err(err) = session.apply_line(trimmed).await {
+        let apply_result = if let Some(peer_node_id) = peer_import_node_id {
+            session.apply_line_with_peer_import(trimmed, peer_node_id).await
+        } else {
+            session.apply_line(trimmed).await
+        };
+        if let Err(err) = apply_result {
             let _ = session.abort().await;
             return Err(err.into());
         }
@@ -1010,7 +1439,12 @@ async fn apply_ha_baseline_response_stream(
         event = "baseline_import_completed",
         elapsed_ms = started.elapsed().as_millis() as u64,
         channel = channel.as_str(),
+        baseline_mode = match mode {
+            tavily_hikari::HaBaselineApplyMode::Replace => "replace",
+            tavily_hikari::HaBaselineApplyMode::Upsert => "upsert",
+        },
         row_count = result.row_count as u64,
+        peer_import_node = peer_import_node_id.unwrap_or(""),
         payload_bytes = result.payload_bytes as u64,
         outbox_row_count = outbox.row_count,
         outbox_oldest_age_secs = outbox.oldest_age_secs,
@@ -1032,6 +1466,7 @@ async fn apply_ha_events_response_stream(
     proxy: &TavilyProxy,
     channel: tavily_hikari::HaSyncChannel,
     response: reqwest::Response,
+    peer_import_node_id: Option<&str>,
 ) -> Result<tavily_hikari::HaApplyResult, Box<dyn std::error::Error + Send + Sync>> {
     let started = Instant::now();
     let stream = response
@@ -1056,7 +1491,12 @@ async fn apply_ha_events_response_stream(
         if trimmed.is_empty() {
             continue;
         }
-        if let Err(err) = session.apply_line(trimmed).await {
+        let apply_result = if let Some(peer_node_id) = peer_import_node_id {
+            session.apply_line_with_peer_import(trimmed, peer_node_id).await
+        } else {
+            session.apply_line(trimmed).await
+        };
+        if let Err(err) = apply_result {
             let _ = session.abort().await;
             return Err(err.into());
         }
@@ -1070,6 +1510,7 @@ async fn apply_ha_events_response_stream(
         elapsed_ms = started.elapsed().as_millis() as u64,
         channel = channel.as_str(),
         row_count = result.row_count as u64,
+        peer_import_node = peer_import_node_id.unwrap_or(""),
         payload_bytes = result.payload_bytes as u64,
         outbox_row_count = outbox.row_count,
         outbox_oldest_age_secs = outbox.oldest_age_secs,
@@ -1099,9 +1540,29 @@ fn spawn_ha_edgeone_authority_task(state: Arc<AppState>) {
                 .sleep(std::time::Duration::from_secs(5))
                 .await;
             match state.ha.refresh_authoritative_role().await {
-                Ok(status) => {
+                Ok(mut status) => {
+                    if state.ha.dual_active_enabled() {
+                        let leader = state.proxy.get_ha_full_master_node_id().await.unwrap_or_else(|err| {
+                            tracing::warn!(
+                                component = "ha",
+                                event = "leader_key_lookup_failed",
+                                err = %err,
+                                "HA leader key lookup warning"
+                            );
+                            None
+                        });
+                        if let Err(err) = state.ha.apply_dual_active_leader(leader).await {
+                            tracing::warn!(
+                                component = "ha",
+                                event = "dual_active_leader_apply_failed",
+                                err = %err,
+                                "HA dual-active leader apply warning"
+                            );
+                        }
+                        status = state.ha.status().await;
+                    }
                     if let Err(err) =
-                        sync_forward_proxy_runtime_for_role(state.proxy.clone(), status.role).await
+                        sync_forward_proxy_runtime_for_status(state.proxy.clone(), &status).await
                     {
                         tracing::warn!(
                             component = "forward_proxy",
@@ -1111,10 +1572,7 @@ fn spawn_ha_edgeone_authority_task(state: Arc<AppState>) {
                             "forward-proxy authority runtime role sync failed"
                         );
                     } else {
-                        let _ = spawn_post_ready_serving_tasks_for_role(
-                            state.clone(),
-                            status.role,
-                        );
+                        let _ = spawn_post_ready_serving_tasks_for_status(state.clone(), &status);
                     }
                     let node_id = status.node_id.clone();
                     let edgeone_origin = status.edgeone_origin.clone();

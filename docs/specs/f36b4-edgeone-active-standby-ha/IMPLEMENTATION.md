@@ -4,8 +4,9 @@
 
 - Added `src/ha.rs` with HA mode, role state machine, runtime status view, and Tencent TC3-signed EdgeOne client calls.
 - Added HA startup role detection from EdgeOne current origin.
+- Added dual-active leader-key startup seeding and authority refresh through `meta.ha_full_master_node_id_v1`, so `HA_CORE_DUAL_ACTIVE=1` with `HA_SOURCE_KIND=origin_group` uses the persisted leader key instead of treating the current EdgeOne route as the only serving authority.
 - Added runtime EdgeOne authority refresh so a running old active enters `recovery` when the origin moves away, and an externally pointed standby only becomes `provisional_master` until administrator finalize.
-- Added HA peer inventory parsing through `HA_PEER_NODES_JSON`, real admin `peerNodes[]` aggregation, internal-only peer status/finalize endpoints, and `planned cutover` orchestration initiated from the current `full_master`.
+- Added HA peer inventory parsing through `HA_PEER_NODES_JSON`, real admin `peerNodes[]` aggregation, internal-only peer status/finalize/query endpoints, and `planned cutover` orchestration initiated from the current `full_master` or the current leader key depending on route family.
 - Extended admin HA peer aggregation so each `peerNodes[]` item carries both `publicOrigin` and `sourceConfigTarget`, letting the node inventory render the configured source target instead of mixing live EdgeOne target and peer direct-entry labels in the same “源站” column.
 - Added normalized HA control-plane timeline storage through `ha_control_plane_events`, admin timeline query, and hourly 7-day retention GC.
 - Replaced SQLite snapshot export/import with deprecated `410 Gone` responses so HA cannot transfer full database files.
@@ -15,6 +16,7 @@
 - Hardened runtime EdgeOne authority parsing so `DescribeAccelerationDomains` merges the outer domain record's `OriginProtocol` / `HttpOriginPort` / `HttpsOriginPort` into `OriginDetail` before comparing the live target against this node's effective source settings. This keeps an active node from being mis-demoted to `recovery` when EdgeOne reports a custom direct-origin port such as `:1443` only on the outer record.
 - Locked the HA source settings request/response wire contract to lowercase `directOriginScheme` values (`http|https|follow`) by adding serde lowercase support on the shared Rust enum, while preserving the existing uppercase conversion for outbound EdgeOne payloads.
 - Added standby pull-based sync controlled by `HA_SYNC_SOURCE_URL`, `HA_INTERNAL_TOKEN`, and `HA_SYNC_INTERVAL_SECS`; active nodes no longer push snapshots.
+- Added peer lookup fallback for `mcp_sessions` and `research_requests`, with local-first lookups, a five-second total budget, and deterministic miss handling so the service can either resume the original session/key binding or fail without guessing a new key.
 - Reworked HA baseline export so active nodes stream zstd NDJSON directly from SQLite rows instead
   of materializing one giant baseline string before compression. The same active baseline route is
   now used for `billing_ledger`, so repeated billing baseline exports do not recreate the previous
@@ -113,6 +115,8 @@
 - Updated direct-origin EdgeOne switch payloads to send the provider-compatible `OriginInfo.OriginType=IP_DOMAIN`, and added regression coverage so admin HA source switching no longer sends the rejected lowercase literal.
 - Added full-master fencing for system settings, upstream key creation, user token management, user quota changes, registration settings, OAuth login start, recharge order creation, and payment notify.
 - Added basic-business fencing for external Tavily HTTP API, MCP root/subpaths, and Tavily usage routes; `standby` and `recovery` return 503 before auth/quota/upstream work.
+- Added dual-active serving eligibility so `standby` can serve core Tavily business when `HA_CORE_DUAL_ACTIVE=1` and the node is on an origin-group route, while `recovery` remains fenced and control-plane writes stay on `full_master`.
+- Restricted dual-active `promote` to explicit `force=true` takeover and reject it when any reachable peer still allows full writes, so routine leader changes must use `planned cutover`.
 - Restricted non-force promote to `standby` callers so an active node cannot demote itself through an accidental promote operation.
 - Added HA schema tables for node state, sync watermarks, failover operations, recovery batches, and EdgeOne audit logs.
 - Extended HA node state storage with direct-origin and source-group columns so the current instance can override the Env/CLI default source without joining HA sync.
@@ -142,6 +146,7 @@
 
 - `cargo fmt --check`
 - `cargo check`
+- `cargo check --bin mock_tavily --bin mock_edgeone --bin mock_edgeone_ingress`
 - `cargo test alerts_and_ha -- --nocapture`
 - `cargo test standby_server_startup_does_not_spawn_business_scheduled_jobs -- --nocapture`
 - `cargo test ha_standby_sync_recovers_after_invalid_events_stream -- --nocapture`
@@ -150,25 +155,67 @@
 - `cd web && bun run build`
 - `cd web && bun test src/admin/HaSourceSettingsDialog.interaction.test.tsx src/components/HaStatusBanner.stories.test.tsx`
 - `python3 -m py_compile tests/ha/scripts/*.py`
-- Shared `codex-testbox` Docker Compose harness with mock EdgeOne, mock ingress, dual app nodes, and mock upstream:
-  `pre -> failover -> recovery`.
+- `bash -n tests/ha/scripts/run_testbox_ha_memory_contract.sh`
+- `bash -n tests/ha/scripts/run_testbox_ha_suite.sh`
+- `bash -n scripts/run-ha-testbox-suite.sh`
+- Shared `codex-testbox` Docker Compose harness with Rust mock EdgeOne, Rust mock ingress, dual app nodes, and Rust mock Tavily upstream:
+  `legacy_pre -> legacy_failover -> legacy_recovery -> dual_active_serving -> dual_active_cutover -> memory`.
 
 ## Integration Harness
 
-- Added `tests/ha/docker-compose.yml` for mock EdgeOne, EdgeOne ingress, mock Tavily upstream, `node-a`, `node-b`, and `ha-test-runner`.
-- Added `tests/ha/scripts/run_ha_acceptance.py` with staged acceptance checks:
-  `pre`, `failover`, and `recovery`.
-- Added Python mocks for EdgeOne origin describe/modify, single-entry ingress forwarding, and Tavily/MCP upstream responses.
-- The harness uses only mock upstreams and runs on `codex-testbox`; it does not call the production Tavily or EdgeOne endpoints.
+- Added `tests/ha/Dockerfile.mock` plus Rust mock binaries:
+  `mock_tavily`, `mock_edgeone`, and `mock_edgeone_ingress`.
+- Reworked `tests/ha/docker-compose.yml` into a shared base that uses bind-mounted runtime dirs
+  instead of named volumes.
+- Added `tests/ha/docker-compose.legacy.yml` for `HA_SOURCE_KIND=direct`,
+  `HA_CORE_DUAL_ACTIVE=0`.
+- Added `tests/ha/docker-compose.dual-active.yml` for `HA_SOURCE_KIND=origin_group`,
+  `HA_SOURCE_ORIGIN_GROUP_ID=og-core`, `HA_CORE_DUAL_ACTIVE=1`.
+- Replaced the old staged acceptance flow with
+  `legacy_pre`, `legacy_failover`, `legacy_recovery`, `dual_active_serving`, and
+  `dual_active_cutover`.
+- The harness no longer uses a dedicated `ha-test-runner` container. SQLite fixture seeding,
+  acceptance checks, and memory-contract assertions all run host-side against bind-mounted runtime
+  dirs.
+- Added `tests/ha/scripts/run_testbox_ha_suite.sh` for remote single-run orchestration and
+  `scripts/run-ha-testbox-suite.sh` as the local shared-testbox wrapper.
+- Added `tests/ha/README.md` documenting local usage, suite matrix, runtime-dir layout, and
+  harness-only headers.
+- Hardened the test-only Dockerfiles so `tests/ha/Dockerfile.app` and `tests/ha/Dockerfile.mock`
+  reuse their Rust builder stage as the runtime image. This keeps the shared testbox from doing a
+  second external `debian:bookworm-slim` metadata resolution on every overlay rebuild and removes a
+  flaky Docker Hub EOF class from the acceptance path.
+- The harness uses only mock upstreams and runs on `codex-testbox`; it does not call the
+  production Tavily or EdgeOne endpoints.
 - Added `tests/ha/docker-compose.memory.yml`, `tests/ha/scripts/seed_large_ha_fixture.py`,
   `tests/ha/scripts/run_ha_memory_contract.py`, and
   `tests/ha/scripts/run_testbox_ha_memory_contract.sh` for the 256MiB cgroup contract. The accepted
   proof seeds a production-shaped HA fixture, forces both app services under `mem_limit: 256m`,
   waits for standby catch-up, then repeatedly hits the active `billing` baseline export while
   sampling `memory.current`.
-- Shared-testbox proof result for the accepted fixture:
-  - standby counts converged to `users=2000`, `tokens=2000`, `sessions=3000`, `billing=35000`
-  - repeated billing baseline exports all returned `rowCount=35000`
-  - sampled `memory.current` peaks were `95,809,536` bytes on node-a and `268,423,168` bytes on
-    node-b
-  - neither container reported `OOMKilled=true`
+- Shared-testbox proof result:
+  - final passing run: `20260701_155428_052e29f6_ha_suite`
+  - remote run dir:
+    `/srv/codex/workspaces/ivan/tavily-hikari__e8e88f26/runs/20260701_155428_052e29f6_ha_suite`
+  - local artifact mirror:
+    `.tmp/ha-testbox-20260701_155428_052e29f6_ha_suite`
+  - suite status summary:
+    - `legacy.status = 0`
+    - `dualActive.status = 0`
+    - `memory.status = 0`
+  - dual-active serving proof:
+    - `node-a` stayed `full_master`, `node-b` stayed serving `standby`
+    - the same ingress domain served `/mcp`, `/api/tavily/search|extract|crawl|map|research`, and
+      `/api/tavily/usage` from both nodes
+    - cross-node MCP follow-up reused the original `upstream-mock-session-1`
+    - cross-node research result fetch kept the original bound key `tvly-node-a-seed`
+  - dual-active cutover proof:
+    - `dual_active_cutover.json` recorded `nodeA=standby`, `nodeB=full_master`
+    - EdgeOne source remained `origin_group=og-core`; cutover only changed the leader key
+    - `POST /api/admin/ha/finalize` stayed rejected with `409` in dual-active mode
+  - memory contract proof:
+    - `nodeAPeakMemoryCurrent = 82,968,576`
+    - `nodeBPeakMemoryCurrent = 268,427,264`
+    - `nodeAOomKilled = false`
+    - `nodeBOomKilled = false`
+    - standby converged to `users=2000`, `tokens=2000`, `sessions=3000`, `billing=35000`
