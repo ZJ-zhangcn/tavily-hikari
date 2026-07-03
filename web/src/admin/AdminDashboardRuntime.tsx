@@ -1896,9 +1896,10 @@ function AdminDashboard(): JSX.Element {
   const [selectedUserDetail, setSelectedUserDetail] = useState<AdminUserDetail | null>(null)
   const [userDetailRevision, setUserDetailRevision] = useState(0)
   const activeUserDetailRouteId = route.name === 'user' ? route.id : null
-  const [userDetailUsageSeriesCache, setUserDetailUsageSeriesCache] = useState<
-    Partial<Record<AdminUserUsageSeriesKey, AdminUserUsageSeries>>
-  >({})
+  const [userDetailUsageSeriesCache, setUserDetailUsageSeriesCache] = useState<{
+    userId: string | null
+    series: Partial<Record<AdminUserUsageSeriesKey, AdminUserUsageSeries>>
+  }>({ userId: null, series: {} })
   const [userDetailLoading, setUserDetailLoading] = useState(false)
   const [userQuotaSnapshot, setUserQuotaSnapshot] = useState<UserQuotaSnapshot | null>(null)
   const [userQuotaDraft, setUserQuotaDraft] = useState<Record<QuotaSliderField, string> | null>(null)
@@ -2127,7 +2128,7 @@ function AdminDashboard(): JSX.Element {
   }, [adminDisplayDensity])
 
   useEffect(() => {
-    setUserDetailUsageSeriesCache({})
+    setUserDetailUsageSeriesCache({ userId: activeUserDetailRouteId, series: {} })
   }, [activeUserDetailRouteId])
 
   const manualCopyText = useMemo(
@@ -9333,8 +9334,8 @@ function AdminDashboard(): JSX.Element {
                   ipAddresses7d={detail.recentIpAddresses7d}
                   ipCount24h={detail.recentIpCount24h}
                   ipCount7d={detail.recentIpCount7d}
-                  initialSeriesCache={userDetailUsageSeriesCache}
-                  onSeriesCacheChange={setUserDetailUsageSeriesCache}
+                  initialSeriesCache={userDetailUsageSeriesCache.userId === detail.userId ? userDetailUsageSeriesCache.series : {}}
+                  onSeriesCacheChange={(series) => setUserDetailUsageSeriesCache({ userId: detail.userId, series })}
                   loadSeries={(series, signal) => fetchAdminUserUsageSeries(detail.userId, series, signal)}
                 />
               </AdminLazyBoundary>

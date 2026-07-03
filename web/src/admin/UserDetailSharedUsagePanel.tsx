@@ -327,10 +327,6 @@ export function UserDetailSharedUsagePanel({
   }, [loadSeries])
 
   useEffect(() => {
-    onSeriesCacheChange?.(seriesCache)
-  }, [onSeriesCacheChange, seriesCache])
-
-  useEffect(() => {
     return () => {
       Object.values(inflightControllersRef.current).forEach((controller) => controller?.abort())
       inflightControllersRef.current = {}
@@ -370,7 +366,11 @@ export function UserDetailSharedUsagePanel({
         if (inflightControllersRef.current[activeSeries] === controller) {
           delete inflightControllersRef.current[activeSeries]
         }
-        setSeriesCache((current) => ({ ...current, [activeSeries]: payload }))
+        setSeriesCache((current) => {
+          const next = { ...current, [activeSeries]: payload }
+          onSeriesCacheChange?.(next)
+          return next
+        })
         setStatusBySeries((current) => ({ ...current, [activeSeries]: 'success' }))
       })
       .catch((error) => {
