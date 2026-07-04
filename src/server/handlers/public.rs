@@ -872,12 +872,17 @@ struct DashboardOverviewSnapshot {
 
 struct DashboardOverviewLoadGuard {
     state: Arc<Mutex<DashboardOverviewCacheState>>,
+    generation: u64,
     armed: bool,
 }
 
 impl DashboardOverviewLoadGuard {
-    fn new(state: Arc<Mutex<DashboardOverviewCacheState>>) -> Self {
-        Self { state, armed: true }
+    fn new(state: Arc<Mutex<DashboardOverviewCacheState>>, generation: u64) -> Self {
+        Self {
+            state,
+            generation,
+            armed: true,
+        }
     }
 
     fn disarm(&mut self) {
@@ -892,9 +897,10 @@ impl Drop for DashboardOverviewLoadGuard {
         }
 
         let state = self.state.clone();
+        let generation = self.generation;
         tokio::spawn(async move {
             let mut cache = state.lock().await;
-            if cache.loading {
+            if cache.loading && cache.loading_generation == generation {
                 cache.loading = false;
                 cache.loading_started_at = None;
                 cache.notify.notify_waiters();
@@ -1748,6 +1754,7 @@ async fn load_dashboard_overview_snapshot(
             },
         );
 
+        let mut load_generation = None;
         let waiter = {
             let mut cache = cache_handle.lock().await;
             if let Some(cached) = cache.cached.as_ref()
@@ -1790,14 +1797,18 @@ async fn load_dashboard_overview_snapshot(
                         "dashboard overview shared snapshot loader was stale after freshness probe; taking over rebuild"
                     );
                     cache.loading = true;
+                    cache.loading_generation = cache.loading_generation.wrapping_add(1);
                     cache.loading_started_at = Some(tokio::time::Instant::now());
+                    load_generation = Some(cache.loading_generation);
                     None
                 } else {
                     Some(cache.notify.clone().notified_owned())
                 }
             } else {
                 cache.loading = true;
+                cache.loading_generation = cache.loading_generation.wrapping_add(1);
                 cache.loading_started_at = Some(tokio::time::Instant::now());
+                load_generation = Some(cache.loading_generation);
                 None
             }
         };
@@ -1807,8 +1818,9 @@ async fn load_dashboard_overview_snapshot(
             continue;
         }
 
+        let load_generation = load_generation.expect("dashboard overview loader generation should be assigned");
         let payload_started = Instant::now();
-        let mut load_guard = DashboardOverviewLoadGuard::new(cache_handle.clone());
+        let mut load_guard = DashboardOverviewLoadGuard::new(cache_handle.clone(), load_generation);
         let result = build_dashboard_overview_payload(state).await;
         tavily_hikari::emit_perf_log(
             tavily_hikari::DbLogStatus::Info,
@@ -1824,6 +1836,18 @@ async fn load_dashboard_overview_snapshot(
             },
         );
         let mut cache = cache_handle.lock().await;
+        if cache.loading_generation != load_generation {
+            tracing::warn!(
+                component = "admin_read",
+                event = "dashboard_overview_loader_superseded",
+                loader_generation = load_generation,
+                current_generation = cache.loading_generation,
+                "dashboard overview loader finished after a newer loader took ownership"
+            );
+            load_guard.disarm();
+            return result;
+        }
+
         cache.loading = false;
         cache.loading_started_at = None;
         if let Ok(snapshot) = result.as_ref() {

@@ -179,6 +179,40 @@ async fn dashboard_overview_snapshot_recovers_from_stale_loading_flag() {
 }
 
 #[tokio::test]
+async fn dashboard_overview_load_guard_does_not_clear_newer_loader_generation() {
+    let cache_handle = new_dashboard_overview_cache();
+    {
+        let mut cache = cache_handle.lock().await;
+        cache.loading = true;
+        cache.loading_generation = 1;
+        cache.loading_started_at = Some(tokio::time::Instant::now());
+    }
+
+    let guard = DashboardOverviewLoadGuard::new(cache_handle.clone(), 1);
+
+    {
+        let mut cache = cache_handle.lock().await;
+        cache.loading = true;
+        cache.loading_generation = 2;
+        cache.loading_started_at = Some(tokio::time::Instant::now());
+    }
+
+    drop(guard);
+    tokio::time::sleep(Duration::from_millis(25)).await;
+
+    let cache = cache_handle.lock().await;
+    assert!(cache.loading, "old loader guard must not clear a newer loader");
+    assert_eq!(
+        cache.loading_generation, 2,
+        "old loader guard must preserve the newer loader generation",
+    );
+    assert!(
+        cache.loading_started_at.is_some(),
+        "old loader guard must not erase newer loader start time",
+    );
+}
+
+#[tokio::test]
 async fn dashboard_overview_freshness_advances_on_five_minute_window_anchor() {
     let first_anchor = dashboard_hourly_window_anchor(1_774_070_520);
     let second_anchor = dashboard_hourly_window_anchor(1_774_070_700);
