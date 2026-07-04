@@ -56,6 +56,7 @@ struct CachedDashboardOverviewSnapshot {
 struct DashboardOverviewCacheState {
     cached: Option<CachedDashboardOverviewSnapshot>,
     loading: bool,
+    loading_started_at: Option<tokio::time::Instant>,
     notify: Arc<tokio::sync::Notify>,
     #[cfg(test)]
     build_count: usize,
@@ -66,6 +67,7 @@ impl Default for DashboardOverviewCacheState {
         Self {
             cached: None,
             loading: false,
+            loading_started_at: None,
             notify: Arc::new(tokio::sync::Notify::new()),
             #[cfg(test)]
             build_count: 0,
