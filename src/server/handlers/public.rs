@@ -826,6 +826,8 @@ const DASHBOARD_TREND_WINDOW_SIZE: usize = 8;
 const DASHBOARD_RECENT_JOBS_LIMIT: usize = 5;
 const DASHBOARD_DISABLED_TOKENS_LIMIT: usize = 5;
 const DASHBOARD_DISABLED_TOKENS_QUERY_LIMIT: usize = DASHBOARD_DISABLED_TOKENS_LIMIT + 1;
+const DASHBOARD_OVERVIEW_LOADING_STALE_AFTER: Duration = Duration::from_secs(30);
+const DASHBOARD_RECENT_ALERTS_TOKEN_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Serialize)]
 struct DashboardTrendView {
@@ -866,6 +868,45 @@ struct DashboardOverviewPayload {
 struct DashboardOverviewSnapshot {
     payload: DashboardOverviewPayload,
     freshness: DashboardOverviewFreshness,
+}
+
+struct DashboardOverviewLoadGuard {
+    state: Arc<Mutex<DashboardOverviewCacheState>>,
+    generation: u64,
+    armed: bool,
+}
+
+impl DashboardOverviewLoadGuard {
+    fn new(state: Arc<Mutex<DashboardOverviewCacheState>>, generation: u64) -> Self {
+        Self {
+            state,
+            generation,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for DashboardOverviewLoadGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+
+        let state = self.state.clone();
+        let generation = self.generation;
+        tokio::spawn(async move {
+            let mut cache = state.lock().await;
+            if cache.loading && cache.loading_generation == generation {
+                cache.loading = false;
+                cache.loading_started_at = None;
+                cache.notify.notify_waiters();
+            }
+        });
+    }
 }
 
 #[cfg(test)]
@@ -1243,7 +1284,7 @@ async fn build_dashboard_overview_payload(
         .dashboard_recent_alerts_summary(24)
         .await
         .unwrap_or_else(|_| tavily_hikari::RecentAlertsSummary::default());
-    let recent_alerts_token = state.proxy.dashboard_recent_alerts_token(24).await?;
+    let recent_alerts_token = dashboard_recent_alerts_token_or_fallback(state, 24, &recent_alerts).await;
     let (mut disabled_tokens, token_coverage) = match state
         .proxy
         .list_dashboard_disabled_tokens(DASHBOARD_DISABLED_TOKENS_QUERY_LIMIT)
@@ -1376,6 +1417,58 @@ async fn dashboard_recent_alerts_freshness(
     window_hours: i64,
 ) -> Result<tavily_hikari::RecentAlertsSummary, ProxyError> {
     state.proxy.dashboard_recent_alerts_summary(window_hours).await
+}
+
+fn fallback_recent_alerts_token(summary: &tavily_hikari::RecentAlertsSummary) -> [i64; 4] {
+    let top_group_last_seen_sum = summary
+        .top_groups
+        .iter()
+        .map(|group| group.last_seen)
+        .sum::<i64>();
+    let typed_count_sum = summary
+        .counts_by_type
+        .iter()
+        .map(|item| item.count)
+        .sum::<i64>();
+    [
+        summary.total_events,
+        summary.grouped_count,
+        top_group_last_seen_sum,
+        typed_count_sum,
+    ]
+}
+
+async fn dashboard_recent_alerts_token_or_fallback(
+    state: &Arc<AppState>,
+    window_hours: i64,
+    summary: &tavily_hikari::RecentAlertsSummary,
+) -> [i64; 4] {
+    match tokio::time::timeout(
+        DASHBOARD_RECENT_ALERTS_TOKEN_TIMEOUT,
+        state.proxy.dashboard_recent_alerts_token(window_hours),
+    )
+    .await
+    {
+        Ok(Ok(token)) => token,
+        Ok(Err(err)) => {
+            tracing::warn!(
+                component = "admin_read",
+                event = "dashboard_recent_alerts_token_degraded",
+                err = %err,
+                "dashboard recent-alerts token degraded to summary-derived freshness"
+            );
+            fallback_recent_alerts_token(summary)
+        }
+        Err(_) => {
+            tracing::warn!(
+                component = "admin_read",
+                event = "dashboard_recent_alerts_token_timeout",
+                timeout_ms = DASHBOARD_RECENT_ALERTS_TOKEN_TIMEOUT.as_millis() as u64,
+                "dashboard recent-alerts token timed out; using summary-derived freshness"
+            );
+            fallback_recent_alerts_token(summary)
+        }
+    }
 }
 
 fn dashboard_retention_since(retention_days: i64, now: chrono::DateTime<Local>) -> i64 {
@@ -1540,7 +1633,7 @@ async fn compute_dashboard_overview_freshness(
     let recent_alerts = dashboard_recent_alerts_freshness(state, 24)
         .await
         .unwrap_or_else(|_| tavily_hikari::RecentAlertsSummary::default());
-    let recent_alerts_token = state.proxy.dashboard_recent_alerts_token(24).await?;
+    let recent_alerts_token = dashboard_recent_alerts_token_or_fallback(state, 24, &recent_alerts).await;
     Ok(DashboardOverviewFreshness {
         summary: [
             summary.total_requests,
@@ -1603,9 +1696,25 @@ async fn load_dashboard_overview_snapshot(
     loop {
         let cache_handle = dashboard_overview_cache_for_state(state.as_ref());
         let waiter = {
-            let cache = cache_handle.lock().await;
+            let mut cache = cache_handle.lock().await;
             if cache.loading {
-                Some(cache.notify.clone().notified_owned())
+                let stale = cache
+                    .loading_started_at
+                    .is_some_and(|started_at| started_at.elapsed() >= DASHBOARD_OVERVIEW_LOADING_STALE_AFTER);
+                if stale {
+                    tracing::warn!(
+                        component = "admin_read",
+                        event = "dashboard_overview_loading_stale",
+                        stale_after_ms = DASHBOARD_OVERVIEW_LOADING_STALE_AFTER.as_millis() as u64,
+                        "dashboard overview shared snapshot loader was stale; allowing a new request to rebuild"
+                    );
+                    cache.loading = false;
+                    cache.loading_started_at = None;
+                    cache.notify.notify_waiters();
+                    None
+                } else {
+                    Some(cache.notify.clone().notified_owned())
+                }
             } else {
                 None
             }
@@ -1645,6 +1754,7 @@ async fn load_dashboard_overview_snapshot(
             },
         );
 
+        let mut load_generation = None;
         let waiter = {
             let mut cache = cache_handle.lock().await;
             if let Some(cached) = cache.cached.as_ref()
@@ -1676,9 +1786,29 @@ async fn load_dashboard_overview_snapshot(
                 return Ok(cached.snapshot.clone());
             }
             if cache.loading {
-                Some(cache.notify.clone().notified_owned())
+                let stale = cache
+                    .loading_started_at
+                    .is_some_and(|started_at| started_at.elapsed() >= DASHBOARD_OVERVIEW_LOADING_STALE_AFTER);
+                if stale {
+                    tracing::warn!(
+                        component = "admin_read",
+                        event = "dashboard_overview_loading_stale",
+                        stale_after_ms = DASHBOARD_OVERVIEW_LOADING_STALE_AFTER.as_millis() as u64,
+                        "dashboard overview shared snapshot loader was stale after freshness probe; taking over rebuild"
+                    );
+                    cache.loading = true;
+                    cache.loading_generation = cache.loading_generation.wrapping_add(1);
+                    cache.loading_started_at = Some(tokio::time::Instant::now());
+                    load_generation = Some(cache.loading_generation);
+                    None
+                } else {
+                    Some(cache.notify.clone().notified_owned())
+                }
             } else {
                 cache.loading = true;
+                cache.loading_generation = cache.loading_generation.wrapping_add(1);
+                cache.loading_started_at = Some(tokio::time::Instant::now());
+                load_generation = Some(cache.loading_generation);
                 None
             }
         };
@@ -1688,7 +1818,9 @@ async fn load_dashboard_overview_snapshot(
             continue;
         }
 
+        let load_generation = load_generation.expect("dashboard overview loader generation should be assigned");
         let payload_started = Instant::now();
+        let mut load_guard = DashboardOverviewLoadGuard::new(cache_handle.clone(), load_generation);
         let result = build_dashboard_overview_payload(state).await;
         tavily_hikari::emit_perf_log(
             tavily_hikari::DbLogStatus::Info,
@@ -1704,7 +1836,20 @@ async fn load_dashboard_overview_snapshot(
             },
         );
         let mut cache = cache_handle.lock().await;
+        if cache.loading_generation != load_generation {
+            tracing::warn!(
+                component = "admin_read",
+                event = "dashboard_overview_loader_superseded",
+                loader_generation = load_generation,
+                current_generation = cache.loading_generation,
+                "dashboard overview loader finished after a newer loader took ownership"
+            );
+            load_guard.disarm();
+            return result;
+        }
+
         cache.loading = false;
+        cache.loading_started_at = None;
         if let Ok(snapshot) = result.as_ref() {
             cache.cached = Some(CachedDashboardOverviewSnapshot {
                 snapshot: snapshot.clone(),
@@ -1737,6 +1882,7 @@ async fn load_dashboard_overview_snapshot(
             );
         }
         cache.notify.notify_waiters();
+        load_guard.disarm();
         return result;
     }
 }

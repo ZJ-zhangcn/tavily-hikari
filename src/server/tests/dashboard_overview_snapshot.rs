@@ -124,6 +124,95 @@ async fn dashboard_overview_snapshot_is_reused_within_the_same_freshness_wave() 
 }
 
 #[tokio::test]
+async fn dashboard_overview_snapshot_recovers_from_stale_loading_flag() {
+    let db_path = temp_db_path("dashboard-overview-stale-loading-flag");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_endpoint(
+        vec!["tvly-dashboard-overview-stale-loading-flag".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+    )
+    .await
+    .expect("proxy created");
+
+    let state = Arc::new(AppState {
+        proxy,
+        static_dir: None,
+        forward_auth: ForwardAuthConfig::new(None, None, None, None),
+        forward_auth_enabled: false,
+        builtin_admin: BuiltinAdminAuth::new(false, None, None),
+        linuxdo_oauth: LinuxDoOAuthOptions::disabled(),
+        linuxdo_credit: LinuxDoCreditOptions::disabled(),
+        ha: tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig::default()),
+        dev_open_admin: false,
+        usage_base: "http://127.0.0.1:58088".to_string(),
+        api_key_ip_geo_origin: "https://api.country.is".to_string(),
+        dashboard_overview_cache: new_dashboard_overview_cache(),
+    });
+
+    {
+        let cache_handle = dashboard_overview_cache_for_state(state.as_ref());
+        let mut cache = cache_handle.lock().await;
+        cache.loading = true;
+        cache.loading_started_at =
+            Some(tokio::time::Instant::now() - DASHBOARD_OVERVIEW_LOADING_STALE_AFTER - Duration::from_secs(1));
+    }
+
+    let snapshot = tokio::time::timeout(
+        Duration::from_secs(5),
+        load_dashboard_overview_snapshot(&state),
+    )
+    .await
+    .expect("stale loading flag should not block forever")
+    .expect("overview snapshot should rebuild after stale loading flag");
+
+    assert!(
+        !snapshot.payload.month_series.current.is_empty(),
+        "recovered overview should still include normal dashboard data",
+    );
+    assert!(
+        dashboard_overview_build_count(&state).await >= 1,
+        "stale loading recovery should take over and rebuild the shared snapshot",
+    );
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
+async fn dashboard_overview_load_guard_does_not_clear_newer_loader_generation() {
+    let cache_handle = new_dashboard_overview_cache();
+    {
+        let mut cache = cache_handle.lock().await;
+        cache.loading = true;
+        cache.loading_generation = 1;
+        cache.loading_started_at = Some(tokio::time::Instant::now());
+    }
+
+    let guard = DashboardOverviewLoadGuard::new(cache_handle.clone(), 1);
+
+    {
+        let mut cache = cache_handle.lock().await;
+        cache.loading = true;
+        cache.loading_generation = 2;
+        cache.loading_started_at = Some(tokio::time::Instant::now());
+    }
+
+    drop(guard);
+    tokio::time::sleep(Duration::from_millis(25)).await;
+
+    let cache = cache_handle.lock().await;
+    assert!(cache.loading, "old loader guard must not clear a newer loader");
+    assert_eq!(
+        cache.loading_generation, 2,
+        "old loader guard must preserve the newer loader generation",
+    );
+    assert!(
+        cache.loading_started_at.is_some(),
+        "old loader guard must not erase newer loader start time",
+    );
+}
+
+#[tokio::test]
 async fn dashboard_overview_freshness_advances_on_five_minute_window_anchor() {
     let first_anchor = dashboard_hourly_window_anchor(1_774_070_520);
     let second_anchor = dashboard_hourly_window_anchor(1_774_070_700);

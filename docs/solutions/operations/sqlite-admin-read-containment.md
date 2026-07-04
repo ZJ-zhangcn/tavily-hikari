@@ -83,6 +83,12 @@ reads:
   disabled-token or recent-job reads fail, keep the core overview payload serving and let the
   optional slice surface `error`/empty coverage semantics on the next snapshot rather than timing
   out the whole admin page.
+- Guard shared admin snapshot loaders with both a drop-time reset and a stale-loading takeover
+  window. A cancelled or wedged request must not leave `loading=true` forever and make every later
+  request wait on a `Notify` that will never fire.
+- Keep optional freshness tokens on a short deadline and derive a conservative token from the
+  already-built optional summary when the dedicated token query is slow or unavailable. Freshness
+  precision is less important than preserving first paint for the owner-facing dashboard.
 - Keep default structured perf logs on the owner-facing read path itself. Dashboard overview/shared
   snapshot and recent-request list/catalog endpoints should emit stable `component=admin_read event=...` records with `elapsed_ms`, route/scope metadata, and runtime memory headroom so low
   memory protection can be triggered and diagnosed without ad-hoc debug builds.
