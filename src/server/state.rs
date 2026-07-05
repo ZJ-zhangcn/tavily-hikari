@@ -587,6 +587,7 @@ struct BuiltinAdminPasswordStatus {
 #[derive(Clone, Debug)]
 struct BuiltinAdminAuth {
     startup_credentials: BuiltinAdminCredentialState,
+    persisted_password_allowed: bool,
     credentials: Arc<std::sync::RwLock<BuiltinAdminCredentialState>>,
     sessions: Arc<std::sync::RwLock<HashMap<String, BuiltinAdminSession>>>,
     backend_time: tavily_hikari::BackendTime,
@@ -627,6 +628,7 @@ impl BuiltinAdminAuth {
         };
         Self {
             startup_credentials: credentials.clone(),
+            persisted_password_allowed: enabled,
             credentials: Arc::new(std::sync::RwLock::new(credentials)),
             sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
             backend_time,
@@ -674,7 +676,11 @@ impl BuiltinAdminAuth {
             return;
         };
         if let Ok(mut credentials) = self.credentials.write() {
-            if settings.password_hash.is_some() || settings.disabled_at.is_some() {
+            if !self.persisted_password_allowed {
+                credentials.password = None;
+                credentials.password_hash = None;
+                credentials.disabled = true;
+            } else if settings.password_hash.is_some() || settings.disabled_at.is_some() {
                 credentials.password = None;
                 credentials.password_hash = settings.password_hash;
                 credentials.disabled = settings.disabled_at.is_some();
@@ -682,13 +688,21 @@ impl BuiltinAdminAuth {
             credentials.updated_at = Some(settings.updated_at);
             credentials.login_totp_required = settings.login_totp_required;
         }
-        if settings.disabled_at.is_some() {
+        if !self.persisted_password_allowed || settings.disabled_at.is_some() {
             self.clear_sessions();
         }
     }
 
     fn set_password_hash(&self, password_hash: String, updated_at: Option<i64>) {
         if let Ok(mut credentials) = self.credentials.write() {
+            if !self.persisted_password_allowed {
+                credentials.password = None;
+                credentials.password_hash = None;
+                credentials.disabled = true;
+                credentials.updated_at = updated_at;
+                self.clear_sessions();
+                return;
+            }
             credentials.password = None;
             credentials.password_hash = Some(password_hash);
             credentials.disabled = false;
@@ -827,6 +841,32 @@ mod builtin_admin_auth_tests {
         assert!(admin.is_enabled());
         assert!(admin.login_totp_required());
         assert!(admin.login("env-password").is_some());
+    }
+
+    #[test]
+    fn persisted_password_settings_do_not_override_startup_disable() {
+        let admin = BuiltinAdminAuth::new(false, None, None);
+
+        admin.apply_persisted_settings(Some(tavily_hikari::AdminPasswordSettingsRecord {
+            password_hash: Some("stored-password-hash".to_string()),
+            disabled_at: None,
+            updated_at: 456,
+            login_totp_required: true,
+        }));
+
+        assert!(!admin.is_enabled());
+        assert!(admin.login_totp_required());
+        assert!(admin.login("stored-password").is_none());
+    }
+
+    #[test]
+    fn setting_password_does_not_override_startup_disable() {
+        let admin = BuiltinAdminAuth::new(false, None, None);
+
+        admin.set_password_hash("stored-password-hash".to_string(), Some(789));
+
+        assert!(!admin.is_enabled());
+        assert!(admin.login("stored-password").is_none());
     }
 }
 

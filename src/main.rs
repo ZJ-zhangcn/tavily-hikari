@@ -100,8 +100,13 @@ struct Cli {
     admin_mode_name: Option<String>,
 
     /// Enable/disable ForwardAuth admin authentication (default false).
-    #[arg(long, env = "ADMIN_AUTH_FORWARD_ENABLED", default_value_t = false)]
-    admin_auth_forward_enabled: bool,
+    #[arg(
+        long,
+        env = "ADMIN_AUTH_FORWARD_ENABLED",
+        num_args = 0..=1,
+        default_missing_value = "true"
+    )]
+    admin_auth_forward_enabled: Option<bool>,
 
     /// Enable/disable built-in admin login (cookie session) (default false).
     #[arg(long, env = "ADMIN_AUTH_BUILTIN_ENABLED", default_value_t = false)]
@@ -482,7 +487,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         forward_auth_header.is_some(),
         forward_auth_admin_value.is_some(),
     );
-    if forward_auth_enabled && !cli.admin_auth_forward_enabled {
+    if forward_auth_enabled && cli.admin_auth_forward_enabled.is_none() {
         warn!(
             component = "startup",
             event = "forward_auth_compat_auto_enabled",
@@ -751,11 +756,11 @@ fn trim_optional(value: Option<String>) -> Option<String> {
 }
 
 fn effective_forward_auth_enabled(
-    explicit_enabled: bool,
+    explicit_enabled: Option<bool>,
     header_configured: bool,
     admin_value_configured: bool,
 ) -> bool {
-    explicit_enabled || (header_configured && admin_value_configured)
+    explicit_enabled.unwrap_or(header_configured && admin_value_configured)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -784,10 +789,11 @@ mod main_tests {
 
     #[test]
     fn forward_auth_stays_compatible_when_legacy_headers_are_configured() {
-        assert!(effective_forward_auth_enabled(false, true, true));
-        assert!(effective_forward_auth_enabled(true, false, false));
-        assert!(!effective_forward_auth_enabled(false, true, false));
-        assert!(!effective_forward_auth_enabled(false, false, true));
+        assert!(effective_forward_auth_enabled(None, true, true));
+        assert!(effective_forward_auth_enabled(Some(true), false, false));
+        assert!(!effective_forward_auth_enabled(None, true, false));
+        assert!(!effective_forward_auth_enabled(None, false, true));
+        assert!(!effective_forward_auth_enabled(Some(false), true, true));
     }
 
     #[test]
