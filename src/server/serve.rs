@@ -870,7 +870,7 @@ async fn run_ha_standby_sync_once(
                 .into());
             }
             let result = apply_ha_baseline_response_stream(
-                &state.proxy,
+                state.as_ref(),
                 channel,
                 response,
                 tavily_hikari::HaBaselineApplyMode::Replace,
@@ -992,7 +992,7 @@ async fn run_ha_standby_sync_once(
             .into());
         }
         let result =
-            match apply_ha_events_response_stream(&state.proxy, channel, response, None).await {
+            match apply_ha_events_response_stream(state.as_ref(), channel, response, None).await {
             Ok(result) => result,
             Err(err) if is_ha_retryable_foreign_key_gap(&*err) => {
                 let reset_detail =
@@ -1217,7 +1217,7 @@ async fn run_ha_sync_once_for_peer(
                 None
             };
             let result = apply_ha_baseline_response_stream(
-                &state.proxy,
+                state.as_ref(),
                 channel,
                 response,
                 baseline_mode,
@@ -1321,7 +1321,7 @@ async fn run_ha_sync_once_for_peer(
             None
         };
         let result = match apply_ha_events_response_stream(
-            &state.proxy,
+            state.as_ref(),
             channel,
             response,
             peer_import_node_id,
@@ -1485,8 +1485,20 @@ fn spawn_post_ready_serving_tasks_for_status(
     pressure || business_calls
 }
 
+async fn refresh_admin_password_state_after_ha_apply(
+    state: &AppState,
+    channel: tavily_hikari::HaSyncChannel,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    if channel != tavily_hikari::HaSyncChannel::Control {
+        return Ok(());
+    }
+    let settings = state.proxy.get_admin_password_settings().await?;
+    state.builtin_admin.apply_persisted_settings(settings);
+    Ok(())
+}
+
 async fn apply_ha_baseline_response_stream(
-    proxy: &TavilyProxy,
+    state: &AppState,
     channel: tavily_hikari::HaSyncChannel,
     response: reqwest::Response,
     mode: tavily_hikari::HaBaselineApplyMode,
@@ -1499,7 +1511,10 @@ async fn apply_ha_baseline_response_stream(
     let reader = StreamReader::new(stream);
     let decoder = ZstdDecoder::new(BufReader::new(reader));
     let mut lines = BufReader::new(decoder).lines();
-    let mut session = proxy.begin_ha_baseline_apply_with_mode(channel, mode).await?;
+    let mut session = state
+        .proxy
+        .begin_ha_baseline_apply_with_mode(channel, mode)
+        .await?;
     loop {
         let next_line = match lines.next_line().await {
             Ok(next_line) => next_line,
@@ -1526,7 +1541,8 @@ async fn apply_ha_baseline_response_stream(
         }
     }
     let result = session.finish().await.map_err(Box::<dyn std::error::Error + Send + Sync>::from)?;
-    let outbox = proxy.ha_channel_outbox_stats(channel, None).await?;
+    refresh_admin_password_state_after_ha_apply(state, channel).await?;
+    let outbox = state.proxy.ha_channel_outbox_stats(channel, None).await?;
     let memory = tavily_hikari::capture_runtime_memory_snapshot();
     tracing::info!(
         component = "ha",
@@ -1557,7 +1573,7 @@ async fn apply_ha_baseline_response_stream(
 }
 
 async fn apply_ha_events_response_stream(
-    proxy: &TavilyProxy,
+    state: &AppState,
     channel: tavily_hikari::HaSyncChannel,
     response: reqwest::Response,
     peer_import_node_id: Option<&str>,
@@ -1569,7 +1585,7 @@ async fn apply_ha_events_response_stream(
     let reader = StreamReader::new(stream);
     let decoder = ZstdDecoder::new(BufReader::new(reader));
     let mut lines = BufReader::new(decoder).lines();
-    let mut session = proxy.begin_ha_events_apply(channel).await?;
+    let mut session = state.proxy.begin_ha_events_apply(channel).await?;
     loop {
         let next_line = match lines.next_line().await {
             Ok(next_line) => next_line,
@@ -1596,7 +1612,8 @@ async fn apply_ha_events_response_stream(
         }
     }
     let result = session.finish().await.map_err(Box::<dyn std::error::Error + Send + Sync>::from)?;
-    let outbox = proxy.ha_channel_outbox_stats(channel, None).await?;
+    refresh_admin_password_state_after_ha_apply(state, channel).await?;
+    let outbox = state.proxy.ha_channel_outbox_stats(channel, None).await?;
     let memory = tavily_hikari::capture_runtime_memory_snapshot();
     tracing::info!(
         component = "ha",
@@ -1796,3 +1813,70 @@ async fn shutdown_signal() {
 
 const BODY_LIMIT: usize = 16 * 1024 * 1024; // 16 MiB 默认限制
 const DEFAULT_LOG_LIMIT: usize = 200;
+
+#[cfg(test)]
+mod serve_tests {
+    use super::*;
+    use tavily_hikari::DEFAULT_UPSTREAM;
+
+    #[tokio::test]
+    async fn ha_control_apply_refreshes_in_memory_admin_password_state() {
+        let temp_dir = tempfile::tempdir().expect("temp dir");
+        let db_path = temp_dir.path().join("admin-password-ha-refresh.db");
+        let db_str = db_path.to_string_lossy().to_string();
+        let proxy = TavilyProxy::with_endpoint(
+            vec!["tvly-ha-admin-password-refresh".to_string()],
+            DEFAULT_UPSTREAM,
+            &db_str,
+        )
+        .await
+        .expect("proxy created");
+        let builtin_admin = BuiltinAdminAuth::new(true, Some("env-password".to_string()), None);
+        let state = AppState {
+            proxy: proxy.clone(),
+            static_dir: None,
+            forward_auth: ForwardAuthConfig::new(None, None, None, None),
+            forward_auth_enabled: false,
+            builtin_admin,
+            admin_passkey: AdminPasskeyOptions::disabled(),
+            linuxdo_oauth: LinuxDoOAuthOptions::disabled(),
+            linuxdo_credit: LinuxDoCreditOptions::disabled(),
+            ha: tavily_hikari::HaRuntime::new(tavily_hikari::HaConfig::default()),
+            dev_open_admin: false,
+            usage_base: "http://127.0.0.1:58088".to_string(),
+            api_key_ip_geo_origin: "https://api.country.is".to_string(),
+            dashboard_overview_cache: new_dashboard_overview_cache(),
+        };
+
+        assert!(state.builtin_admin.login("env-password").is_some());
+        proxy
+            .disable_admin_password()
+            .await
+            .expect("disable password in store");
+        refresh_admin_password_state_after_ha_apply(
+            &state,
+            tavily_hikari::HaSyncChannel::Control,
+        )
+        .await
+        .expect("refresh disabled password state");
+        assert!(!state.builtin_admin.is_enabled());
+        assert!(state.builtin_admin.login("env-password").is_none());
+
+        let pool = sqlx::SqlitePool::connect(&format!("sqlite://{db_str}"))
+            .await
+            .expect("connect test db");
+        sqlx::query("DELETE FROM admin_password_settings")
+            .execute(&pool)
+            .await
+            .expect("delete persisted password settings");
+        pool.close().await;
+        refresh_admin_password_state_after_ha_apply(
+            &state,
+            tavily_hikari::HaSyncChannel::Control,
+        )
+        .await
+        .expect("refresh missing password state");
+        assert!(state.builtin_admin.is_enabled());
+        assert!(state.builtin_admin.login("env-password").is_some());
+    }
+}

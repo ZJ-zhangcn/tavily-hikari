@@ -159,6 +159,9 @@ const HA_RUNTIME_EVENT_TABLES: &[&str] = &[
 
 const HA_META_KEYS: &[&str] = &[
     "allow_registration_v1",
+    "admin_totp_enabled_at_v1",
+    "admin_totp_secret_ciphertext_v1",
+    "admin_totp_secret_nonce_v1",
     "api_rebalance_enabled_v1",
     "api_rebalance_percent_v1",
     "global_ip_limit_v1",

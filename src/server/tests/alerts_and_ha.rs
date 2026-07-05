@@ -918,6 +918,9 @@ async fn ha_sync_transports_system_settings_meta_only() {
         r#"
         INSERT INTO meta (key, value) VALUES
             ('request_rate_limit_v1', '42'),
+            ('admin_totp_secret_ciphertext_v1', 'ciphertext'),
+            ('admin_totp_secret_nonce_v1', 'nonce'),
+            ('admin_totp_enabled_at_v1', '123456'),
             ('trusted_proxy_cidrs_v1', '["10.0.0.0/8"]'),
             ('ha_unsynced_local_marker', 'local-only')
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
@@ -933,6 +936,9 @@ async fn ha_sync_transports_system_settings_meta_only() {
         .await
         .expect("export baseline");
     assert!(baseline.ndjson.contains("request_rate_limit_v1"));
+    assert!(baseline.ndjson.contains("admin_totp_secret_ciphertext_v1"));
+    assert!(baseline.ndjson.contains("admin_totp_secret_nonce_v1"));
+    assert!(baseline.ndjson.contains("admin_totp_enabled_at_v1"));
     assert!(baseline.ndjson.contains("trusted_proxy_cidrs_v1"));
     assert!(!baseline.ndjson.contains("ha_unsynced_local_marker"));
 
@@ -951,7 +957,25 @@ async fn ha_sync_transports_system_settings_meta_only() {
             .fetch_optional(&standby_pool)
             .await
             .expect("read unsynced meta");
+    let totp_ciphertext: Option<String> =
+        sqlx::query_scalar("SELECT value FROM meta WHERE key = 'admin_totp_secret_ciphertext_v1'")
+            .fetch_optional(&standby_pool)
+            .await
+            .expect("read synced totp ciphertext");
+    let totp_nonce: Option<String> =
+        sqlx::query_scalar("SELECT value FROM meta WHERE key = 'admin_totp_secret_nonce_v1'")
+            .fetch_optional(&standby_pool)
+            .await
+            .expect("read synced totp nonce");
+    let totp_enabled_at: Option<String> =
+        sqlx::query_scalar("SELECT value FROM meta WHERE key = 'admin_totp_enabled_at_v1'")
+            .fetch_optional(&standby_pool)
+            .await
+            .expect("read synced totp enabled timestamp");
     assert_eq!(request_rate_limit.as_deref(), Some("42"));
+    assert_eq!(totp_ciphertext.as_deref(), Some("ciphertext"));
+    assert_eq!(totp_nonce.as_deref(), Some("nonce"));
+    assert_eq!(totp_enabled_at.as_deref(), Some("123456"));
     assert!(local_only.is_none());
     standby_pool.close().await;
 

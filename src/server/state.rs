@@ -586,6 +586,7 @@ struct BuiltinAdminPasswordStatus {
 
 #[derive(Clone, Debug)]
 struct BuiltinAdminAuth {
+    startup_credentials: BuiltinAdminCredentialState,
     credentials: Arc<std::sync::RwLock<BuiltinAdminCredentialState>>,
     sessions: Arc<std::sync::RwLock<HashMap<String, BuiltinAdminSession>>>,
     backend_time: tavily_hikari::BackendTime,
@@ -625,6 +626,7 @@ impl BuiltinAdminAuth {
             }
         };
         Self {
+            startup_credentials: credentials.clone(),
             credentials: Arc::new(std::sync::RwLock::new(credentials)),
             sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
             backend_time,
@@ -665,6 +667,10 @@ impl BuiltinAdminAuth {
         settings: Option<tavily_hikari::AdminPasswordSettingsRecord>,
     ) {
         let Some(settings) = settings else {
+            if let Ok(mut credentials) = self.credentials.write() {
+                *credentials = self.startup_credentials.clone();
+            }
+            self.clear_sessions();
             return;
         };
         if let Ok(mut credentials) = self.credentials.write() {

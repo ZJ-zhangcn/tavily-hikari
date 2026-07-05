@@ -11,6 +11,8 @@
 - 单独切换管理员登录 TOTP 要求不能把未持久化的环境变量口令改写成 disabled 状态；持久化设置恢复时只在明确存在 password hash 或 disabled marker 时覆盖口令来源。
 - 管理员登录 TOTP 是认证因子，不是充值功能的附属开关；绑定、禁用和状态展示只依赖管理员权限、加密密钥与 dev-open 限制，不能要求启用充值功能。
 - 解绑管理员 TOTP 时必须同时关闭“管理员登录要求 TOTP”，避免留下无 TOTP secret 却仍要求登录 TOTP 的锁死状态。
+- HA 控制面应用管理员密码设置后必须刷新运行中的内存认证态；否则 standby failover 可能继续接受旧启动口令或错过新设置。
+- 管理员登录 TOTP 要求与 TOTP secret 必须作为同一控制面事实同步；secret ciphertext、nonce 与 enabled timestamp 纳入 HA meta allowlist，防止节点只收到 requirement 而无法校验。
 
 ## Key Reasons / Replacements
 
