@@ -157,6 +157,7 @@
 - Reset 注册状态：[admin-login-reset.png](./assets/admin-login-reset.png)
 - 管理员安全设置页：[admin-security-page.png](./assets/admin-security-page.png)
 - 管理员安全操作确认弹窗：[admin-security-confirmation-inline.png](./assets/admin-security-confirmation-inline.png)
+- 管理端 TOTP 6 格验证码输入：[admin-totp-six-digit-input.png](./assets/admin-totp-six-digit-input.png)
 - 系统设置下的代理设置子菜单：[admin-system-settings-proxy-subnav.png](./assets/admin-system-settings-proxy-subnav.png)
 
 ## Related PRs
