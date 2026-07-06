@@ -11,6 +11,7 @@ import {
   fetchAdminPasswordStatus,
   fetchAdminTotpStatus,
   registerAdminPasskey,
+  resetAdminTotp,
   setAdminLoginTotpRequired,
   setAdminPassword,
   updateAdminPasskeyLabel,
@@ -389,7 +390,9 @@ export default function AdminSecuritySettingsModule({
     setTotpBusy(true)
     setTotpError(null)
     try {
-      const status = await confirmAdminTotp(totpSetup.secret, totpCode)
+      const status = totpStatus?.enabled
+        ? await resetAdminTotp(totpCurrentCode, totpSetup.secret, totpCode)
+        : await confirmAdminTotp(totpSetup.secret, totpCode)
       setTotpStatus(status)
       setTotpSetup(null)
       setTotpCode('')
@@ -407,6 +410,7 @@ export default function AdminSecuritySettingsModule({
     try {
       const status = await disableAdminTotp(totpCurrentCode || totpCode)
       setTotpStatus(status)
+      setPasswordStatus(await fetchAdminPasswordStatus())
       setTotpSetup(null)
       setTotpCode('')
       setTotpCurrentCode('')
@@ -682,6 +686,15 @@ export default function AdminSecuritySettingsModule({
                       className="system-settings-totp-qr"
                     />
                     <Input value={totpSetup.secret} readOnly aria-label={strings.form.totpSetupSecretLabel} />
+                    {totpStatus?.enabled && (
+                      <TotpCodeInput
+                        id="admin-totp-current-code"
+                        name="admin_totp_current_code"
+                        value={totpCurrentCode}
+                        onChange={setTotpCurrentCode}
+                        ariaLabel={strings.form.totpCurrentCodePlaceholder}
+                      />
+                    )}
                     <TotpCodeInput
                       id="admin-totp-bind-code"
                       name="admin_totp_bind_code"
@@ -693,14 +706,14 @@ export default function AdminSecuritySettingsModule({
                 )}
               </div>
               <div className="system-settings-totp-actions">
-                {!totpSetup && !totpStatus?.enabled && (
+                {!totpSetup && (
                   <Button
                     type="button"
                     variant="outline"
                     disabled={totpBusy || !totpStatus?.available}
                     onClick={() => void beginTotpSetup()}
                   >
-                    {strings.form.totpBindAction}
+                    {totpStatus?.enabled ? strings.form.totpResetAction : strings.form.totpBindAction}
                   </Button>
                 )}
                 {totpSetup && (

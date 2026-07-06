@@ -81,7 +81,7 @@ const EXCEPTIONS = new Map<string, { max: number; reason: string }>([
   [
     'src/i18n/translations/en.ts',
     {
-      max: 1619,
+      max: 1620,
       reason:
         'Admin jobs maintenance copy, the expanded admin rankings grouping/dimension strings, the dashboard grouped-alert summary copy, auth-token retention settings copy, and admin passkey/password security copy are still stored in the shared English runtime catalog.',
     },
@@ -89,7 +89,7 @@ const EXCEPTIONS = new Map<string, { max: number; reason: string }>([
   [
     'src/i18n/translations/zh.ts',
     {
-      max: 1618,
+      max: 1619,
       reason:
         'Admin jobs maintenance copy, the expanded admin rankings grouping/dimension strings, the dashboard grouped-alert summary copy, auth-token retention settings copy, and admin passkey/password security copy are still stored in the shared Chinese runtime catalog.',
     },
@@ -97,7 +97,7 @@ const EXCEPTIONS = new Map<string, { max: number; reason: string }>([
   [
     'src/i18n/types.ts',
     {
-      max: 1862,
+      max: 1863,
       reason:
         'HA source settings mode-specific failure copy, planned-cutover and node-detail strings, admin jobs maintenance strings, the expanded admin rankings contract, grouped-alert dashboard summary strings, auth-token retention settings copy, and admin passkey/password security copy remain in the shared catalog contract.',
     },

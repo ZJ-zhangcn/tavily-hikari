@@ -367,6 +367,7 @@
         "server::version_detection_tests::",
         "server::tests::api_keys_and_registration::user_",
         "server::tests::api_keys_and_registration::profile_",
+        "server::admin_auth_last_login_method_tests::",
         "server::builtin_admin_auth_tests::",
         "server::tests::token_log_details::token_",
         "server::tests::log_catalog_and_dashboard_sse::log_",
