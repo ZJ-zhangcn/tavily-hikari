@@ -283,6 +283,7 @@ struct AdminUserRechargeAuditView {
 #[serde(rename_all = "camelCase")]
 struct AdminUserEntitlementsView {
     current_month_start: i64,
+    current_base_delta: AdminUserEntitlementDeltaView,
     current_month_delta: AdminUserEntitlementDeltaView,
     current_permanent_delta: AdminUserEntitlementDeltaView,
     items: Vec<AdminUserEntitlementView>,
@@ -428,14 +429,6 @@ fn build_admin_user_entitlement_view(
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct UpdateUserQuotaRequest {
-    business_calls_1h_limit: i64,
-    daily_credits_limit: i64,
-    monthly_credits_limit: i64,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct AdminUserEntitlementsQuery {
     scope_kind: Option<String>,
     start_month: Option<i64>,
@@ -451,6 +444,7 @@ struct CreateUserEntitlementRequest {
     business_calls_1h_delta: i64,
     daily_credits_delta: i64,
     monthly_credits_delta: i64,
+    #[serde(default)]
     backend_note: String,
     frontend_note: String,
 }

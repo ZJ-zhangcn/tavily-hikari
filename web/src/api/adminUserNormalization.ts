@@ -230,7 +230,7 @@ export function normalizeAdminUserEntitlement(value: unknown): AdminUserEntitlem
   return {
     id: readNumber(source, 'id'),
     userId: readString(source, 'userId', 'user_id'),
-    scopeKind: rawScopeKind === 'permanent' ? 'permanent' : 'month',
+    scopeKind: rawScopeKind === 'base' ? 'base' : rawScopeKind === 'permanent' ? 'permanent' : 'month',
     monthStart: readNumber(source, 'monthStart', 'month_start'),
     businessCalls1hDelta: readNumber(source, 'businessCalls1hDelta', 'business_calls_1h_delta'),
     dailyCreditsDelta: readNumber(source, 'dailyCreditsDelta', 'daily_credits_delta'),
@@ -250,6 +250,7 @@ function normalizeAdminUserEntitlements(value: unknown): AdminUserEntitlements {
   const itemsSource = source.items
   return {
     currentMonthStart: readNumber(source, 'currentMonthStart', 'current_month_start'),
+    currentBaseDelta: normalizeAdminUserEntitlementDelta(source.currentBaseDelta ?? source.current_base_delta),
     currentMonthDelta: normalizeAdminUserEntitlementDelta(source.currentMonthDelta ?? source.current_month_delta),
     currentPermanentDelta: normalizeAdminUserEntitlementDelta(source.currentPermanentDelta ?? source.current_permanent_delta),
     items: Array.isArray(itemsSource) ? itemsSource.map(normalizeAdminUserEntitlement) : [],

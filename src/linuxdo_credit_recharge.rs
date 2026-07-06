@@ -20,6 +20,7 @@ pub const LINUXDO_CREDIT_RECHARGE_TEST_MONTHS: i64 = 1;
 pub const LINUXDO_CREDIT_RECHARGE_TEST_PRICE_CENTS: i64 = 100;
 pub const LINUXDO_CREDIT_RECHARGE_HOURLY_PER_1000_CREDITS: i64 = 20;
 pub const LINUXDO_CREDIT_RECHARGE_DAILY_PER_1000_CREDITS: i64 = 100;
+pub const ACCOUNT_ENTITLEMENT_SCOPE_BASE: &str = "base";
 pub const ACCOUNT_ENTITLEMENT_SCOPE_MONTH: &str = "month";
 pub const ACCOUNT_ENTITLEMENT_SCOPE_PERMANENT: &str = "permanent";
 pub const ACCOUNT_ENTITLEMENT_SOURCE_KIND_RECHARGE: &str = "recharge";
@@ -134,6 +135,7 @@ pub struct LinuxDoCreditRechargeSummary {
 #[derive(Debug, Clone, Default)]
 pub struct AccountEntitlementSummary {
     pub current_month_start: i64,
+    pub current_base_delta: LinuxDoCreditRechargeQuotaDelta,
     pub current_month_delta: LinuxDoCreditRechargeQuotaDelta,
     pub current_permanent_delta: LinuxDoCreditRechargeQuotaDelta,
     pub effective_until_month_start: Option<i64>,

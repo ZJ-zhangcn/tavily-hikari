@@ -103,9 +103,26 @@ export function createStoryUserEntitlements(nowSeconds: number, userId: string):
   const monthStart = monthStartFor(nowSeconds)
   return {
     currentMonthStart: monthStart,
+    currentBaseDelta: { businessCalls1hDelta: 8, dailyCreditsDelta: 40, monthlyCreditsDelta: 400 },
     currentMonthDelta: { businessCalls1hDelta: 45, dailyCreditsDelta: 280, monthlyCreditsDelta: 2_800 },
     currentPermanentDelta: { businessCalls1hDelta: -5, dailyCreditsDelta: -20, monthlyCreditsDelta: -200 },
     items: [
+      {
+        id: 80,
+        userId,
+        scopeKind: 'base',
+        monthStart: 0,
+        businessCalls1hDelta: 8,
+        dailyCreditsDelta: 40,
+        monthlyCreditsDelta: 400,
+        backendNote: 'Story base quota migration row.',
+        frontendNote: 'story base entitlement',
+        sourceKind: 'admin',
+        sourceId: 'story-admin-base',
+        actorUserId: null,
+        actorDisplayName: 'story-admin',
+        createdAt: nowSeconds - 1_800,
+      },
       {
         id: 81,
         userId,

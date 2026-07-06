@@ -340,7 +340,6 @@ pub async fn serve(
         .route("/api/users/:id/usage-series", get(get_user_usage_series))
         .route("/api/users/:id/tokens", post(create_user_token))
         .route("/api/users/:id/tokens/:token_id", delete(delete_user_token))
-        .route("/api/users/:id/quota", patch(update_user_quota))
         .route(
             "/api/users/:id/broken-key-limit",
             patch(update_user_broken_key_limit),

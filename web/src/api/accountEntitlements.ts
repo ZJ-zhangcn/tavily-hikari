@@ -1,7 +1,7 @@
 import { normalizeAdminUserEntitlement } from './adminUserNormalization'
 import { requestJson } from './runtime'
 
-export type AccountEntitlementScopeKind = 'month' | 'permanent'
+export type AccountEntitlementScopeKind = 'base' | 'month' | 'permanent'
 
 export interface AdminUserEntitlementDelta {
   businessCalls1hDelta: number
@@ -28,6 +28,7 @@ export interface AdminUserEntitlement {
 
 export interface AdminUserEntitlements {
   currentMonthStart: number
+  currentBaseDelta: AdminUserEntitlementDelta
   currentMonthDelta: AdminUserEntitlementDelta
   currentPermanentDelta: AdminUserEntitlementDelta
   items: AdminUserEntitlement[]

@@ -82,39 +82,33 @@
 
 - Auth: admin only
 - Query:
-  - `scopeKind`: optional `all|month|permanent`
+  - `scopeKind`: optional `all|base|month|permanent`
   - `startMonth`: optional Unix timestamp for monthly target-month lower bound
   - `endMonthBefore`: optional Unix timestamp for monthly target-month exclusive upper bound
 - Response: `{ items: AdminUserEntitlementView[] }`
-- Monthly filters match entitlement target month. Permanent entitlements are visible unless the
-  request explicitly selects `month`.
+- Monthly filters match entitlement target month. Base and permanent entitlements are visible unless
+  the request explicitly selects another scope.
 
 ## POST `/api/users/:id/entitlements`
 
 - Auth: admin only with master write access
 - Body:
-  - `scopeKind: "month" | "permanent"`
+  - `scopeKind: "base" | "month" | "permanent"`
   - `monthStart?: number | null`
   - `businessCalls1hDelta: number`
   - `dailyCreditsDelta: number`
   - `monthlyCreditsDelta: number`
-  - `backendNote: string`
+  - `backendNote?: string`
   - `frontendNote: string`
 - Semantics:
   - Writes one append-only unified entitlement row.
-  - `monthStart` is required for monthly rows; permanent rows are stored with no target month.
+  - `monthStart` is required for monthly rows; base and permanent rows are stored with no target
+    month.
   - Positive and negative deltas are allowed; at least one delta must be non-zero.
-  - Both notes are required and admin-visible. `frontendNote` is not exposed in user-console APIs.
+  - `frontendNote` is required and admin-visible. It is not exposed in user-console APIs.
 
-## PATCH `/api/users/:id/quota`
+## Historical PATCH `/api/users/:id/quota`
 
-- Auth: admin only
-- Path unchanged.
-- Body shape:
-  - `businessCalls1hLimit: number`
-  - `dailyCreditsLimit: number`
-  - `monthlyCreditsLimit: number`
-- Semantics changed:
-  - Writes user base quota only.
-  - If payload equals current env defaults, server may set `inherits_defaults=1`; otherwise `inherits_defaults=0`.
-  - 旧 `hourlyAnyLimit/hourlyLimit/dailyLimit/monthlyLimit` 不再属于对外合同。
+- This route has been removed.
+- Current admin base quota changes must be written as append-only `scopeKind="base"` rows through
+  `POST /api/users/:id/entitlements`.

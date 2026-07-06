@@ -267,7 +267,7 @@ export LINUXDO_OAUTH_USER_SYNC_AT='06:20'
 - Quota policy:
   - New user accounts no longer receive built-in base quota on first login.
   - Effective quota for new accounts comes from system/user tags only.
-  - A newly created account without any quota-granting tags stays at `0/0/0/0` until an admin assigns tags or sets a custom base quota.
+  - A newly created account without any quota-granting tags stays at `0/0/0/0` until an admin assigns tags or appends a base quota ledger row.
 - Offline profile sync:
   - After a successful LinuxDo login, Hikari stores the latest non-empty `refresh_token` in encrypted form.
   - The server runs a daily offline sync at `06:20` in the server's local time by default; the scheduler refreshes each eligible LinuxDo profile and rebinds the matching `linuxdo_l*` system tag.

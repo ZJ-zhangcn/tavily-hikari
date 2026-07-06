@@ -154,6 +154,10 @@
   When 读取 dashboard 或做 quota precheck
   Then 有效小时/日/月额度为 `160/800/8000`。
 
+- Given 管理员需要调整用户基础额度
+  When 在用户详情账号权益账本新增 `base` scope 记录
+  Then 该记录按三项 quota delta 叠加到默认账户基线，并在有效额度拆解中展示为“基础额度”。
+
 - Given 测试价开关已开启
   When 用户购买 `1` 积分额度、`1` 个自然月
   Then 订单金额为 `1.00` LDC，界面展示最小额度增量。
@@ -230,6 +234,18 @@
 - `cd web && bun run build-storybook`
 
 ## Visual Evidence
+
+- source_type: storybook_canvas
+  story_id_or_title: Admin/Pages/UserDetailQuotaTab
+  state: base quota ledger rows
+  target_program: mock-only
+  capture_scope: browser-viewport
+  requested_viewport: 1920x1400
+  viewport_strategy: devtools-emulate
+  sensitive_exclusion: N/A
+  evidence_note: 用户详情基础额度页不再展示独立基础额度编辑器，基础额度记录在账号权益账本中以 Base quota 呈现。
+
+![Admin user detail base quota ledger](./assets/admin-user-detail-base-quota-ledger.png)
 
 ![Recharge burst price and quota controls](./assets/recharge-burst-price-story.png)
 ![Recharge month-end clamp and discounted quota](./assets/recharge-month-end-clamp.png)

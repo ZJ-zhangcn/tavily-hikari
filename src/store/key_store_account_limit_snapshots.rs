@@ -495,6 +495,8 @@ impl KeyStore {
         let effective = build_account_quota_resolution_with_recharge(
             base_limits,
             self.list_user_tag_bindings_for_user(user_id).await?,
+            self.sum_account_entitlement_deltas_for_scope(user_id, ACCOUNT_ENTITLEMENT_SCOPE_BASE)
+                .await?,
             self.sum_account_entitlement_deltas_for_month(user_id, current_month_start)
                 .await?,
             self.sum_account_entitlement_deltas_for_scope(

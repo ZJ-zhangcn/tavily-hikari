@@ -62,9 +62,9 @@ rollback anchor.
 - `actor_user_id TEXT`
 - `actor_display_name TEXT`
 - `created_at INTEGER NOT NULL`
-- `scope_kind` is `month` or `permanent`.
+- `scope_kind` is `base`, `month`, or `permanent`.
 - `source_kind` is `recharge` for Linux.do Credit payment benefits and `admin` for manual admin adjustments.
-- Monthly rows use server-local natural month starts. Permanent rows use `month_start=0`.
+- Base and permanent rows use `month_start=0`. Monthly rows use server-local natural month starts.
 - Recharge rows are unique by `(source_id, month_start)` for `source_kind='recharge'`.
 - Indexed by `(user_id, scope_kind, month_start)` and `(user_id, created_at)`.
 
@@ -72,7 +72,11 @@ rollback anchor.
 
 - `month_start` is the UTC timestamp for server-local month start.
 - `account_entitlements` is the quota entitlement read source. Effective quota is computed as
-  base quota + tag deltas + current-month entitlement deltas + permanent entitlement deltas.
+  default account base quota + base entitlement deltas + tag deltas + current-month entitlement
+  deltas + permanent entitlement deltas.
+- `quotaBase` in admin user detail is displayed as default account base quota plus base entitlement
+  deltas. Historical custom `account_quota_limits` rows are migrated into `scope_kind='base'`
+  ledger rows and reset to default-following storage so existing effective quota remains stable.
 - Entitlements are append-only except when an admin `refund` explicitly revokes a paid recharge
   order's benefits. `refundOnly` keeps entitlement rows.
 - Admin-created entitlement rows are never edited or deleted; corrections are represented by

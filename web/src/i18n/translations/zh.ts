@@ -831,7 +831,7 @@ export const ZH: TranslationShape = {
         },
         quota: {
           title: '基础额度',
-          description: '这里只编辑用户基线额度，标签增减会在下方有效额度里叠加显示。',
+          description: '基础额度调整已纳入账号权益账本；下方展示有效额度拆解与所有账本记录。',
           hourlyAny: '每小时任意请求限额',
           hourly: '每小时业务请求次数限额',
           daily: '每日积分限额',
@@ -924,7 +924,7 @@ export const ZH: TranslationShape = {
         },
         effectiveQuota: {
           title: '有效额度拆解',
-          description: '有效额度 = 基础额度 + 所有标签增减，然后统一按 0 做下限钳制。',
+          description: '有效额度 = 基础额度 + 标签增减 + 本月/长期权益，然后统一按 0 做下限钳制。',
           blockAllNotice: '当前存在 block_all 标签，这个用户的所有有效额度都会被钳制为 0。',
           baseLabel: '基础额度',
           effectiveLabel: '最终有效额度',

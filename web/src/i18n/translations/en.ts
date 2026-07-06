@@ -832,7 +832,7 @@ export const EN: TranslationShape = {
         },
         quota: {
           title: 'Base Quota',
-          description: 'Edit the account baseline. Tags are applied on top of this baseline.',
+          description: 'Base quota changes now live in the account entitlement ledger. Review effective quota and all ledger rows below.',
           hourlyAny: 'Hourly-any limit',
           hourly: 'Hourly business request cap',
           daily: 'Daily credits cap',
@@ -925,7 +925,7 @@ export const EN: TranslationShape = {
         },
         effectiveQuota: {
           title: 'Effective Quota Breakdown',
-          description: 'Effective quota = base quota + all tag deltas, then clamped to zero for display and enforcement.',
+          description: 'Effective quota = base quota + tag deltas + current-month and permanent entitlements, then clamped to zero for display and enforcement.',
           blockAllNotice: 'A block_all tag is active. Effective quota is fully clamped to 0 for this user.',
           baseLabel: 'Base quota',
           effectiveLabel: 'Effective quota',

@@ -119,12 +119,6 @@ import {
   type ApiKeyBulkSyncBubblePinnedPosition,
 } from './apiKeyBulkSyncBubblePosition'
 import {
-  createQuotaSliderSeed,
-  normalizeQuotaDraftInput,
-  type QuotaSliderField,
-  type QuotaSliderSeed,
-} from './quotaSlider'
-import {
   resolveAdminUserActivityScope,
   resolveAdminUserActivityScopeFromSettings,
 } from './userActivityScope'
@@ -276,7 +270,6 @@ import {
   promoteHaNode,
   runPlannedCutover,
   fetchTokenBrokenKeys,
-  updateAdminUserQuota,
   updateAdminRegistrationSettings,
   fetchAdminUserTags,
   createAdminUserTag,
@@ -501,8 +494,6 @@ const ADMIN_UNBOUND_TOKEN_USAGE_SORT_FIELDS: readonly AdminUnboundTokenUsageSort
   'lastUsedAt',
 ]
 
-type UserQuotaSnapshot = Record<QuotaSliderField, QuotaSliderSeed>
-
 type UserTagFormState = {
   tagId: string | null
   name: string
@@ -541,14 +532,6 @@ function splitMultilineEntries(value: string): string[] {
     entries.push(normalized)
   }
   return entries
-}
-
-function buildUserQuotaSnapshot(detail: AdminUserDetail): UserQuotaSnapshot {
-  return {
-    businessCalls1hLimit: createQuotaSliderSeed('businessCalls1hLimit', detail.businessCalls1h.totalCount, detail.quotaBase.businessCalls1hLimit),
-    dailyCreditsLimit: createQuotaSliderSeed('dailyCreditsLimit', detail.dailyCreditsUsed, detail.quotaBase.dailyCreditsLimit),
-    monthlyCreditsLimit: createQuotaSliderSeed('monthlyCreditsLimit', detail.monthlyCreditsUsed, detail.quotaBase.monthlyCreditsLimit),
-  }
 }
 
 function clampDisplayedQuota(value: number): number {
@@ -1901,11 +1884,7 @@ function AdminDashboard(): JSX.Element {
     series: Partial<Record<AdminUserUsageSeriesKey, AdminUserUsageSeries>>
   }>({ userId: null, series: {} })
   const [userDetailLoading, setUserDetailLoading] = useState(false)
-  const [userQuotaSnapshot, setUserQuotaSnapshot] = useState<UserQuotaSnapshot | null>(null)
-  const [userQuotaDraft, setUserQuotaDraft] = useState<Record<QuotaSliderField, string> | null>(null)
-  const [savingUserQuota, setSavingUserQuota] = useState(false)
   const [userQuotaError, setUserQuotaError] = useState<string | null>(null)
-  const [userQuotaSavedAt, setUserQuotaSavedAt] = useState<number | null>(null)
   const [addingUserToken, setAddingUserToken] = useState(false)
   const [deletingUserTokenId, setDeletingUserTokenId] = useState<string | null>(null)
   const [pendingUserTokenDeleteTarget, setPendingUserTokenDeleteTarget] = useState<{
@@ -4240,12 +4219,6 @@ function AdminDashboard(): JSX.Element {
         if (controller.signal.aborted) return
         setSelectedUserDetail(detail)
         setUserDetailRevision((current) => current + 1)
-        setUserQuotaSnapshot(buildUserQuotaSnapshot(detail))
-        setUserQuotaDraft({
-          businessCalls1hLimit: String(detail.quotaBase.businessCalls1hLimit),
-          dailyCreditsLimit: String(detail.quotaBase.dailyCreditsLimit),
-          monthlyCreditsLimit: String(detail.quotaBase.monthlyCreditsLimit),
-        })
         setSelectedBindableTagId('')
         setUserTagError(null)
       })
@@ -4253,8 +4226,6 @@ function AdminDashboard(): JSX.Element {
         if (controller.signal.aborted) return
         console.error(err)
         setSelectedUserDetail(null)
-        setUserQuotaSnapshot(null)
-        setUserQuotaDraft(null)
       })
       .finally(() => {
         if (!controller.signal.aborted) {
@@ -6645,12 +6616,6 @@ function AdminDashboard(): JSX.Element {
     const detail = await fetchAdminUserDetail(userId)
     setSelectedUserDetail(detail)
     setUserDetailRevision((current) => current + 1)
-    setUserQuotaSnapshot(buildUserQuotaSnapshot(detail))
-    setUserQuotaDraft({
-      businessCalls1hLimit: String(detail.quotaBase.businessCalls1hLimit),
-      dailyCreditsLimit: String(detail.quotaBase.dailyCreditsLimit),
-      monthlyCreditsLimit: String(detail.quotaBase.monthlyCreditsLimit),
-    })
     setSelectedBindableTagId('')
     return detail
   }
@@ -6730,17 +6695,6 @@ function AdminDashboard(): JSX.Element {
     return tags
   }
 
-  const updateQuotaDraftField = (field: QuotaSliderField, value: string) => {
-    const normalizedValue = normalizeQuotaDraftInput(value)
-    if (normalizedValue == null) return
-    setUserQuotaDraft((previous) => {
-      if (!previous) return previous
-      return { ...previous, [field]: normalizedValue }
-    })
-    setUserQuotaSavedAt(null)
-    setUserQuotaError(null)
-  }
-
   const updateUserTagCatalogField = (field: keyof UserTagFormState, value: string) => {
     setUserTagCatalogDraft((previous) => ({ ...previous, [field]: value }))
     setTagCatalogError(null)
@@ -6761,38 +6715,6 @@ function AdminDashboard(): JSX.Element {
 
   const beginEditUserTag = (tag: AdminUserTag) => {
     navigateUserTagEdit(tag.id)
-  }
-
-  const saveUserQuota = async () => {
-    if (route.name !== 'user' || !userQuotaDraft) return
-    const payload = {
-      businessCalls1hLimit: Number.parseInt(userQuotaDraft.businessCalls1hLimit, 10),
-      dailyCreditsLimit: Number.parseInt(userQuotaDraft.dailyCreditsLimit, 10),
-      monthlyCreditsLimit: Number.parseInt(userQuotaDraft.monthlyCreditsLimit, 10),
-    }
-    if (
-      !Number.isFinite(payload.businessCalls1hLimit) || payload.businessCalls1hLimit < 0
-      || !Number.isFinite(payload.dailyCreditsLimit) || payload.dailyCreditsLimit < 0
-      || !Number.isFinite(payload.monthlyCreditsLimit) || payload.monthlyCreditsLimit < 0
-    ) {
-      setUserQuotaError(adminStrings.users.quota.invalid)
-      return
-    }
-    setSavingUserQuota(true)
-    setUserQuotaError(null)
-    try {
-      await updateAdminUserQuota(route.id, payload)
-      await Promise.all([
-        refreshUserDetail(route.id),
-        refreshUsersList(),
-      ])
-      setUserQuotaSavedAt(Date.now())
-    } catch (err) {
-      console.error(err)
-      setUserQuotaError(err instanceof Error ? err.message : adminStrings.users.quota.saveFailed)
-    } finally {
-      setSavingUserQuota(false)
-    }
   }
 
   const saveUserTagCatalog = async () => {
@@ -9303,17 +9225,10 @@ function AdminDashboard(): JSX.Element {
               usersStrings={usersStrings}
               rechargeStrings={adminStrings.recharges.userDetail}
               language={language}
-              quotaDraft={userQuotaDraft}
-              quotaSnapshot={userQuotaSnapshot}
-              quotaSavedAt={userQuotaSavedAt}
-              savingQuota={savingUserQuota}
               hasBlockAllTag={hasBlockAllTag}
               formatNumber={formatNumber}
               formatQuotaLimitValue={formatQuotaLimitValue}
               formatSignedQuotaDelta={formatSignedQuotaDelta}
-              formatSaveTime={(date) => timeOnlyFormatter.format(date)}
-              onQuotaDraftChange={updateQuotaDraftField}
-              onSaveQuota={() => void saveUserQuota()}
               onCreateEntitlement={createAdminUserEntitlement}
               onFetchEntitlements={fetchAdminUserEntitlements}
               onRefreshDetail={() => refreshUserDetail(detail.userId).then(() => undefined)}

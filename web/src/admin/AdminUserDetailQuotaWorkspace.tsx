@@ -8,9 +8,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '../components/ui/dialog'
-import { UsageMetricLabel } from '../components/UsageMetricLabel'
-import QuotaRangeField from '../components/QuotaRangeField'
-import { StatusBadge } from '../components/StatusBadge'
 import type {
   AccountEntitlementScopeKind,
   AdminUserDetail,
@@ -21,22 +18,9 @@ import type {
 import type { AdminTranslations } from '../i18n'
 import type { AdminRechargeTranslations } from '../i18n/adminRechargeTranslationTypes'
 import { useEffect, useState } from 'react'
-import {
-  buildQuotaSliderTrack,
-  clampQuotaSliderStageIndex,
-  createQuotaSliderSeed,
-  formatQuotaDraftInput,
-  getQuotaSliderStagePosition,
-  getQuotaSliderStageValue,
-  parseQuotaDraftValue,
-  type QuotaSliderField,
-  type QuotaSliderSeed,
-} from './quotaSlider'
 import { UserDetailQuotaBreakdown } from './UserDetailQuotaBreakdown'
 import { UserRechargeQuotaCalendar } from './UserRechargeQuotaCalendar'
 
-type QuotaDraft = Record<QuotaSliderField, string>
-type QuotaSnapshot = Record<QuotaSliderField, QuotaSliderSeed>
 type EntitlementScopeFilter = AccountEntitlementScopeKind | 'all'
 
 const ENTITLEMENT_DELTA_STAGES = [
@@ -106,17 +90,10 @@ interface AdminUserDetailQuotaWorkspaceProps {
   usersStrings: AdminTranslations['users']
   rechargeStrings: AdminRechargeTranslations['userDetail']
   language: 'en' | 'zh'
-  quotaDraft: QuotaDraft | null
-  quotaSnapshot: QuotaSnapshot | null
-  quotaSavedAt: number | null
-  savingQuota: boolean
   hasBlockAllTag: boolean
   formatNumber: (value: number) => string
   formatQuotaLimitValue: (value: number) => string
   formatSignedQuotaDelta: (value: number) => string
-  formatSaveTime: (date: Date) => string
-  onQuotaDraftChange: (field: QuotaSliderField, value: string) => void
-  onSaveQuota: () => void
   onCreateEntitlement: (userId: string, payload: CreateAdminUserEntitlementPayload) => Promise<AdminUserEntitlement>
   onFetchEntitlements: (
     userId: string,
@@ -130,24 +107,17 @@ export function AdminUserDetailQuotaWorkspace({
   usersStrings,
   rechargeStrings,
   language,
-  quotaDraft,
-  quotaSnapshot,
-  quotaSavedAt,
-  savingQuota,
   hasBlockAllTag,
   formatNumber,
   formatQuotaLimitValue,
   formatSignedQuotaDelta,
-  formatSaveTime,
-  onQuotaDraftChange,
-  onSaveQuota,
   onCreateEntitlement,
   onFetchEntitlements,
   onRefreshDetail,
 }: AdminUserDetailQuotaWorkspaceProps): JSX.Element {
   const defaultMonth = formatMonthInput(detail.entitlements.currentMonthStart || Math.floor(Date.now() / 1000))
   const [entitlementForm, setEntitlementForm] = useState<EntitlementFormState>(() => ({
-    scopeKind: 'month',
+    scopeKind: 'base',
     month: defaultMonth,
     businessCalls1hDelta: '0',
     dailyCreditsDelta: '0',
@@ -166,38 +136,6 @@ export function AdminUserDetailQuotaWorkspace({
     setEntitlementItems(detail.entitlements.items)
     setEntitlementForm((current) => ({ ...current, month: current.month || defaultMonth }))
   }, [defaultMonth, detail.entitlements.items])
-  const quotaFields = [
-    {
-      field: 'businessCalls1hLimit',
-      label: (
-        <UsageMetricLabel label={usersStrings.quota.hourly} kind="businessCalls1h" language={language} />
-      ),
-      ariaLabel: usersStrings.quota.hourly,
-      used: detail.businessCalls1h.totalCount,
-      currentLimit: detail.quotaBase.businessCalls1hLimit,
-    },
-    {
-      field: 'dailyCreditsLimit',
-      label: <UsageMetricLabel label={usersStrings.quota.daily} kind="dailyCredits" language={language} />,
-      ariaLabel: usersStrings.quota.daily,
-      used: detail.dailyCreditsUsed,
-      currentLimit: detail.quotaBase.dailyCreditsLimit,
-    },
-    {
-      field: 'monthlyCreditsLimit',
-      label: <UsageMetricLabel label={usersStrings.quota.monthly} kind="monthlyCredits" language={language} />,
-      ariaLabel: usersStrings.quota.monthly,
-      used: detail.monthlyCreditsUsed,
-      currentLimit: detail.quotaBase.monthlyCreditsLimit,
-    },
-  ] as const
-  const quotaDirty = quotaDraft
-    ? quotaFields.some((item) => {
-        const snapshot = quotaSnapshot?.[item.field] ?? createQuotaSliderSeed(item.field, item.used, item.currentLimit)
-        const draftValue = quotaDraft[item.field] ?? String(snapshot.initialLimit)
-        return parseQuotaDraftValue(draftValue, snapshot.initialLimit) !== snapshot.initialLimit
-      })
-    : false
   const breakdownEntries = detail.quotaBreakdown.length > 0
     ? detail.quotaBreakdown
     : buildFallbackQuotaBreakdown(detail, rechargeStrings.rechargeColumn)
@@ -215,7 +153,7 @@ export function AdminUserDetailQuotaWorkspace({
         frontendNote: entitlementForm.frontendNote.trim(),
       }
       if (payload.scopeKind === 'month' && !payload.monthStart) throw new Error(rechargeStrings.entitlementInvalidMonth)
-      if (!payload.backendNote || !payload.frontendNote) throw new Error(rechargeStrings.entitlementNotesRequired)
+      if (!payload.frontendNote) throw new Error(rechargeStrings.entitlementNotesRequired)
       if (!payload.businessCalls1hDelta && !payload.dailyCreditsDelta && !payload.monthlyCreditsDelta) {
         throw new Error(rechargeStrings.entitlementDeltaRequired)
       }
@@ -260,12 +198,6 @@ export function AdminUserDetailQuotaWorkspace({
           <h2>{usersStrings.quota.title}</h2>
           <p className="panel-description">{usersStrings.quota.description}</p>
         </div>
-        <div className="user-detail-quota-status-row">
-          <StatusBadge tone={detail.quotaBase.inheritsDefaults ? 'info' : 'neutral'}>
-            {detail.quotaBase.inheritsDefaults ? usersStrings.quota.inheritsDefaults : usersStrings.quota.customized}
-          </StatusBadge>
-          {quotaDirty && <StatusBadge tone="warning">{usersStrings.quota.unsaved}</StatusBadge>}
-        </div>
       </div>
 
       {hasBlockAllTag && (
@@ -273,49 +205,6 @@ export function AdminUserDetailQuotaWorkspace({
           {usersStrings.effectiveQuota.blockAllNotice}
         </div>
       )}
-
-      <div className="user-detail-quota-editor">
-        <div className="quota-grid user-detail-quota-grid">
-          {quotaFields.map((item) => {
-            const sliderSeed = quotaSnapshot?.[item.field] ?? createQuotaSliderSeed(item.field, item.used, item.currentLimit)
-            const draftValue = quotaDraft?.[item.field] ?? String(sliderSeed.initialLimit)
-            const parsedDraft = parseQuotaDraftValue(draftValue, sliderSeed.initialLimit)
-            return (
-              <QuotaRangeField
-                key={item.field}
-                label={item.label}
-                sliderName={`${item.field}-slider`}
-                sliderMin={0}
-                sliderMax={Math.max(0, sliderSeed.stages.length - 1)}
-                sliderValue={getQuotaSliderStagePosition(sliderSeed.stages, parsedDraft)}
-                sliderAriaLabel={item.ariaLabel}
-                sliderStyle={{ background: buildQuotaSliderTrack(sliderSeed.stages, sliderSeed.used, parsedDraft) }}
-                onSliderChange={(nextValue) => {
-                  const nextIndex = clampQuotaSliderStageIndex(sliderSeed.stages, nextValue)
-                  onQuotaDraftChange(item.field, String(getQuotaSliderStageValue(sliderSeed.stages, nextIndex)))
-                }}
-                helperText={<>{formatNumber(sliderSeed.used)} / {formatNumber(parsedDraft)}</>}
-                inputName={item.field}
-                inputValue={formatQuotaDraftInput(draftValue)}
-                inputAriaLabel={`${item.ariaLabel} input`}
-                onInputChange={(nextValue) => onQuotaDraftChange(item.field, nextValue)}
-              />
-            )
-          })}
-        </div>
-        <div className={`user-detail-quota-savebar${quotaDirty ? ' user-detail-quota-savebar--dirty' : ''}`}>
-          <span>
-            {quotaDirty
-              ? usersStrings.quota.unsaved
-              : quotaSavedAt
-                ? usersStrings.quota.savedAt.replace('{time}', formatSaveTime(new Date(quotaSavedAt)))
-                : usersStrings.quota.hint}
-          </span>
-          <Button type="button" variant={quotaDirty ? 'default' : 'outline'} onClick={onSaveQuota} disabled={savingQuota || !quotaDirty}>
-            {savingQuota ? usersStrings.quota.saving : usersStrings.quota.save}
-          </Button>
-        </div>
-      </div>
 
       <div className="user-detail-quota-breakdown">
         <div className="user-detail-subsection-heading">
@@ -366,9 +255,16 @@ export function AdminUserDetailQuotaWorkspace({
                   <span>{rechargeStrings.entitlementScope}</span>
                   <select
                     value={entitlementForm.scopeKind}
-                    onChange={(event) => setEntitlementForm((current) => ({ ...current, scopeKind: event.target.value === 'permanent' ? 'permanent' : 'month' }))}
+                    onChange={(event) => {
+                      const value = event.target.value
+                      setEntitlementForm((current) => ({
+                        ...current,
+                        scopeKind: value === 'permanent' ? 'permanent' : value === 'month' ? 'month' : 'base',
+                      }))
+                    }}
                     disabled={entitlementBusy}
                   >
+                    <option value="base">{rechargeStrings.entitlementScopeBase}</option>
                     <option value="month">{rechargeStrings.entitlementScopeMonth}</option>
                     <option value="permanent">{rechargeStrings.entitlementScopePermanent}</option>
                   </select>
@@ -380,7 +276,7 @@ export function AdminUserDetailQuotaWorkspace({
                     type="month"
                     value={entitlementForm.month}
                     onChange={(event) => setEntitlementForm((current) => ({ ...current, month: event.target.value }))}
-                    disabled={entitlementBusy || entitlementForm.scopeKind === 'permanent'}
+                    disabled={entitlementBusy || entitlementForm.scopeKind !== 'month'}
                   />
                 </label>
                 <EntitlementDeltaField
@@ -423,12 +319,14 @@ export function AdminUserDetailQuotaWorkspace({
           </Dialog>
         </div>
         <div className="user-detail-entitlement-summary">
+          <span>{rechargeStrings.entitlementBase.replace('{value}', formatSignedQuotaDelta(detail.entitlements.currentBaseDelta.monthlyCreditsDelta))}</span>
           <span>{rechargeStrings.entitlementCurrentMonth.replace('{value}', formatSignedQuotaDelta(detail.entitlements.currentMonthDelta.monthlyCreditsDelta))}</span>
           <span>{rechargeStrings.entitlementPermanent.replace('{value}', formatSignedQuotaDelta(detail.entitlements.currentPermanentDelta.monthlyCreditsDelta))}</span>
         </div>
         <div className="user-detail-entitlement-filters">
           <select value={entitlementScopeFilter} onChange={(event) => setEntitlementScopeFilter(event.target.value as EntitlementScopeFilter)}>
             <option value="all">{rechargeStrings.entitlementScopeAll}</option>
+            <option value="base">{rechargeStrings.entitlementScopeBase}</option>
             <option value="month">{rechargeStrings.entitlementScopeMonth}</option>
             <option value="permanent">{rechargeStrings.entitlementScopePermanent}</option>
           </select>
@@ -533,8 +431,8 @@ function EntitlementTable({
         <tbody>
           {items.map((item) => (
             <tr key={item.id}>
-              <td>{item.scopeKind === 'permanent' ? strings.entitlementScopePermanent : strings.entitlementScopeMonth}</td>
-              <td>{item.scopeKind === 'permanent' ? '—' : formatMonth(item.monthStart, locale)}</td>
+              <td>{formatEntitlementScope(item.scopeKind, strings)}</td>
+              <td>{item.scopeKind === 'month' ? formatMonth(item.monthStart, locale) : '—'}</td>
               <td>
                 <div className="token-compact-pair">
                   <span>{formatSignedQuotaDelta(item.businessCalls1hDelta)}</span>
@@ -579,6 +477,15 @@ function addLocalMonths(ts: number, months: number): number {
 
 function formatMonth(ts: number, locale: string): string {
   return new Date(ts * 1000).toLocaleDateString(locale, { year: 'numeric', month: 'short' })
+}
+
+function formatEntitlementScope(
+  scopeKind: AccountEntitlementScopeKind,
+  strings: AdminRechargeTranslations['userDetail'],
+): string {
+  if (scopeKind === 'base') return strings.entitlementScopeBase
+  if (scopeKind === 'permanent') return strings.entitlementScopePermanent
+  return strings.entitlementScopeMonth
 }
 
 function parseIntegerInput(value: string): number {

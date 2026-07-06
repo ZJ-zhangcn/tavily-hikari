@@ -6,6 +6,7 @@ import {
   bindAdminUserTag,
   createAnnouncement,
   createBrowserTodayWindow,
+  createAdminUserEntitlement,
   createAdminUserToken,
   deleteAdminUserToken,
   fetchAdminRegistrationSettings,
@@ -52,7 +53,6 @@ import {
   updateForwardProxySettingsWithProgress,
   updateAdminRegistrationSettings,
   updateAnnouncement,
-  updateAdminUserQuota,
   updateSystemSettings,
   validateForwardProxyCandidateWithProgress,
 } from './api'
@@ -1080,29 +1080,52 @@ describe('admin user tag api helpers', () => {
     expect(result.facets.regions[0]).toEqual({ value: 'US', count: 1 })
   })
 
-  it('patches base quota through the existing user quota endpoint', async () => {
-    const fetchMock = mock(() => Promise.resolve(new Response(null, { status: 204 })))
+  it('creates base quota changes through the account entitlement ledger endpoint', async () => {
+    const created = {
+      id: 12,
+      userId: 'usr_alice',
+      scopeKind: 'base',
+      monthStart: 0,
+      businessCalls1hDelta: 10,
+      dailyCreditsDelta: 20,
+      monthlyCreditsDelta: 30,
+      backendNote: '',
+      frontendNote: 'baseline correction',
+      sourceKind: 'admin',
+      sourceId: 'admin:test',
+      actorUserId: null,
+      actorDisplayName: 'Admin',
+      createdAt: 1710000000,
+    }
+    const fetchMock = mock(() => Promise.resolve(Response.json(created, { status: 201 })))
     globalThis.fetch = fetchMock as typeof fetch
 
-    await updateAdminUserQuota('usr_alice', {
-      hourlyAnyLimit: 1200,
-      hourlyLimit: 1000,
-      dailyLimit: 24000,
-      monthlyLimit: 600000,
+    const result = await createAdminUserEntitlement('usr_alice', {
+      scopeKind: 'base',
+      monthStart: null,
+      businessCalls1hDelta: 10,
+      dailyCreditsDelta: 20,
+      monthlyCreditsDelta: 30,
+      backendNote: '',
+      frontendNote: 'baseline correction',
     })
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
     const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit]
-    expect(input).toBe('/api/users/usr_alice/quota')
-    expect(init.method).toBe('PATCH')
+    expect(input).toBe('/api/users/usr_alice/entitlements')
+    expect(init.method).toBe('POST')
     expect(init.body).toBe(
       JSON.stringify({
-        hourlyAnyLimit: 1200,
-        hourlyLimit: 1000,
-        dailyLimit: 24000,
-        monthlyLimit: 600000,
+        scopeKind: 'base',
+        monthStart: null,
+        businessCalls1hDelta: 10,
+        dailyCreditsDelta: 20,
+        monthlyCreditsDelta: 30,
+        backendNote: '',
+        frontendNote: 'baseline correction',
       }),
     )
+    expect(result.scopeKind).toBe('base')
   })
 
   it('reads admin registration settings from the dedicated endpoint', async () => {

@@ -5,6 +5,8 @@
 - Status: 已完成
 - Created: 2026-03-06
 - Last: 2026-03-07
+- Superseded note: 用户详情已移除专门基础额度滑块编辑器；基础额度调整改为账号权益账本
+  `scopeKind="base"` 记录。
 
 ## 背景 / 问题陈述
 
@@ -23,7 +25,8 @@
 
 ### Non-goals
 
-- 不修改 Rust 后端、数据库 schema、`/api/users/:id/quota` 协议与校验语义。
+- Historical non-goal: 当时不修改 Rust 后端、数据库 schema、`/api/users/:id/quota`
+  协议与校验语义；当前版本已移除该 PATCH 路由。
 - 不新增 rail 上的文字刻度、打点或额外视觉组件。
 - 不把这套逻辑抽象为站内通用 slider 组件。
 
@@ -53,11 +56,9 @@
 
 ### Public / external interfaces
 
-- `PATCH /api/users/:id/quota` payload 保持不变：
-  - `hourlyAnyLimit: number`
-  - `hourlyLimit: number`
-  - `dailyLimit: number`
-  - `monthlyLimit: number`
+- Historical interface: `PATCH /api/users/:id/quota` payload 保持不变。
+- Current interface: 基础额度变更通过 `POST /api/users/:id/entitlements` 写入
+  `scopeKind="base"` 账本记录。
 
 ### Internal interfaces
 
