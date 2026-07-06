@@ -1351,9 +1351,9 @@ use super::upstream_support_and_manual_jobs::*;
             .get("monthlyCreditsLimit")
             .and_then(|value| value.as_i64())
             .expect("quota base monthly");
-        let target_base_hourly = 45;
-        let target_base_daily = 678;
-        let target_base_monthly = 910;
+        let target_base_hourly = base_hourly + 45;
+        let target_base_daily = base_daily + 678;
+        let target_base_monthly = base_monthly + 910;
         let base_delta_hourly = target_base_hourly - base_hourly;
         let base_delta_daily = target_base_daily - base_daily;
         let base_delta_monthly = target_base_monthly - base_monthly;
