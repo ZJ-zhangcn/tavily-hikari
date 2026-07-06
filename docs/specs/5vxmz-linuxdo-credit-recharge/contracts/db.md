@@ -76,7 +76,8 @@ rollback anchor.
   deltas + permanent entitlement deltas.
 - `quotaBase` in admin user detail is displayed as default account base quota plus base entitlement
   deltas. Historical custom `account_quota_limits` rows are migrated into `scope_kind='base'`
-  ledger rows and reset to default-following storage so existing effective quota remains stable.
+  ledger rows and reset to migration-time default storage with `inherits_defaults=0`, so existing
+  effective quota remains stable across future default changes.
 - Entitlements are append-only except when an admin `refund` explicitly revokes a paid recharge
   order's benefits. `refundOnly` keeps entitlement rows.
 - Admin-created entitlement rows are never edited or deleted; corrections are represented by
