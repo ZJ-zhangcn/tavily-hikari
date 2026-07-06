@@ -642,6 +642,10 @@ impl BuiltinAdminAuth {
             .unwrap_or(false)
     }
 
+    fn persisted_password_allowed(&self) -> bool {
+        self.persisted_password_allowed
+    }
+
     fn status(&self) -> BuiltinAdminPasswordStatus {
         self.credentials
             .read()

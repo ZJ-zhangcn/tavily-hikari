@@ -488,7 +488,8 @@ impl KeyStore {
                     .as_ref()
                     .and_then(|(_, disabled_at)| *disabled_at)
                     .is_some();
-                let persisted_password_available = password_row
+                let persisted_password_available = runtime_password_available
+                    && password_row
                     .as_ref()
                     .and_then(|(password_hash, _)| password_hash.as_deref())
                     .is_some_and(|password_hash| !password_hash.trim().is_empty())
@@ -1171,6 +1172,34 @@ mod admin_passkey_store_tests {
             .expect_err("disabled runtime passkey cannot preserve login");
 
         assert!(matches!(err, ProxyError::LastAdminLoginMethod));
+    }
+
+    #[tokio::test]
+    async fn passkey_removal_ignores_persisted_password_when_password_runtime_is_disabled() {
+        let (_temp, db_path) = temp_db_path("disabled-runtime-password.db");
+        let store = KeyStore::new_with_time(&db_path, BackendTime::system())
+            .await
+            .expect("create store");
+        store
+            .set_admin_password_hash("stored-password-hash")
+            .await
+            .expect("seed stale persisted password");
+        store
+            .upsert_admin_passkey_credential("credential-1", r#"{"credential":1}"#, None)
+            .await
+            .expect("insert credential");
+
+        let err = store
+            .revoke_admin_passkey_credential_preserving_login("credential-1", false, false)
+            .await
+            .expect_err("disabled runtime password cannot preserve login");
+
+        assert!(matches!(err, ProxyError::LastAdminLoginMethod));
+        let credentials = store
+            .list_active_admin_passkey_credentials()
+            .await
+            .expect("list credentials");
+        assert_eq!(credentials.len(), 1);
     }
 
     #[tokio::test]

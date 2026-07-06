@@ -2181,6 +2181,9 @@ async fn put_admin_password(
         return Err(StatusCode::FORBIDDEN);
     }
     require_admin_credential_write(state.as_ref()).await?;
+    if !state.builtin_admin.persisted_password_allowed() {
+        return Err(StatusCode::CONFLICT);
+    }
     let password = payload.password.trim();
     if password.len() < 8 {
         return Err(StatusCode::BAD_REQUEST);
@@ -2466,6 +2469,41 @@ mod admin_auth_last_login_method_tests {
             .await
             .expect("list credentials");
         assert_eq!(credentials.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn password_set_rejects_startup_disabled_builtin_auth() {
+        let (state, _temp_dir) = test_state(
+            "disabled-builtin-password-set",
+            BuiltinAdminAuth::new(false, None, None),
+            AdminPasskeyOptions::disabled(),
+            true,
+        )
+        .await;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            HeaderName::from_static("x-forward-user"),
+            HeaderValue::from_static("admin"),
+        );
+
+        let result = put_admin_password(
+            State(state.clone()),
+            headers,
+            Json(AdminPasswordSetRequest {
+                password: "new-password-123".to_string(),
+            }),
+        )
+        .await;
+
+        assert!(matches!(result, Err(StatusCode::CONFLICT)));
+        assert!(!state.builtin_admin.is_enabled());
+        assert!(state.builtin_admin.login("new-password-123").is_none());
+        assert!(state
+            .proxy
+            .get_admin_password_settings()
+            .await
+            .expect("read password settings")
+            .is_none());
     }
 
     #[tokio::test]
