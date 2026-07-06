@@ -2927,7 +2927,7 @@ async fn shared_legacy_noncurrent_tuple_is_migrated_to_base_entitlements() {
         .fetch_one(&proxy_after.key_store.pool)
         .await
         .expect("read shared tuple limits");
-        assert_eq!(limits, (0, 0, 0, 1));
+        assert_eq!(limits, (0, 0, 0, 0));
         let base_delta: (i64, i64, i64) = sqlx::query_as(
             "SELECT business_calls_1h_delta, daily_credits_delta, monthly_credits_delta FROM account_entitlements WHERE user_id = ? AND scope_kind = 'base'",
         )
@@ -2944,7 +2944,7 @@ async fn shared_legacy_noncurrent_tuple_is_migrated_to_base_entitlements() {
     .fetch_one(&proxy_after.key_store.pool)
     .await
     .expect("read shared custom limits");
-    assert_eq!(custom_limits, (0, 0, 0, 1));
+    assert_eq!(custom_limits, (0, 0, 0, 0));
     let custom_base_delta: (i64, i64, i64) = sqlx::query_as(
         "SELECT business_calls_1h_delta, daily_credits_delta, monthly_credits_delta FROM account_entitlements WHERE user_id = ? AND scope_kind = 'base'",
     )
@@ -2953,6 +2953,36 @@ async fn shared_legacy_noncurrent_tuple_is_migrated_to_base_entitlements() {
     .await
     .expect("read custom migrated base entitlement");
     assert_eq!(custom_base_delta, (102, 103, 104));
+
+    drop(proxy_after);
+
+    unsafe {
+        std::env::set_var("TOKEN_HOURLY_REQUEST_LIMIT", "31");
+        std::env::set_var("TOKEN_HOURLY_LIMIT", "32");
+        std::env::set_var("TOKEN_DAILY_LIMIT", "33");
+        std::env::set_var("TOKEN_MONTHLY_LIMIT", "34");
+    }
+
+    let proxy_after_default_change =
+        TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
+            .await
+            .expect("proxy reopened after default change");
+    let custom_limits_after_default_change: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT business_calls_1h_limit, daily_credits_limit, monthly_credits_limit, inherits_defaults FROM account_quota_limits WHERE user_id = ?",
+    )
+    .bind(&custom_user.user_id)
+    .fetch_one(&proxy_after_default_change.key_store.pool)
+    .await
+    .expect("read migrated custom limits after default change");
+    assert_eq!(custom_limits_after_default_change, (0, 0, 0, 0));
+    let custom_resolution = proxy_after_default_change
+        .key_store
+        .resolve_account_quota_resolution(&custom_user.user_id)
+        .await
+        .expect("resolve migrated custom quota after default change");
+    assert_eq!(custom_resolution.base.business_calls_1h_limit, 102);
+    assert_eq!(custom_resolution.base.daily_credits_limit, 103);
+    assert_eq!(custom_resolution.base.monthly_credits_limit, 104);
 
     unsafe {
         for (key, old_value) in env_keys.iter().zip(previous.into_iter()) {

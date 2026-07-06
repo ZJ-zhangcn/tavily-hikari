@@ -83,7 +83,7 @@ impl KeyStore {
                 SET business_calls_1h_limit = ?,
                     daily_credits_limit = ?,
                     monthly_credits_limit = ?,
-                    inherits_defaults = 1,
+                    inherits_defaults = 0,
                     updated_at = ?
                 WHERE user_id = ?
                 "#,

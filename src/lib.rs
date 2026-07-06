@@ -2157,8 +2157,7 @@ fn build_account_quota_resolution_with_recharge(
             base_entitlement_delta.monthly_delta,
         ),
         inherits_defaults: base.inherits_defaults,
-    }
-    .clamped_non_negative();
+    };
     let mut effective = base_with_entitlements.clone();
     let mut breakdown = vec![AccountQuotaBreakdownRecord {
         kind: "base".to_string(),
@@ -2291,7 +2290,7 @@ fn build_account_quota_resolution_with_recharge(
     });
 
     AccountQuotaResolution {
-        base: base_with_entitlements,
+        base: base_with_entitlements.clamped_non_negative(),
         effective,
         breakdown,
         tags,
