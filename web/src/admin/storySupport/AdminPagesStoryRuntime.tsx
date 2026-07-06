@@ -3587,6 +3587,7 @@ export function DashboardPageCanvas({ beforeIntro }: { beforeIntro?: ReactNode }
         recentAlerts={STORY_RECENT_ALERTS}
         onOpenModule={() => {}}
         onOpenRecentAlerts={() => {}}
+        onOpenUser={() => {}}
         onOpenToken={() => {}}
         onOpenKey={() => {}}
       />

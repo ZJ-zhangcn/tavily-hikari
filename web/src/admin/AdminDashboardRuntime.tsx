@@ -10407,6 +10407,7 @@ function AdminDashboard(): JSX.Element {
           onOpenModule={navigateModule}
           onOpenRecentAlerts={openDashboardRecentAlerts}
           onOpenRecentAlertGroup={openDashboardRecentAlertGroup}
+          onOpenUser={(userId) => navigateUser(userId, { preserveUsersContext: true })}
           onOpenToken={navigateToken}
           onOpenKey={navigateKey}
         />
