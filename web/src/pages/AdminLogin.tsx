@@ -55,7 +55,7 @@ function AdminLogin(): JSX.Element {
         setPasskeyEnabled(profile.passkeyAuthEnabled ?? false)
         setTotpRequired(profile.adminLoginTotpRequired ?? false)
         setProfileUnavailable(false)
-        if (profile.isAdmin && !isDemoMode()) {
+        if (profile.isAdmin && !resetMode && !isDemoMode()) {
           window.location.href = '/admin'
           return
         }
@@ -74,7 +74,7 @@ function AdminLogin(): JSX.Element {
     return () => {
       alive = false
     }
-  }, [])
+  }, [resetMode])
 
   const showPasswordForm = !resetMode && builtinEnabled !== false
   const showPasskeyLogin = !resetMode && passkeyEnabled

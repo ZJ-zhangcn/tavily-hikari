@@ -675,12 +675,16 @@ impl BuiltinAdminAuth {
             self.clear_sessions();
             return;
         };
+        let mut should_clear_sessions = !self.persisted_password_allowed;
         if let Ok(mut credentials) = self.credentials.write() {
             if !self.persisted_password_allowed {
                 credentials.password = None;
                 credentials.password_hash = None;
                 credentials.disabled = true;
             } else if settings.password_hash.is_some() || settings.disabled_at.is_some() {
+                should_clear_sessions = credentials.password.is_some()
+                    || credentials.password_hash != settings.password_hash
+                    || credentials.disabled != settings.disabled_at.is_some();
                 credentials.password = None;
                 credentials.password_hash = settings.password_hash;
                 credentials.disabled = settings.disabled_at.is_some();
@@ -688,7 +692,7 @@ impl BuiltinAdminAuth {
             credentials.updated_at = Some(settings.updated_at);
             credentials.login_totp_required = settings.login_totp_required;
         }
-        if !self.persisted_password_allowed || settings.disabled_at.is_some() {
+        if should_clear_sessions {
             self.clear_sessions();
         }
     }
@@ -887,6 +891,30 @@ mod builtin_admin_auth_tests {
         assert!(admin.is_admin(&headers));
 
         admin.set_password_hash("stored-password-hash".to_string(), Some(789));
+
+        assert!(!admin.is_admin(&headers));
+    }
+
+    #[test]
+    fn applying_rotated_persisted_password_revokes_existing_builtin_sessions() {
+        let admin = BuiltinAdminAuth::new(true, Some("old-password".to_string()), None);
+        let token = admin.login("old-password").expect("old password should log in");
+        admin.remember_session(token.clone());
+
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            COOKIE,
+            HeaderValue::from_str(&format!("{BUILTIN_ADMIN_COOKIE_NAME}={token}"))
+                .expect("cookie header should be valid"),
+        );
+        assert!(admin.is_admin(&headers));
+
+        admin.apply_persisted_settings(Some(tavily_hikari::AdminPasswordSettingsRecord {
+            password_hash: Some("stored-password-hash".to_string()),
+            disabled_at: None,
+            updated_at: 987,
+            login_totp_required: false,
+        }));
 
         assert!(!admin.is_admin(&headers));
     }
