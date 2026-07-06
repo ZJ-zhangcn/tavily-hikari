@@ -243,6 +243,7 @@
   requested_viewport: 1920x1400
   viewport_strategy: devtools-emulate
   sensitive_exclusion: N/A
+  PR: include
   evidence_note: 用户详情基础额度页不再展示独立基础额度编辑器，基础额度记录在账号权益账本中以 Base quota 呈现。
 
 ![Admin user detail base quota ledger](./assets/admin-user-detail-base-quota-ledger.png)
