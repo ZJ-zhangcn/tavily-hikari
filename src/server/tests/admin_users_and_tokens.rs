@@ -1339,29 +1339,73 @@ use super::upstream_support_and_manual_jobs::*;
                 }))
         );
 
-        let patch_url = format!("http://{}/api/users/{}/quota", addr, alice.user_id);
-        let patch_resp = client
-            .patch(&patch_url)
+        let base_hourly = quota_base
+            .get("businessCalls1hLimit")
+            .and_then(|value| value.as_i64())
+            .expect("quota base hourly");
+        let base_daily = quota_base
+            .get("dailyCreditsLimit")
+            .and_then(|value| value.as_i64())
+            .expect("quota base daily");
+        let base_monthly = quota_base
+            .get("monthlyCreditsLimit")
+            .and_then(|value| value.as_i64())
+            .expect("quota base monthly");
+        let target_base_hourly = base_hourly + 45;
+        let target_base_daily = base_daily + 678;
+        let target_base_monthly = base_monthly + 910;
+        let base_delta_hourly = target_base_hourly - base_hourly;
+        let base_delta_daily = target_base_daily - base_daily;
+        let base_delta_monthly = target_base_monthly - base_monthly;
+
+        let entitlement_url = format!("http://{}/api/users/{}/entitlements", addr, alice.user_id);
+        let create_base_resp = client
+            .post(&entitlement_url)
             .json(&serde_json::json!({
-                "businessCalls1hLimit": 45,
-                "dailyCreditsLimit": 678,
-                "monthlyCreditsLimit": 910,
+                "scopeKind": "base",
+                "monthStart": null,
+                "businessCalls1hDelta": base_delta_hourly,
+                "dailyCreditsDelta": base_delta_daily,
+                "monthlyCreditsDelta": base_delta_monthly,
+                "frontendNote": "base quota ledger correction",
             }))
             .send()
             .await
-            .expect("patch user quota request");
-        assert_eq!(patch_resp.status(), reqwest::StatusCode::NO_CONTENT);
+            .expect("create base entitlement request");
+        assert_eq!(create_base_resp.status(), reqwest::StatusCode::CREATED);
+        let created_base: serde_json::Value = create_base_resp
+            .json()
+            .await
+            .expect("created base entitlement json");
+        assert_eq!(
+            created_base
+                .get("scopeKind")
+                .and_then(|value| value.as_str()),
+            Some("base")
+        );
+        assert_eq!(
+            created_base
+                .get("backendNote")
+                .and_then(|value| value.as_str()),
+            Some("")
+        );
+        assert_eq!(
+            created_base
+                .get("frontendNote")
+                .and_then(|value| value.as_str()),
+            Some("base quota ledger correction")
+        );
 
         let detail_after_resp = client
             .get(&detail_url)
             .send()
             .await
-            .expect("user detail after patch request");
+            .expect("user detail after base entitlement request");
         assert_eq!(detail_after_resp.status(), reqwest::StatusCode::OK);
         let detail_after: serde_json::Value = detail_after_resp
             .json()
             .await
-            .expect("user detail after patch json");
+            .expect("user detail after base entitlement json");
         assert_eq!(
             detail_after
                 .get("requestRate")
@@ -1388,42 +1432,42 @@ use super::upstream_support_and_manual_jobs::*;
                 .get("quotaBase")
                 .and_then(|value| value.get("businessCalls1hLimit"))
                 .and_then(|value| value.as_i64()),
-            Some(45)
+            Some(target_base_hourly)
         );
         assert_eq!(
             detail_after
                 .get("quotaBase")
                 .and_then(|value| value.get("dailyCreditsLimit"))
                 .and_then(|value| value.as_i64()),
-            Some(678)
+            Some(target_base_daily)
         );
         assert_eq!(
             detail_after
                 .get("quotaBase")
                 .and_then(|value| value.get("monthlyCreditsLimit"))
                 .and_then(|value| value.as_i64()),
-            Some(910)
+            Some(target_base_monthly)
         );
         assert_eq!(
             detail_after
                 .get("effectiveQuota")
                 .and_then(|value| value.get("businessCalls1hLimit"))
                 .and_then(|value| value.as_i64()),
-            Some(45 + system_hourly_delta + 10)
+            Some(target_base_hourly + system_hourly_delta + 10)
         );
         assert_eq!(
             detail_after
                 .get("effectiveQuota")
                 .and_then(|value| value.get("dailyCreditsLimit"))
                 .and_then(|value| value.as_i64()),
-            Some(678 + system_daily_delta + 20)
+            Some(target_base_daily + system_daily_delta + 20)
         );
         assert_eq!(
             detail_after
                 .get("effectiveQuota")
                 .and_then(|value| value.get("monthlyCreditsLimit"))
                 .and_then(|value| value.as_i64()),
-            Some(910 + system_monthly_delta + 30)
+            Some(target_base_monthly + system_monthly_delta + 30)
         );
         assert_eq!(
             detail_after
@@ -1437,19 +1481,19 @@ use super::upstream_support_and_manual_jobs::*;
                 .get("businessCalls1h")
                 .and_then(|value| value.get("limit"))
                 .and_then(|value| value.as_i64()),
-            Some(45 + system_hourly_delta + 10)
+            Some(target_base_hourly + system_hourly_delta + 10)
         );
         assert_eq!(
             detail_after
                 .get("dailyCreditsLimit")
                 .and_then(|value| value.as_i64()),
-                Some(678 + system_daily_delta + 20)
+                Some(target_base_daily + system_daily_delta + 20)
         );
         assert_eq!(
             detail_after
                 .get("monthlyCreditsLimit")
                 .and_then(|value| value.as_i64()),
-                Some(910 + system_monthly_delta + 30)
+                Some(target_base_monthly + system_monthly_delta + 30)
         );
         assert_eq!(
             detail_after
@@ -1458,81 +1502,48 @@ use super::upstream_support_and_manual_jobs::*;
                 .and_then(|value| value.as_i64()),
             Some(before_request_rate_used)
         );
+        assert_eq!(
+            detail_after
+                .get("entitlements")
+                .and_then(|value| value.get("currentBaseDelta"))
+                .and_then(|value| value.get("monthlyCreditsDelta"))
+                .and_then(|value| value.as_i64()),
+            Some(base_delta_monthly)
+        );
 
-        let invalid_resp = client
-            .patch(&patch_url)
+        let missing_frontend_note_resp = client
+            .post(&entitlement_url)
             .json(&serde_json::json!({
-                "businessCalls1hLimit": -1,
-                "dailyCreditsLimit": 678,
-                "monthlyCreditsLimit": 910,
+                "scopeKind": "base",
+                "monthStart": null,
+                "businessCalls1hDelta": 1,
+                "dailyCreditsDelta": 1,
+                "monthlyCreditsDelta": 1,
+                "backendNote": "optional backend note",
+                "frontendNote": " ",
             }))
             .send()
             .await
-            .expect("invalid businessCalls1h patch request");
+            .expect("create base entitlement without frontend note");
         assert_eq!(
-            invalid_resp.status(),
-            reqwest::StatusCode::BAD_REQUEST,
-            "negative semantic quota fields should be rejected"
+            missing_frontend_note_resp.status(),
+            reqwest::StatusCode::BAD_REQUEST
         );
 
-        let invalid_business_resp = client
-            .patch(&patch_url)
+        let legacy_patch_resp = client
+            .patch(format!("http://{}/api/users/{}/quota", addr, alice.user_id))
             .json(&serde_json::json!({
-                "businessCalls1hLimit": -1,
-                "dailyCreditsLimit": 678,
-                "monthlyCreditsLimit": 910,
+                "businessCalls1hLimit": 1,
+                "dailyCreditsLimit": 1,
+                "monthlyCreditsLimit": 1,
             }))
             .send()
             .await
-            .expect("invalid business patch request");
-        assert_eq!(invalid_business_resp.status(), reqwest::StatusCode::BAD_REQUEST);
-
-        let omitted_legacy_resp = client
-            .patch(&patch_url)
-            .json(&serde_json::json!({
-                "businessCalls1hLimit": 46,
-                "dailyCreditsLimit": 679,
-                "monthlyCreditsLimit": 911,
-            }))
-            .send()
-            .await
-            .expect("semantic quota patch request");
+            .expect("legacy quota patch request");
         assert_eq!(
-            omitted_legacy_resp.status(),
-            reqwest::StatusCode::NO_CONTENT,
-            "semantic quota patch should succeed without removed legacy fields"
-        );
-
-        let detail_omitted_resp = client
-            .get(&detail_url)
-            .send()
-            .await
-            .expect("user detail after omitted legacy patch request");
-        assert_eq!(detail_omitted_resp.status(), reqwest::StatusCode::OK);
-        let detail_omitted: serde_json::Value = detail_omitted_resp
-            .json()
-            .await
-            .expect("user detail after omitted legacy patch json");
-        assert_eq!(
-            detail_omitted
-                .get("quotaBase")
-                .and_then(|value| value.get("businessCalls1hLimit"))
-                .and_then(|value| value.as_i64()),
-            Some(46)
-        );
-        assert_eq!(
-            detail_omitted
-                .get("quotaBase")
-                .and_then(|value| value.get("dailyCreditsLimit"))
-                .and_then(|value| value.as_i64()),
-            Some(679)
-        );
-        assert_eq!(
-            detail_omitted
-                .get("quotaBase")
-                .and_then(|value| value.get("monthlyCreditsLimit"))
-                .and_then(|value| value.as_i64()),
-            Some(911)
+            legacy_patch_resp.status(),
+            reqwest::StatusCode::NOT_FOUND,
+            "legacy quota patch route should be removed"
         );
         let _ = std::fs::remove_file(db_path);
     }

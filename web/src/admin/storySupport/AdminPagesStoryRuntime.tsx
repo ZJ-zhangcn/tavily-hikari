@@ -124,12 +124,6 @@ import {
   stickyUsersStoryData,
   stickyUsersStoryTotal,
 } from '../keyStickyStoryData'
-import {
-  createQuotaSliderSeed,
-  normalizeQuotaDraftInput,
-  type QuotaSliderField,
-  type QuotaSliderSeed,
-} from '../quotaSlider'
 import { formatRequestRateSummary, resolveRequestRate } from '../../requestRate'
 import AdminOverlayHost from '../AdminOverlayHost'
 import AnnouncementsModule from '../AnnouncementsModule'
@@ -2674,16 +2668,6 @@ function StoryUserTagBadgeList({
       {overflow > 0 && <Badge variant="outline" className="user-tag-pill-overflow">+{overflow}</Badge>}
     </div>
   )
-}
-
-type StoryQuotaSnapshot = Record<QuotaSliderField, QuotaSliderSeed>
-
-function buildStoryQuotaSnapshot(detail: AdminUserDetail): StoryQuotaSnapshot {
-  return {
-    businessCalls1hLimit: createQuotaSliderSeed('businessCalls1hLimit', detail.businessCalls1h.totalCount, detail.quotaBase.businessCalls1hLimit),
-    dailyCreditsLimit: createQuotaSliderSeed('dailyCreditsLimit', detail.dailyCreditsUsed, detail.quotaBase.dailyCreditsLimit),
-    monthlyCreditsLimit: createQuotaSliderSeed('monthlyCreditsLimit', detail.monthlyCreditsUsed, detail.quotaBase.monthlyCreditsLimit),
-  }
 }
 
 type StoryTagCardMode = 'view' | 'edit' | 'new'
@@ -5815,12 +5799,6 @@ function UserDetailPageCanvas({
   const [usageSeriesCache, setUsageSeriesCache] = useState<
     Partial<Record<AdminUserUsageSeriesKey, AdminUserUsageSeries>>
   >({})
-  const quotaSnapshot = buildStoryQuotaSnapshot(detail)
-  const [quotaDraft, setQuotaDraft] = useState<Record<QuotaSliderField, string>>({
-    businessCalls1hLimit: String(detail.quotaBase.businessCalls1hLimit),
-    dailyCreditsLimit: String(detail.quotaBase.dailyCreditsLimit),
-    monthlyCreditsLimit: String(detail.quotaBase.monthlyCreditsLimit),
-  })
   const [monthlyBrokenDrawerOpen, setMonthlyBrokenDrawerOpen] = useState(false)
   const [selectedBindableTagId, setSelectedBindableTagId] = useState<string | undefined>(undefined)
   const hasBlockAllTag = detail.tags.some((tag) => tag.effectKind === 'block_all')
@@ -6028,21 +6006,10 @@ function UserDetailPageCanvas({
         usersStrings={users}
         rechargeStrings={admin.recharges.userDetail}
         language={language}
-        quotaDraft={quotaDraft}
-        quotaSnapshot={quotaSnapshot}
-        quotaSavedAt={now * 1000}
-        savingQuota={false}
         hasBlockAllTag={hasBlockAllTag}
         formatNumber={formatNumber}
         formatQuotaLimitValue={formatQuotaLimitValue}
         formatSignedQuotaDelta={formatSignedQuotaDelta}
-        formatSaveTime={(date) => date.toLocaleTimeString(language === 'zh' ? 'zh-CN' : 'en-US', { hour: '2-digit', minute: '2-digit' })}
-        onQuotaDraftChange={(field, value) => {
-          const normalizedValue = normalizeQuotaDraftInput(value)
-          if (normalizedValue == null) return
-          setQuotaDraft((prev) => ({ ...prev, [field]: normalizedValue }))
-        }}
-        onSaveQuota={() => undefined}
         onCreateEntitlement={async (_userId, payload) => {
           const createdAt = Math.floor(Date.now() / 1000)
           const nextItem = {
@@ -6065,6 +6032,27 @@ function UserDetailPageCanvas({
             ...current,
             entitlements: {
               ...current.entitlements,
+              currentBaseDelta: payload.scopeKind === 'base'
+                ? {
+                    businessCalls1hDelta: current.entitlements.currentBaseDelta.businessCalls1hDelta + payload.businessCalls1hDelta,
+                    dailyCreditsDelta: current.entitlements.currentBaseDelta.dailyCreditsDelta + payload.dailyCreditsDelta,
+                    monthlyCreditsDelta: current.entitlements.currentBaseDelta.monthlyCreditsDelta + payload.monthlyCreditsDelta,
+                  }
+                : current.entitlements.currentBaseDelta,
+              currentMonthDelta: payload.scopeKind === 'month'
+                ? {
+                    businessCalls1hDelta: current.entitlements.currentMonthDelta.businessCalls1hDelta + payload.businessCalls1hDelta,
+                    dailyCreditsDelta: current.entitlements.currentMonthDelta.dailyCreditsDelta + payload.dailyCreditsDelta,
+                    monthlyCreditsDelta: current.entitlements.currentMonthDelta.monthlyCreditsDelta + payload.monthlyCreditsDelta,
+                  }
+                : current.entitlements.currentMonthDelta,
+              currentPermanentDelta: payload.scopeKind === 'permanent'
+                ? {
+                    businessCalls1hDelta: current.entitlements.currentPermanentDelta.businessCalls1hDelta + payload.businessCalls1hDelta,
+                    dailyCreditsDelta: current.entitlements.currentPermanentDelta.dailyCreditsDelta + payload.dailyCreditsDelta,
+                    monthlyCreditsDelta: current.entitlements.currentPermanentDelta.monthlyCreditsDelta + payload.monthlyCreditsDelta,
+                  }
+                : current.entitlements.currentPermanentDelta,
               items: [nextItem, ...current.entitlements.items],
             },
           }))
@@ -6075,7 +6063,7 @@ function UserDetailPageCanvas({
           const endMonthBefore = filters.endMonthBefore ?? null
           return detail.entitlements.items.filter((item) => {
             if (filters.scopeKind && filters.scopeKind !== 'all' && item.scopeKind !== filters.scopeKind) return false
-            if (item.scopeKind === 'permanent') return true
+            if (item.scopeKind === 'base' || item.scopeKind === 'permanent') return true
             if (startMonth != null && item.monthStart < startMonth) return false
             if (endMonthBefore != null && item.monthStart >= endMonthBefore) return false
             return true
@@ -7286,10 +7274,10 @@ export const UserDetail: Story = {
     if (!canvasElement.textContent?.includes('账号权益账本')) {
       throw new Error('Expected user detail story to render the account entitlements workspace.')
     }
-    if (!canvasElement.textContent?.includes('story monthly entitlement') || !canvasElement.textContent?.includes('story permanent entitlement')) {
-      throw new Error('Expected user detail story to render monthly and permanent entitlement rows.')
+    if (!canvasElement.textContent?.includes('story base entitlement') || !canvasElement.textContent?.includes('story monthly entitlement') || !canvasElement.textContent?.includes('story permanent entitlement')) {
+      throw new Error('Expected user detail story to render base, monthly and permanent entitlement rows.')
     }
-    const addEntitlementButton = Array.from(canvasElement.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.trim() === '新增权益')
+    const addEntitlementButton = Array.from(canvasElement.querySelectorAll<HTMLButtonElement>('button')).find((button) => button.textContent?.trim() === '新增账本记录')
     if (!addEntitlementButton) {
       throw new Error('Expected user detail story to render an add entitlement dialog trigger.')
     }

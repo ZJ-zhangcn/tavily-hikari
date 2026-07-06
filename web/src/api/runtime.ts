@@ -2442,12 +2442,6 @@ export interface AdminUserUsageSeriesLegacy {
   points: AdminUserUsageSeriesQuotaPoint[]
 }
 
-export interface UpdateUserQuotaPayload {
-  businessCalls1hLimit: number
-  dailyCreditsLimit: number
-  monthlyCreditsLimit: number
-}
-
 export interface UpdateUserBrokenKeyLimitPayload {
   monthlyBrokenLimit: number
 }
@@ -3499,15 +3493,6 @@ export function fetchAdminUserUsageSeries(
     `/api/users/${encoded}/usage-series?${params.toString()}`,
     { signal },
   ).then((payload) => ('kind' in payload ? payload : { kind: 'quotaLike', limit: payload.limit, points: payload.points }))
-}
-
-export async function updateAdminUserQuota(id: string, payload: UpdateUserQuotaPayload): Promise<void> {
-  const encoded = encodeURIComponent(id)
-  await requestNoContent(`/api/users/${encoded}/quota`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  })
 }
 
 export async function updateAdminUserBrokenKeyLimit(

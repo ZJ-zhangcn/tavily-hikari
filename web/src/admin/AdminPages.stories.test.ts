@@ -474,8 +474,9 @@ describe('AdminPages Storybook proofs', () => {
 
     expect(multiMarkup).toContain('Add token')
     expect(multiMarkup).toContain('Delete token')
-    expect(quotaMarkup).toContain('Account entitlements')
-    expect(quotaMarkup).toContain('Add entitlement')
+    expect(quotaMarkup).toContain('Account entitlement ledger')
+    expect(quotaMarkup).toContain('Add ledger row')
+    expect(quotaMarkup).toContain('Story base quota migration row.')
     expect(quotaMarkup).toContain('Manual monthly quota correction for story coverage.')
     expect(quotaMarkup).toContain('Permanent entitlement trim for story coverage.')
     expect(singleMarkup).toContain('Add token')

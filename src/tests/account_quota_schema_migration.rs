@@ -407,7 +407,19 @@ async fn startup_quota_schema_migration_is_idempotent() {
     .fetch_one(&proxy_after_second.key_store.pool)
     .await
     .expect("read migrated limits after second reopen");
-    assert_eq!(second_limits, (100, 500, 5000, 1));
+    assert_eq!(second_limits, (0, 0, 0, 1));
+    let migrated_base_rows: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM account_entitlements
+        WHERE user_id = ? AND scope_kind = 'base'
+        "#,
+    )
+    .bind(&user.user_id)
+    .fetch_one(&proxy_after_second.key_store.pool)
+    .await
+    .expect("count migrated base entitlements");
+    assert_eq!(migrated_base_rows, 0);
     let second_rows: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM account_quota_limits WHERE user_id = ?")
             .bind(&user.user_id)

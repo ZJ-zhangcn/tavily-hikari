@@ -1034,6 +1034,7 @@ const META_KEY_ACCOUNT_QUOTA_BACKFILL_V1: &str = "account_quota_backfill_v1";
 const META_KEY_ACCOUNT_QUOTA_INHERITS_DEFAULTS_BACKFILL_V1: &str =
     "account_quota_inherits_defaults_backfill_v1";
 const META_KEY_ACCOUNT_QUOTA_ZERO_BASE_CUTOVER_V1: &str = "account_quota_zero_base_cutover_v1";
+const META_KEY_ACCOUNT_BASE_ENTITLEMENT_BACKFILL_V1: &str = "account_base_entitlement_backfill_v1";
 const META_KEY_FORCE_USER_RELOGIN_V1: &str = "force_user_relogin_v1";
 const META_KEY_ACCOUNT_USAGE_ROLLUP_V1_DONE: &str = "account_usage_rollup_v1_done";
 const META_KEY_ACCOUNT_USAGE_ROLLUP_RATE5M_COVERAGE_START: &str =
@@ -2131,16 +2132,33 @@ fn build_account_quota_resolution(
         tags,
         LinuxDoCreditRechargeQuotaDelta::default(),
         LinuxDoCreditRechargeQuotaDelta::default(),
+        LinuxDoCreditRechargeQuotaDelta::default(),
     )
 }
 
 fn build_account_quota_resolution_with_recharge(
     base: AccountQuotaLimits,
     tags: Vec<UserTagBindingRecord>,
+    base_entitlement_delta: LinuxDoCreditRechargeQuotaDelta,
     monthly_entitlement_delta: LinuxDoCreditRechargeQuotaDelta,
     permanent_entitlement_delta: LinuxDoCreditRechargeQuotaDelta,
 ) -> AccountQuotaResolution {
-    let mut effective = base.clone();
+    let base_with_entitlements = AccountQuotaLimits {
+        business_calls_1h_limit: apply_quota_delta(
+            base.business_calls_1h_limit,
+            base_entitlement_delta.hourly_delta,
+        ),
+        daily_credits_limit: apply_quota_delta(
+            base.daily_credits_limit,
+            base_entitlement_delta.daily_delta,
+        ),
+        monthly_credits_limit: apply_quota_delta(
+            base.monthly_credits_limit,
+            base_entitlement_delta.monthly_delta,
+        ),
+        inherits_defaults: base.inherits_defaults,
+    };
+    let mut effective = base_with_entitlements.clone();
     let mut breakdown = vec![AccountQuotaBreakdownRecord {
         kind: "base".to_string(),
         label: "base".to_string(),
@@ -2148,9 +2166,9 @@ fn build_account_quota_resolution_with_recharge(
         tag_name: None,
         source: None,
         effect_kind: "base".to_string(),
-        business_calls_1h_delta: base.business_calls_1h_limit,
-        daily_credits_delta: base.daily_credits_limit,
-        monthly_credits_delta: base.monthly_credits_limit,
+        business_calls_1h_delta: base_with_entitlements.business_calls_1h_limit,
+        daily_credits_delta: base_with_entitlements.daily_credits_limit,
+        monthly_credits_delta: base_with_entitlements.monthly_credits_limit,
     }];
     let mut block_all = false;
 
@@ -2272,7 +2290,7 @@ fn build_account_quota_resolution_with_recharge(
     });
 
     AccountQuotaResolution {
-        base,
+        base: base_with_entitlements.clamped_non_negative(),
         effective,
         breakdown,
         tags,

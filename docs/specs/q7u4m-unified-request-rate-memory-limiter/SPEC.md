@@ -108,7 +108,7 @@
 - Rust:
   - 单元测试滑动窗口边界、`Retry-After` 与 subject 共享/隔离
   - 集成测试覆盖 `/mcp` 与 `/api/tavily/*` raw limiter 命中
-  - admin quota PATCH 仅接受 `businessCalls1hLimit/dailyCreditsLimit/monthlyCreditsLimit`
+  - admin 基础额度调整通过 `/api/users/:id/entitlements` 的 `scopeKind="base"` 账本记录完成
 - Web:
   - `bun run build`
   - Storybook 场景验证 admin / user request-rate 展示与 raw-limit 编辑入口移除

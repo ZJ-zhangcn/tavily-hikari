@@ -67,10 +67,10 @@
   When 读取 token detail 或执行 token 级 quota 判定
   Then 仍沿用现有 token 默认额度，不受本方案影响。
 
-- Given 管理员调用 `PATCH /api/users/:id/quota`
-  When 写入任意非零或零基线
-  Then 账户基线按请求值落库
-  And 后续 `effectiveQuota` 继续按“基线 + 标签增量”计算。
+- Given 管理员需要调整基础额度
+  When 通过 `/api/users/:id/entitlements` 追加 `scopeKind="base"` 账本记录
+  Then `quotaBase` 展示为默认基线叠加基础额度记录
+  And 后续 `effectiveQuota` 继续按“基础额度 + 标签增量 + 权益增量”计算。
 
 ## 非功能性验收 / 质量门槛（Quality Gates）
 

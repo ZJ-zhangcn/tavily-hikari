@@ -38,7 +38,8 @@
 - `src/server/handlers/admin_resources.rs`
   - 新增标签 CRUD、用户绑标/解绑接口。
   - 扩展 `/api/users` 与 `/api/users/:id` 返回字段。
-  - 保留 `/api/users/:id/quota` 路径，但语义改为编辑基线额度。
+- Historical note: `/api/users/:id/quota` was later removed. Current admin base quota changes are
+  append-only `base` scope rows in `/api/users/:id/entitlements`.
 - `web/src/api.ts`、`web/src/AdminDashboard.tsx`、`web/src/i18n.tsx`
   - 用户列表标签列、Tag Catalog、用户详情标签管理、基线额度编辑、有效额度明细展示。
 - `web/src/admin/AdminPages.stories.tsx`

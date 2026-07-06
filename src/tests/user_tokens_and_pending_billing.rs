@@ -2667,7 +2667,7 @@ async fn account_quota_limits_sync_with_env_defaults_on_restart() {
     .fetch_one(&proxy_after.key_store.pool)
     .await
     .expect("read second limits");
-    assert_eq!(second_limits, (22, 23, 24));
+    assert_eq!(second_limits, (0, 0, 0));
 
     unsafe {
         std::env::remove_var("TOKEN_HOURLY_REQUEST_LIMIT");
@@ -2741,6 +2741,11 @@ async fn legacy_current_default_account_quota_limits_keep_following_defaults_aft
         .execute(&proxy.key_store.pool)
         .await
         .expect("clear inherits defaults backfill marker");
+    sqlx::query("DELETE FROM meta WHERE key = ?")
+        .bind(META_KEY_ACCOUNT_BASE_ENTITLEMENT_BACKFILL_V1)
+        .execute(&proxy.key_store.pool)
+        .await
+        .expect("clear base entitlement backfill marker");
 
     drop(proxy);
 
@@ -2755,7 +2760,7 @@ async fn legacy_current_default_account_quota_limits_keep_following_defaults_aft
     .fetch_one(&proxy_after_backfill.key_store.pool)
     .await
     .expect("read reclassified default limits");
-    assert_eq!(first_limits, (12, 13, 14, 1));
+    assert_eq!(first_limits, (0, 0, 0, 1));
 
     drop(proxy_after_backfill);
 
@@ -2777,7 +2782,7 @@ async fn legacy_current_default_account_quota_limits_keep_following_defaults_aft
     .fetch_one(&proxy_after_sync.key_store.pool)
     .await
     .expect("read synced default limits");
-    assert_eq!(second_limits, (22, 23, 24, 1));
+    assert_eq!(second_limits, (0, 0, 0, 1));
 
     unsafe {
         for (key, old_value) in env_keys.iter().zip(previous.into_iter()) {
@@ -2792,7 +2797,7 @@ async fn legacy_current_default_account_quota_limits_keep_following_defaults_aft
 }
 
 #[tokio::test]
-async fn shared_legacy_noncurrent_tuple_is_left_custom_during_reclassification() {
+async fn shared_legacy_noncurrent_tuple_is_migrated_to_base_entitlements() {
     let _guard = env_lock().lock_owned().await;
     let db_path = temp_db_path("account-limit-legacy-shared-noncurrent");
     let db_str = db_path.to_string_lossy().to_string();
@@ -2896,6 +2901,11 @@ async fn shared_legacy_noncurrent_tuple_is_left_custom_during_reclassification()
         .execute(&proxy.key_store.pool)
         .await
         .expect("clear inherits defaults backfill marker");
+    sqlx::query("DELETE FROM meta WHERE key = ?")
+        .bind(META_KEY_ACCOUNT_BASE_ENTITLEMENT_BACKFILL_V1)
+        .execute(&proxy.key_store.pool)
+        .await
+        .expect("clear base entitlement backfill marker");
 
     drop(proxy);
 
@@ -2917,7 +2927,15 @@ async fn shared_legacy_noncurrent_tuple_is_left_custom_during_reclassification()
         .fetch_one(&proxy_after.key_store.pool)
         .await
         .expect("read shared tuple limits");
-        assert_eq!(limits, (12, 13, 14, 0));
+        assert_eq!(limits, (0, 0, 0, 0));
+        let base_delta: (i64, i64, i64) = sqlx::query_as(
+            "SELECT business_calls_1h_delta, daily_credits_delta, monthly_credits_delta FROM account_entitlements WHERE user_id = ? AND scope_kind = 'base'",
+        )
+        .bind(user_id)
+        .fetch_one(&proxy_after.key_store.pool)
+        .await
+        .expect("read shared tuple migrated base entitlement");
+        assert_eq!(base_delta, (12, 13, 14));
     }
     let custom_limits: (i64, i64, i64, i64) = sqlx::query_as(
         "SELECT business_calls_1h_limit, daily_credits_limit, monthly_credits_limit, inherits_defaults FROM account_quota_limits WHERE user_id = ?",
@@ -2926,7 +2944,45 @@ async fn shared_legacy_noncurrent_tuple_is_left_custom_during_reclassification()
     .fetch_one(&proxy_after.key_store.pool)
     .await
     .expect("read shared custom limits");
-    assert_eq!(custom_limits, (102, 103, 104, 0));
+    assert_eq!(custom_limits, (0, 0, 0, 0));
+    let custom_base_delta: (i64, i64, i64) = sqlx::query_as(
+        "SELECT business_calls_1h_delta, daily_credits_delta, monthly_credits_delta FROM account_entitlements WHERE user_id = ? AND scope_kind = 'base'",
+    )
+    .bind(&custom_user.user_id)
+    .fetch_one(&proxy_after.key_store.pool)
+    .await
+    .expect("read custom migrated base entitlement");
+    assert_eq!(custom_base_delta, (102, 103, 104));
+
+    drop(proxy_after);
+
+    unsafe {
+        std::env::set_var("TOKEN_HOURLY_REQUEST_LIMIT", "31");
+        std::env::set_var("TOKEN_HOURLY_LIMIT", "32");
+        std::env::set_var("TOKEN_DAILY_LIMIT", "33");
+        std::env::set_var("TOKEN_MONTHLY_LIMIT", "34");
+    }
+
+    let proxy_after_default_change =
+        TavilyProxy::with_endpoint(Vec::<String>::new(), DEFAULT_UPSTREAM, &db_str)
+            .await
+            .expect("proxy reopened after default change");
+    let custom_limits_after_default_change: (i64, i64, i64, i64) = sqlx::query_as(
+        "SELECT business_calls_1h_limit, daily_credits_limit, monthly_credits_limit, inherits_defaults FROM account_quota_limits WHERE user_id = ?",
+    )
+    .bind(&custom_user.user_id)
+    .fetch_one(&proxy_after_default_change.key_store.pool)
+    .await
+    .expect("read migrated custom limits after default change");
+    assert_eq!(custom_limits_after_default_change, (0, 0, 0, 0));
+    let custom_resolution = proxy_after_default_change
+        .key_store
+        .resolve_account_quota_resolution(&custom_user.user_id)
+        .await
+        .expect("resolve migrated custom quota after default change");
+    assert_eq!(custom_resolution.base.business_calls_1h_limit, 102);
+    assert_eq!(custom_resolution.base.daily_credits_limit, 103);
+    assert_eq!(custom_resolution.base.monthly_credits_limit, 104);
 
     unsafe {
         for (key, old_value) in env_keys.iter().zip(previous.into_iter()) {

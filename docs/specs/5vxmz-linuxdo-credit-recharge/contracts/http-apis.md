@@ -114,37 +114,40 @@
   - `recharge.orders`: recent `RechargeOrder[]`
   - `recharge.entitlements`: recent recharge-sourced entitlement rows
   - `entitlements.currentMonthStart`: current server-local month start
+  - `entitlements.currentBaseDelta`: base quota entitlement delta summary
   - `entitlements.currentMonthDelta`: current-month admin/recharge entitlement delta summary
   - `entitlements.currentPermanentDelta`: permanent entitlement delta summary
-  - `entitlements.items`: recent account entitlement rows, including admin notes and actor metadata
+  - `entitlements.items`: recent account entitlement ledger rows, including admin notes and actor metadata
 
 ## GET /api/users/:id/entitlements
 
 - Auth: admin request.
 - Query:
-  - `scopeKind`: optional `all|month|permanent`.
+  - `scopeKind`: optional `all|base|month|permanent`.
   - `startMonth`: optional Unix timestamp, matched against monthly entitlement target month.
   - `endMonthBefore`: optional exclusive Unix timestamp, matched against monthly entitlement target
     month.
 - Response `200`: `{ "items": AdminUserEntitlement[] }`
 - Semantics:
+  - Base quota rows are included unless `scopeKind` selects another scope.
   - Monthly rows are filtered by target month, not creation time.
-  - Permanent rows remain visible unless `scopeKind=month`.
+  - Permanent rows remain visible unless `scopeKind=base|month`.
   - Rows are returned in target-month-descending audit order.
 
 ## POST /api/users/:id/entitlements
 
 - Auth: admin request with master write access.
 - Request JSON:
-  - `scopeKind`: `month|permanent`
-  - `monthStart`: required for `month`; ignored for `permanent`
+  - `scopeKind`: `base|month|permanent`
+  - `monthStart`: required for `month`; ignored for `base` and `permanent`
   - `businessCalls1hDelta`: integer
   - `dailyCreditsDelta`: integer
   - `monthlyCreditsDelta`: integer
-  - `backendNote`: non-empty string
+  - `backendNote`: optional string
   - `frontendNote`: non-empty string
 - Response `201`: created `AdminUserEntitlement`
 - Semantics:
+  - Base rows adjust the account base quota and are displayed as base quota in user detail.
   - At least one delta must be non-zero.
   - Positive and negative deltas are allowed.
   - Rows are append-only; mistakes are corrected by adding a reverse row.

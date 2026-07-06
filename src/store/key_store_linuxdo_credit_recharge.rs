@@ -1082,6 +1082,9 @@ impl KeyStore {
         user_id: &str,
         current_month_start: i64,
     ) -> Result<AccountEntitlementSummary, ProxyError> {
+        let current_base_delta = self
+            .sum_account_entitlement_deltas_for_scope(user_id, ACCOUNT_ENTITLEMENT_SCOPE_BASE)
+            .await?;
         let current_month_delta = self
             .sum_account_entitlement_deltas_for_month(user_id, current_month_start)
             .await?;
@@ -1101,6 +1104,7 @@ impl KeyStore {
         .await?;
         Ok(AccountEntitlementSummary {
             current_month_start,
+            current_base_delta,
             current_month_delta,
             current_permanent_delta,
             effective_until_month_start,
@@ -1334,6 +1338,7 @@ impl KeyStore {
             (
                 LinuxDoCreditRechargeQuotaDelta,
                 LinuxDoCreditRechargeQuotaDelta,
+                LinuxDoCreditRechargeQuotaDelta,
             ),
         >,
         ProxyError,
@@ -1359,7 +1364,9 @@ impl KeyStore {
                 separated.push_bind(user_id);
             }
         }
-        builder.push(") AND ((scope_kind = ");
+        builder.push(") AND (scope_kind = ");
+        builder.push_bind(ACCOUNT_ENTITLEMENT_SCOPE_BASE);
+        builder.push(" OR (scope_kind = ");
         builder.push_bind(ACCOUNT_ENTITLEMENT_SCOPE_MONTH);
         builder.push(" AND month_start = ");
         builder.push_bind(current_month_start);
@@ -1376,6 +1383,7 @@ impl KeyStore {
             (
                 LinuxDoCreditRechargeQuotaDelta,
                 LinuxDoCreditRechargeQuotaDelta,
+                LinuxDoCreditRechargeQuotaDelta,
             ),
         > = HashMap::new();
         for (user_id, scope_kind, hourly_delta, daily_delta, monthly_delta) in rows {
@@ -1385,10 +1393,12 @@ impl KeyStore {
                 daily_delta,
                 monthly_delta,
             };
-            if scope_kind == ACCOUNT_ENTITLEMENT_SCOPE_MONTH {
+            if scope_kind == ACCOUNT_ENTITLEMENT_SCOPE_BASE {
                 entry.0 = delta;
-            } else if scope_kind == ACCOUNT_ENTITLEMENT_SCOPE_PERMANENT {
+            } else if scope_kind == ACCOUNT_ENTITLEMENT_SCOPE_MONTH {
                 entry.1 = delta;
+            } else if scope_kind == ACCOUNT_ENTITLEMENT_SCOPE_PERMANENT {
+                entry.2 = delta;
             }
         }
         Ok(map)

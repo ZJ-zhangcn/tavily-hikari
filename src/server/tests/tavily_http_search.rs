@@ -34,18 +34,24 @@ use super::upstream_support_and_manual_jobs::*;
             .expect("list users unauth request");
         assert_eq!(list_resp.status(), reqwest::StatusCode::FORBIDDEN);
 
-        let patch_url = format!("http://{}/api/users/{}/quota", addr, user.user_id);
-        let patch_resp = client
-            .patch(&patch_url)
+        let create_entitlement_url = format!("http://{}/api/users/{}/entitlements", addr, user.user_id);
+        let create_entitlement_resp = client
+            .post(&create_entitlement_url)
             .json(&serde_json::json!({
-                "businessCalls1hLimit": 10,
-                "dailyCreditsLimit": 100,
-                "monthlyCreditsLimit": 1000,
+                "scopeKind": "base",
+                "monthStart": null,
+                "businessCalls1hDelta": 10,
+                "dailyCreditsDelta": 100,
+                "monthlyCreditsDelta": 1000,
+                "frontendNote": "unauthorized base entitlement",
             }))
             .send()
             .await
-            .expect("patch users unauth request");
-        assert_eq!(patch_resp.status(), reqwest::StatusCode::FORBIDDEN);
+            .expect("create user entitlement unauth request");
+        assert_eq!(
+            create_entitlement_resp.status(),
+            reqwest::StatusCode::FORBIDDEN
+        );
 
         let _ = std::fs::remove_file(db_path);
     }

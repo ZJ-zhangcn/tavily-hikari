@@ -895,30 +895,49 @@ impl KeyStore {
 
     pub(crate) async fn sync_account_quota_limits_with_defaults(&self) -> Result<(), ProxyError> {
         let now = self.backend_time.now_ts();
-        let defaults = AccountQuotaLimits::legacy_defaults();
-        let affected_user_ids = sqlx::query_scalar::<_, String>(
-            r#"SELECT user_id
-               FROM account_quota_limits
-               WHERE inherits_defaults = 1"#,
+        let rows = sqlx::query_as::<_, (String, i64)>(
+            r#"
+            SELECT aql.user_id, u.created_at
+            FROM account_quota_limits aql
+            JOIN users u ON u.id = aql.user_id
+            WHERE aql.inherits_defaults = 1
+            "#,
         )
         .fetch_all(&self.pool)
         .await?;
-        let updated = sqlx::query(
-            r#"UPDATE account_quota_limits
-               SET business_calls_1h_limit = ?,
-                   daily_credits_limit = ?,
-                   monthly_credits_limit = ?,
-                   updated_at = ?
-               WHERE inherits_defaults = 1"#,
-        )
-        .bind(defaults.business_calls_1h_limit)
-        .bind(defaults.daily_credits_limit)
-        .bind(defaults.monthly_credits_limit)
-        .bind(now)
-        .execute(&self.pool)
-        .await?;
+        if rows.is_empty() {
+            return Ok(());
+        }
+
+        let cutover_at = self.account_quota_zero_base_cutover_at().await?;
+        let affected_user_ids = rows
+            .iter()
+            .map(|(user_id, _)| user_id.clone())
+            .collect::<Vec<_>>();
+        let mut tx = self.pool.begin().await?;
+        for (user_id, user_created_at) in rows {
+            let defaults = default_account_quota_limits_for_created_at(user_created_at, cutover_at);
+            sqlx::query(
+                r#"
+                UPDATE account_quota_limits
+                SET business_calls_1h_limit = ?,
+                    daily_credits_limit = ?,
+                    monthly_credits_limit = ?,
+                    updated_at = ?
+                WHERE user_id = ? AND inherits_defaults = 1
+                "#,
+            )
+            .bind(defaults.business_calls_1h_limit)
+            .bind(defaults.daily_credits_limit)
+            .bind(defaults.monthly_credits_limit)
+            .bind(now)
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit().await?;
         self.invalidate_all_account_quota_resolutions().await;
-        if updated.rows_affected() > 0 {
+        if !affected_user_ids.is_empty() {
             self.record_effective_account_quota_snapshots_for_users_at(&affected_user_ids, now)
                 .await?;
         }
@@ -2650,13 +2669,14 @@ impl KeyStore {
                 .cloned()
                 .unwrap_or_else(|| defaults.clone());
             let tags = tag_bindings.get(user_id).cloned().unwrap_or_default();
-            let (monthly_entitlement_delta, permanent_entitlement_delta) =
+            let (base_entitlement_delta, monthly_entitlement_delta, permanent_entitlement_delta) =
                 entitlement_deltas.get(user_id).copied().unwrap_or_default();
             map.insert(
                 user_id.clone(),
                 build_account_quota_resolution_with_recharge(
                     base,
                     tags,
+                    base_entitlement_delta,
                     monthly_entitlement_delta,
                     permanent_entitlement_delta,
                 )
@@ -2678,6 +2698,9 @@ impl KeyStore {
         let tags = self.list_user_tag_bindings_for_user(user_id).await?;
         let current_month_start =
             crate::start_of_local_month_utc_ts(self.backend_time.local_now());
+        let base_entitlement_delta = self
+            .sum_account_entitlement_deltas_for_scope(user_id, ACCOUNT_ENTITLEMENT_SCOPE_BASE)
+            .await?;
         let monthly_entitlement_delta = self
             .sum_account_entitlement_deltas_for_month(user_id, current_month_start)
             .await?;
@@ -2687,6 +2710,7 @@ impl KeyStore {
         let resolution = build_account_quota_resolution_with_recharge(
             base,
             tags,
+            base_entitlement_delta,
             monthly_entitlement_delta,
             permanent_entitlement_delta,
         );
@@ -2702,6 +2726,9 @@ impl KeyStore {
     ) -> Result<AccountQuotaResolution, ProxyError> {
         let base = self.ensure_account_quota_limits(user_id).await?;
         let tags = self.list_user_tag_bindings_for_user(user_id).await?;
+        let base_entitlement_delta = self
+            .sum_account_entitlement_deltas_for_scope(user_id, ACCOUNT_ENTITLEMENT_SCOPE_BASE)
+            .await?;
         let monthly_entitlement_delta = self
             .sum_account_entitlement_deltas_for_month(user_id, month_start)
             .await?;
@@ -2711,6 +2738,7 @@ impl KeyStore {
         Ok(build_account_quota_resolution_with_recharge(
             base,
             tags,
+            base_entitlement_delta,
             monthly_entitlement_delta,
             permanent_entitlement_delta,
         ))

@@ -43,6 +43,48 @@ fn build_account_quota_resolution_clamps_negative_tag_totals_to_zero() {
     assert_eq!(effective_row.monthly_credits_delta, 0);
 }
 
+#[test]
+fn build_account_quota_resolution_carries_negative_base_delta_until_final_clamp() {
+    let base = AccountQuotaLimits {
+        business_calls_1h_limit: 100,
+        daily_credits_limit: 100,
+        monthly_credits_limit: 100,
+        inherits_defaults: false,
+    };
+    let resolution = build_account_quota_resolution_with_recharge(
+        base,
+        vec![UserTagBindingRecord {
+            source: USER_TAG_SOURCE_MANUAL.to_string(),
+            tag: UserTagRecord {
+                id: "plus-tag".to_string(),
+                name: "plus_tag".to_string(),
+                display_name: "Plus Tag".to_string(),
+                icon: None,
+                system_key: None,
+                effect_kind: USER_TAG_EFFECT_QUOTA_DELTA.to_string(),
+                business_calls_1h_delta: 50,
+                daily_credits_delta: 50,
+                monthly_credits_delta: 50,
+                user_count: 1,
+            },
+        }],
+        LinuxDoCreditRechargeQuotaDelta {
+            hourly_delta: -200,
+            daily_delta: -200,
+            monthly_delta: -200,
+        },
+        LinuxDoCreditRechargeQuotaDelta::default(),
+        LinuxDoCreditRechargeQuotaDelta::default(),
+    );
+
+    assert_eq!(resolution.base.business_calls_1h_limit, 0);
+    assert_eq!(resolution.base.daily_credits_limit, 0);
+    assert_eq!(resolution.base.monthly_credits_limit, 0);
+    assert_eq!(resolution.effective.business_calls_1h_limit, 0);
+    assert_eq!(resolution.effective.daily_credits_limit, 0);
+    assert_eq!(resolution.effective.monthly_credits_limit, 0);
+}
+
 #[tokio::test]
 async fn new_account_without_tags_defaults_to_zero_base_and_effective_quota() {
     let db_path = temp_db_path("new-account-zero-base");

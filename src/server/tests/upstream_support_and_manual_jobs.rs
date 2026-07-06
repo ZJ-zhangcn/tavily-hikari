@@ -2528,7 +2528,6 @@ pub(super) async fn spawn_admin_users_server(proxy: TavilyProxy, dev_open_admin:
         )
         .route("/api/users/:id/tokens", post(create_user_token))
         .route("/api/users/:id/tokens/:token_id", delete(delete_user_token))
-        .route("/api/users/:id/quota", patch(update_user_quota))
         .route("/api/users/:id/tags", post(bind_user_tag))
         .route("/api/users/:id/tags/:tag_id", delete(unbind_user_tag))
         .with_state(state);

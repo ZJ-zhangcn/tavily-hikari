@@ -11,6 +11,7 @@ fn linuxdo_credit_recharge_adds_hourly_daily_and_monthly_quota() {
     let resolution = build_account_quota_resolution_with_recharge(
         base,
         Vec::new(),
+        LinuxDoCreditRechargeQuotaDelta::default(),
         linuxdo_credit_recharge_quota_delta(2000),
         LinuxDoCreditRechargeQuotaDelta::default(),
     );
@@ -147,10 +148,13 @@ async fn account_entitlements_add_monthly_and_permanent_quota_without_frontend_l
         .sum_account_entitlement_deltas_for_users(std::slice::from_ref(&user.user_id), month_start)
         .await
         .expect("bulk entitlement deltas");
-    let (monthly_delta, permanent_delta) = bulk_deltas
+    let (base_delta, monthly_delta, permanent_delta) = bulk_deltas
         .get(&user.user_id)
         .copied()
         .expect("user deltas");
+    assert_eq!(base_delta.hourly_delta, 0);
+    assert_eq!(base_delta.daily_delta, 0);
+    assert_eq!(base_delta.monthly_delta, 0);
     assert_eq!(monthly_delta.hourly_delta, 4);
     assert_eq!(monthly_delta.daily_delta, 5);
     assert_eq!(monthly_delta.monthly_delta, 6);

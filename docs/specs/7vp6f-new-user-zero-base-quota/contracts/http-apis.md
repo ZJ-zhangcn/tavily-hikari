@@ -15,10 +15,8 @@
 - 对未绑定 token：
   - 非账户绑定 token 继续沿用现有 token 默认额度，不受本轮账户零基线影响。
 
-## PATCH `/api/users/:id/quota`
+## Removed PATCH `/api/users/:id/quota`
 
-- payload 改为：
-  - `businessCalls1hLimit`
-  - `dailyCreditsLimit`
-  - `monthlyCreditsLimit`
-- 写入账户基线后，后续读取 `quotaBase` / `effectiveQuota` 按现有规则反映管理员设置值。
+- The dedicated base quota patch route is no longer available.
+- Admin base quota adjustments are append-only `scopeKind="base"` rows in
+  `POST /api/users/:id/entitlements`.

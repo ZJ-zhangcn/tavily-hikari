@@ -2417,6 +2417,19 @@ impl KeyStore {
                 )
                 .await?;
             }
+            if self
+                .get_meta_i64(META_KEY_ACCOUNT_BASE_ENTITLEMENT_BACKFILL_V1)
+                .await?
+                .is_none()
+            {
+                self.backfill_account_base_entitlements_from_custom_limits_v1()
+                    .await?;
+                self.set_meta_i64(
+                    META_KEY_ACCOUNT_BASE_ENTITLEMENT_BACKFILL_V1,
+                    self.backend_time.now_ts(),
+                )
+                .await?;
+            }
             let account_usage_rollup_v1_done = self
                 .get_meta_i64(META_KEY_ACCOUNT_USAGE_ROLLUP_V1_DONE)
                 .await?

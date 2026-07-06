@@ -847,6 +847,9 @@ async fn get_user_detail(
         },
         entitlements: AdminUserEntitlementsView {
             current_month_start: entitlement_summary.current_month_start,
+            current_base_delta: build_admin_user_entitlement_delta_view(
+                entitlement_summary.current_base_delta,
+            ),
             current_month_delta: build_admin_user_entitlement_delta_view(
                 entitlement_summary.current_month_delta,
             ),
@@ -887,7 +890,8 @@ async fn list_user_entitlements(
     if let Some(scope_kind) = scope_kind
         && !matches!(
             scope_kind,
-            tavily_hikari::ACCOUNT_ENTITLEMENT_SCOPE_MONTH
+            tavily_hikari::ACCOUNT_ENTITLEMENT_SCOPE_BASE
+                | tavily_hikari::ACCOUNT_ENTITLEMENT_SCOPE_MONTH
                 | tavily_hikari::ACCOUNT_ENTITLEMENT_SCOPE_PERMANENT
         )
     {
@@ -930,6 +934,7 @@ async fn create_user_entitlement(
     };
     let scope_kind = payload.scope_kind.trim();
     let month_start = match scope_kind {
+        tavily_hikari::ACCOUNT_ENTITLEMENT_SCOPE_BASE => 0,
         tavily_hikari::ACCOUNT_ENTITLEMENT_SCOPE_MONTH => {
             let Some(month_start) = payload.month_start else {
                 return Err((StatusCode::BAD_REQUEST, "monthStart is required".to_string()));
@@ -944,10 +949,10 @@ async fn create_user_entitlement(
     };
     let backend_note = payload.backend_note.trim();
     let frontend_note = payload.frontend_note.trim();
-    if backend_note.is_empty() || frontend_note.is_empty() {
+    if frontend_note.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
-            "backendNote and frontendNote are required".to_string(),
+            "frontendNote is required".to_string(),
         ));
     }
     if payload.business_calls_1h_delta == 0
@@ -1146,41 +1151,6 @@ async fn delete_user_token(
             err,
         )),
     }
-}
-
-async fn update_user_quota(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-    Json(payload): Json<UpdateUserQuotaRequest>,
-) -> Result<StatusCode, (StatusCode, String)> {
-    if !is_admin_request(state.as_ref(), &headers).await {
-        return Err((StatusCode::FORBIDDEN, "forbidden".to_string()));
-    }
-    require_full_master_write(state.as_ref()).await?;
-    if payload.business_calls_1h_limit < 0
-        || payload.daily_credits_limit < 0
-        || payload.monthly_credits_limit < 0
-    {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "quota base values must be non-negative integers".to_string(),
-        ));
-    }
-    let updated = state
-        .proxy
-        .update_account_business_quota_limits(
-            &id,
-            payload.business_calls_1h_limit,
-            payload.daily_credits_limit,
-            payload.monthly_credits_limit,
-        )
-        .await
-        .map_err(|err| admin_proxy_error_response("update user quota error", err))?;
-    if !updated {
-        return Err((StatusCode::NOT_FOUND, "user not found".to_string()));
-    }
-    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn update_user_broken_key_limit(
