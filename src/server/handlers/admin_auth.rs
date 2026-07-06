@@ -1277,19 +1277,19 @@ async fn get_profile(
     headers: HeaderMap,
 ) -> Result<Json<ProfileView>, StatusCode> {
     let config = &state.forward_auth;
-    let allow_registration = state.proxy.allow_registration().await.map_err(|err| {
+    let allow_registration = state.proxy.allow_registration().await.unwrap_or_else(|err| {
         eprintln!("get allow registration setting error: {err}");
-        StatusCode::INTERNAL_SERVER_ERROR
-    })?;
+        false
+    });
 
     let forward_auth_enabled = state.forward_auth_enabled && config.is_enabled();
     let builtin_auth_enabled = state.builtin_admin.is_enabled();
     let admin_login_totp_required = state.builtin_admin.login_totp_required();
     let passkey_auth_enabled = state.admin_passkey.is_configured()
-        && state.proxy.admin_passkey_enabled().await.map_err(|err| {
+        && state.proxy.admin_passkey_enabled().await.unwrap_or_else(|err| {
             eprintln!("get admin passkey enabled error: {err}");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
+            false
+        });
 
     if state.dev_open_admin {
         return Ok(Json(ProfileView {
@@ -1815,6 +1815,12 @@ async fn post_admin_passkey_authentication_finish(
         .map(deserialize_passkey)
         .transpose()?
         .ok_or(StatusCode::UNAUTHORIZED)?;
+    if state.builtin_admin.login_totp_required() {
+        let code = payload.totp_code.as_deref().unwrap_or_default();
+        verify_admin_totp_for_sensitive_action(state.as_ref(), code)
+            .await
+            .map_err(|(status, _)| status)?;
+    }
     passkey.update_credential(&auth_result);
     let passkey_json = serde_json::to_string(&passkey).map_err(|err| {
         eprintln!("serialize admin passkey after auth error: {err}");
@@ -1830,12 +1836,6 @@ async fn post_admin_passkey_authentication_finish(
         })?;
     if !updated {
         return Err(StatusCode::UNAUTHORIZED);
-    }
-    if state.builtin_admin.login_totp_required() {
-        let code = payload.totp_code.as_deref().unwrap_or_default();
-        verify_admin_totp_for_sensitive_action(state.as_ref(), code)
-            .await
-            .map_err(|(status, _)| status)?;
     }
     let session = state
         .proxy
@@ -2221,16 +2221,6 @@ async fn patch_admin_password(
     require_admin_credential_write(state.as_ref()).await?;
     if payload.login_totp_required && !admin_totp_is_ready_for_login(state.as_ref()).await? {
         return Err(StatusCode::CONFLICT);
-    }
-    if payload.login_totp_required {
-        state
-            .proxy
-            .revoke_all_admin_passkey_sessions()
-            .await
-            .map_err(|err| {
-                eprintln!("revoke admin passkey sessions before requiring TOTP error: {err}");
-                StatusCode::INTERNAL_SERVER_ERROR
-            })?;
     }
     let settings = state
         .proxy

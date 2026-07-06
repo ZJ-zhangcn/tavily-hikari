@@ -130,6 +130,10 @@ impl KeyStore {
         required: bool,
     ) -> Result<AdminPasswordSettingsRecord, ProxyError> {
         let now = self.backend_time.now_ts();
+        let mut conn = self.pool.acquire().await?;
+        sqlx::query("BEGIN IMMEDIATE").execute(&mut *conn).await?;
+
+        let result: Result<AdminPasswordSettingsRecord, ProxyError> = async {
         sqlx::query(
             r#"INSERT INTO admin_password_settings (
                    id, password_hash, disabled_at, updated_at, login_totp_required
@@ -141,11 +145,47 @@ impl KeyStore {
         )
         .bind(now)
         .bind(if required { 1_i64 } else { 0_i64 })
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await?;
-        self.get_admin_password_settings()
+            if required {
+                sqlx::query(
+                    "UPDATE admin_passkey_sessions SET revoked_at = ? WHERE revoked_at IS NULL",
+                )
+                .bind(now)
+                .execute(&mut *conn)
+                .await?;
+            }
+            let settings = sqlx::query_as::<_, (Option<String>, Option<i64>, i64, i64)>(
+                r#"SELECT password_hash, disabled_at, updated_at, login_totp_required
+                   FROM admin_password_settings
+                   WHERE id = 1
+                   LIMIT 1"#,
+            )
+            .fetch_optional(&mut *conn)
             .await?
-            .ok_or_else(|| ProxyError::Other("admin password settings missing".to_string()))
+            .map(|(password_hash, disabled_at, updated_at, login_totp_required)| {
+                AdminPasswordSettingsRecord {
+                    password_hash,
+                    disabled_at,
+                    updated_at,
+                    login_totp_required: login_totp_required != 0,
+                }
+            })
+            .ok_or_else(|| ProxyError::Other("admin password settings missing".to_string()))?;
+            Ok(settings)
+        }
+        .await;
+
+        match result {
+            Ok(settings) => {
+                sqlx::query("COMMIT").execute(&mut *conn).await?;
+                Ok(settings)
+            }
+            Err(err) => {
+                let _ = sqlx::query("ROLLBACK").execute(&mut *conn).await;
+                Err(err)
+            }
+        }
     }
 
     pub async fn admin_passkey_enabled(&self) -> Result<bool, ProxyError> {
