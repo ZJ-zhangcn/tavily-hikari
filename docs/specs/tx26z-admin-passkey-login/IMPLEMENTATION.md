@@ -11,7 +11,8 @@
 ## Coverage / rollout summary
 
 - 后端新增 WebAuthn passkey authentication / reset registration API，并将 `hikari_admin_passkey_session` 接入管理员鉴权链。
-- SQLite 新增管理员 passkey credential、reset token、challenge 与 passkey session 表；admin password settings、credential、reset token 与 session 纳入 HA 控制面同步基线，challenge 保持短期本地状态。
+- SQLite 新增管理员 passkey credential、reset token、challenge 与 passkey session 表；admin password settings、credential、reset token、challenge 与 session 纳入 HA 控制面同步基线，支持 start/finish 请求跨节点或中途 failover。
+- reset-token recovery 会撤销旧 passkey 凭据、旧 passkey session 和既有内置密码 session；开启“管理员登录要求 TOTP”会撤销既有 passkey session 与内置密码 session，确保新认证要求立即生效。
 - CLI 新增 `tavily-hikari admin passkey reset-url --base-url <url>`，直接写入目标 SQLite DB 并输出一次性 reset/enroll URL。
 - `/login` 前端新增 passkey 登录按钮与 reset URL 注册流程；reset 注册完成后返回登录页并提示使用新 passkey 登录；`/api/profile` 新增 `passkeyAuthEnabled` capability。
 - 内置密码登录保持显式启用的 break-glass 路径；本实现没有恢复 Remote-Email/ForwardAuth 作为生产主登录方案。

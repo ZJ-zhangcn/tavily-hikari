@@ -209,6 +209,10 @@ impl TavilyProxy {
             .await
     }
 
+    pub async fn revoke_all_admin_passkey_sessions(&self) -> Result<(), ProxyError> {
+        self.key_store.revoke_all_admin_passkey_sessions().await
+    }
+
     /// Admin: create a new access token with optional note.
     pub async fn create_access_token(
         &self,

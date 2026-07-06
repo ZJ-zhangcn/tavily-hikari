@@ -2061,6 +2061,7 @@ async fn finish_admin_passkey_registration(
         if !completed {
             return Err(StatusCode::UNAUTHORIZED);
         }
+        state.builtin_admin.clear_sessions();
         return Ok(Json(AdminPasskeyRegistrationFinishResponse { ok: true }));
     }
     state
@@ -2218,6 +2219,16 @@ async fn patch_admin_password(
     if payload.login_totp_required && !admin_totp_is_ready_for_login(state.as_ref()).await? {
         return Err(StatusCode::CONFLICT);
     }
+    if payload.login_totp_required {
+        state
+            .proxy
+            .revoke_all_admin_passkey_sessions()
+            .await
+            .map_err(|err| {
+                eprintln!("revoke admin passkey sessions before requiring TOTP error: {err}");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+    }
     let settings = state
         .proxy
         .set_admin_login_totp_required(payload.login_totp_required)
@@ -2229,6 +2240,9 @@ async fn patch_admin_password(
     state
         .builtin_admin
         .set_login_totp_required(settings.login_totp_required, Some(settings.updated_at));
+    if settings.login_totp_required {
+        state.builtin_admin.clear_sessions();
+    }
     Ok(Json(admin_password_status_view(state.as_ref())))
 }
 
@@ -2354,7 +2368,7 @@ mod admin_auth_last_login_method_tests {
                 userinfo_url: "https://connect.linux.do/api/user".to_string(),
                 scope: "user".to_string(),
                 redirect_url: None,
-                refresh_token_crypt_key: None,
+                refresh_token_crypt_key: Some(*b"0123456789abcdef0123456789abcdef"),
                 user_sync_enabled: false,
                 user_sync_at: (6, 20),
                 session_max_age_secs: 3600,
@@ -2449,5 +2463,63 @@ mod admin_auth_last_login_method_tests {
             .await
             .expect("list credentials");
         assert_eq!(credentials.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn requiring_login_totp_revokes_existing_admin_sessions() {
+        let (state, _temp_dir) = test_state(
+            "login-totp-revokes-sessions",
+            BuiltinAdminAuth::new(true, Some("pw-123456".to_string()), None),
+            configured_passkey_options(),
+            false,
+        )
+        .await;
+        state
+            .proxy
+            .set_admin_totp_secret_record("ciphertext", "nonce", 1_700_000_000)
+            .await
+            .expect("seed TOTP secret");
+        state
+            .proxy
+            .upsert_admin_passkey_credential("credential-1", r#"{"credential":1}"#, None)
+            .await
+            .expect("insert passkey credential");
+        let passkey_session = state
+            .proxy
+            .create_admin_passkey_session(Some("credential-1"), 120)
+            .await
+            .expect("create passkey session");
+        let login = post_admin_login(
+            State(state.clone()),
+            HeaderMap::new(),
+            Json(AdminLoginRequest {
+                password: "pw-123456".to_string(),
+                totp_code: None,
+            }),
+        )
+        .await
+        .expect("password login succeeds");
+        let builtin_headers = headers_from_set_cookie(&login);
+        assert!(is_admin_request(state.as_ref(), &builtin_headers).await);
+
+        let _ = patch_admin_password(
+            State(state.clone()),
+            builtin_headers.clone(),
+            Json(AdminPasswordSettingsPatchRequest {
+                login_totp_required: true,
+            }),
+        )
+        .await
+        .expect("enable login TOTP");
+
+        assert!(!is_admin_request(state.as_ref(), &builtin_headers).await);
+        assert!(
+            state
+                .proxy
+                .get_active_admin_passkey_session(&passkey_session.token)
+                .await
+                .expect("lookup passkey session")
+                .is_none()
+        );
     }
 }

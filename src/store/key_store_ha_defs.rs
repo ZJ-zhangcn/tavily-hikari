@@ -77,6 +77,7 @@ const HA_CONTROL_PLANE_EVENT_RETENTION_SECS: i64 = 7 * 24 * 60 * 60;
 
 const HA_CONTROL_BASELINE_TABLES: &[&str] = &[
     "admin_password_settings",
+    "admin_passkey_challenges",
     "admin_passkey_credentials",
     "admin_passkey_reset_tokens",
     "admin_passkey_sessions",
@@ -102,6 +103,7 @@ const HA_CONTROL_BASELINE_TABLES: &[&str] = &[
 
 const HA_CONTROL_EVENT_TABLES: &[&str] = &[
     "admin_password_settings",
+    "admin_passkey_challenges",
     "admin_passkey_credentials",
     "admin_passkey_reset_tokens",
     "admin_passkey_sessions",

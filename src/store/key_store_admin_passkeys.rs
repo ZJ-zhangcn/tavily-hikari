@@ -749,6 +749,15 @@ impl KeyStore {
         .await?;
         Ok(())
     }
+
+    pub async fn revoke_all_admin_passkey_sessions(&self) -> Result<(), ProxyError> {
+        let now = self.backend_time.now_ts();
+        sqlx::query("UPDATE admin_passkey_sessions SET revoked_at = ? WHERE revoked_at IS NULL")
+            .bind(now)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1071,6 +1080,50 @@ mod admin_passkey_store_tests {
                 .get_active_admin_passkey_session(&expiring.token)
                 .await
                 .expect("expired session")
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn revoke_all_admin_passkey_sessions_expires_all_active_sessions() {
+        let (_temp, db_path) = temp_db_path("revoke-all-passkey-sessions.db");
+        let store = KeyStore::new_with_time(&db_path, BackendTime::system())
+            .await
+            .expect("create store");
+        store
+            .upsert_admin_passkey_credential("credential-1", r#"{"credential":1}"#, None)
+            .await
+            .expect("insert first credential");
+        store
+            .upsert_admin_passkey_credential("credential-2", r#"{"credential":2}"#, None)
+            .await
+            .expect("insert second credential");
+        let first = store
+            .create_admin_passkey_session(Some("credential-1"), 120)
+            .await
+            .expect("create first session");
+        let second = store
+            .create_admin_passkey_session(Some("credential-2"), 120)
+            .await
+            .expect("create second session");
+
+        store
+            .revoke_all_admin_passkey_sessions()
+            .await
+            .expect("revoke all sessions");
+
+        assert!(
+            store
+                .get_active_admin_passkey_session(&first.token)
+                .await
+                .expect("lookup first session")
+                .is_none()
+        );
+        assert!(
+            store
+                .get_active_admin_passkey_session(&second.token)
+                .await
+                .expect("lookup second session")
                 .is_none()
         );
     }

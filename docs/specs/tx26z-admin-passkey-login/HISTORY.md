@@ -16,13 +16,15 @@
 - ForwardAuth 不再作为新部署默认管理员边界，但既有完整 header/admin-value 配置需要继续自动启用；示例与文档显式写出 `ADMIN_AUTH_FORWARD_ENABLED=true`，兼顾兼容与新配置可读性。
 - Passkey RP 默认推导优先使用浏览器访问的 `EDGEONE_DOMAIN`，没有 EdgeOne 公网域名时才退到 `NODE_PUBLIC_HOST`；非标准公网 origin 仍应显式配置 `ADMIN_PASSKEY_RP_ORIGIN`。
 - 显式关闭的管理员认证开关优先级必须高于兼容恢复：`ADMIN_AUTH_FORWARD_ENABLED=false` 不应被 legacy header 配置覆盖，`ADMIN_AUTH_BUILTIN_ENABLED=false` 不应被已持久化的旧密码 hash 重新启用。
+- Passkey challenge 虽然是短 TTL ceremony 状态，但仍必须随 HA 控制面同步；否则 start 命中节点 A、finish 命中节点 B 或中途 failover 时会误判 challenge 不存在。
+- reset-token recovery 和开启登录 TOTP 都属于安全边界提升动作，必须撤销既有管理员 session；否则旧 cookie 会在有效期内绕过新 passkey/TOTP 状态。
 
 ## Key Reasons / Replacements
 
 - ForwardAuth 用户头配置错误时会形成可伪造的管理员边界，不适合作为当前公网部署的默认安全方案。
 - 内置单密码登录可以作为 break-glass，但不具备 passkey 的设备绑定与抗钓鱼属性。
 - reset URL 必须由本地 CLI 生成，避免远程公开重置入口扩大攻击面。
-- Challenge 不纳入 HA 同步，因为它是短 TTL ceremony 状态；管理员密码设置、credential、reset token 和 passkey session 纳入控制面同步，支持 standby 接管后的恢复。
+- Challenge 也纳入 HA 同步；短 TTL 只影响保留周期，不改变跨节点 WebAuthn ceremony 对同一 challenge 状态的依赖。
 
 ## References
 
