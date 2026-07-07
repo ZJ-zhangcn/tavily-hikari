@@ -925,6 +925,12 @@ fn validate_rebalance_mcp_tool_arguments(
             tool.advertised_name, tool.required_field
         ));
     }
+    if let Some(message) = tavily_mcp_free_account_validation_message(tool, arguments) {
+        return Err(format!(
+            "Invalid arguments for {}: {message}",
+            tool.advertised_name
+        ));
+    }
     if tool.upstream_tool == "research"
         && let Some(message) = tavily_research_model_validation_message(arguments)
     {
@@ -934,6 +940,27 @@ fn validate_rebalance_mcp_tool_arguments(
         ));
     }
     Ok(arguments.clone())
+}
+
+fn tavily_mcp_free_account_validation_message(
+    tool: &RebalanceMcpToolDefinition,
+    arguments: &Value,
+) -> Option<&'static str> {
+    if tool.upstream_tool == "search"
+        && let Value::Object(map) = arguments
+        && map.contains_key("safe_search")
+    {
+        return Some("safe_search is an Enterprise-only Tavily parameter and is not supported");
+    }
+    if tool.upstream_tool == "research"
+        && arguments
+            .get("stream")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        return Some("stream=true is not supported by this proxy; use non-streaming research");
+    }
+    None
 }
 
 fn rebalance_mcp_tool_usage_metered(tool: &RebalanceMcpToolDefinition) -> bool {
