@@ -55,11 +55,14 @@ export default function TokenListActions({
       <button type="button" className="btn btn-primary btn-sm" onClick={() => onDetail(tokenId)}>
         {text.detail}
       </button>
-      {canReset ? (
-        <button type="button" className="btn btn-warning btn-sm" onClick={() => onReset(tokenId)}>
-          {text.reset}
-        </button>
-      ) : null}
+      <button
+        type="button"
+        className="btn btn-warning btn-sm"
+        onClick={() => onReset(tokenId)}
+        disabled={!canReset}
+      >
+        {text.reset}
+      </button>
     </div>
   )
 }

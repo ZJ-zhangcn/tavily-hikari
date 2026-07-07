@@ -217,6 +217,7 @@
 
   .dark .btn,
   .dark button.btn,
+  .dark .hikari-button,
   .dark .theme-toggle-trigger,
   .dark .language-switcher-trigger,
   .dark .admin-panel-refresh-button,
@@ -232,41 +233,86 @@
     box-shadow: var(--shadow-clay-button);
   }
 
+  .dark .btn-secondary,
+  .dark button.btn-secondary,
+  .dark .hikari-button-secondary {
+    border-color: hsl(var(--muted-foreground) / 0.5);
+    background: oklch(0.285 0.028 305 / 0.94);
+    color: hsl(var(--foreground));
+    box-shadow: var(--shadow-clay-button);
+  }
+
+  .dark .btn-outline,
+  .dark button.btn-outline,
+  .dark .hikari-button-outline {
+    border-color: hsl(var(--primary) / 0.72);
+    background: oklch(0.245 0.026 305 / 0.82);
+    color: hsl(var(--primary));
+    box-shadow: var(--shadow-clay-button);
+  }
+
+  .dark .btn-ghost,
+  .dark button.btn-ghost,
+  .dark .hikari-button-ghost {
+    border-color: transparent;
+    background: transparent;
+    color: hsl(var(--foreground) / 0.86);
+    box-shadow: none;
+  }
+
+  .dark .hikari-button-link {
+    color: hsl(var(--primary));
+    box-shadow: none;
+  }
+
+  .dark .hikari-button-link:disabled {
+    border-color: transparent;
+    background: transparent;
+    color: hsl(var(--muted-foreground) / 0.66);
+    box-shadow: none;
+  }
+
   .dark .btn-primary,
+  .dark button.btn-primary,
   .dark .btn.bg-primary,
+  .dark .hikari-button-primary,
   .dark .public-home-actions .btn-primary,
   .dark .linuxdo-login-button {
-    border-color: hsl(var(--primary) / 0.34);
+    border-color: hsl(var(--primary) / 0.72);
     background: hsl(var(--primary) / 0.88);
     color: hsl(var(--primary-foreground));
     box-shadow: var(--shadow-clay-button);
   }
 
   .dark .btn-warning,
-  .dark .btn[class*="from-amber-300"][class*="to-warning"] {
-    border-color: hsl(var(--warning) / 0.36);
-    background: hsl(var(--warning) / 0.9);
-    color: hsl(var(--warning-foreground));
+  .dark button.btn-warning,
+  .dark .hikari-button-warning {
+    border-color: hsl(var(--warning) / 0.48);
+    background: hsl(var(--warning) / 0.16);
+    color: hsl(var(--warning-readable));
     box-shadow: var(--shadow-clay-button);
   }
 
   .dark .btn-success,
-  .dark .btn[class*="from-emerald-300"][class*="to-success"] {
-    border-color: hsl(var(--success) / 0.36);
-    background: hsl(var(--success) / 0.9);
-    color: hsl(var(--success-foreground));
+  .dark button.btn-success,
+  .dark .hikari-button-success {
+    border-color: hsl(var(--success) / 0.54);
+    background: hsl(var(--success) / 0.16);
+    color: hsl(var(--success-readable));
     box-shadow: var(--shadow-clay-button);
   }
 
   .dark .btn-error,
-  .dark .btn[class*="from-red-400"][class*="to-destructive"] {
-    border-color: hsl(var(--destructive) / 0.36);
-    background: hsl(var(--destructive) / 0.9);
-    color: hsl(var(--destructive-foreground));
+  .dark button.btn-error,
+  .dark .hikari-button-destructive {
+    border-color: hsl(var(--destructive) / 0.68);
+    background: hsl(var(--destructive) / 0.16);
+    color: hsl(var(--destructive-readable));
     box-shadow: var(--shadow-clay-button);
   }
 
   .dark .btn:hover,
+  .dark .hikari-button:hover,
   .dark .theme-toggle-trigger:hover,
   .dark .language-switcher-trigger:hover,
   .dark .admin-panel-refresh-button:hover:not(:disabled),
@@ -278,6 +324,56 @@
   .dark .chip:hover,
   .dark .status-pair-trigger:hover {
     box-shadow: var(--shadow-clay-button-hover);
+  }
+
+  .dark .btn-secondary:hover,
+  .dark button.btn-secondary:hover,
+  .dark .hikari-button-secondary:hover {
+    background: oklch(0.315 0.03 305 / 0.96);
+  }
+
+  .dark .btn-outline:hover,
+  .dark button.btn-outline:hover,
+  .dark .hikari-button-outline:hover {
+    border-color: hsl(var(--primary) / 0.82);
+    background: hsl(var(--primary) / 0.14);
+    color: hsl(var(--primary));
+  }
+
+  .dark .btn-ghost:hover,
+  .dark button.btn-ghost:hover,
+  .dark .hikari-button-ghost:hover {
+    background: hsl(var(--primary) / 0.12);
+    color: hsl(var(--primary));
+  }
+
+  .dark .btn-warning:hover,
+  .dark button.btn-warning:hover,
+  .dark .hikari-button-warning:hover {
+    background: hsl(var(--warning) / 0.22);
+  }
+
+  .dark .btn-success:hover,
+  .dark button.btn-success:hover,
+  .dark .hikari-button-success:hover {
+    background: hsl(var(--success) / 0.22);
+  }
+
+  .dark .btn-error:hover,
+  .dark button.btn-error:hover,
+  .dark .hikari-button-destructive:hover {
+    background: hsl(var(--destructive) / 0.22);
+  }
+
+  .dark .btn:disabled,
+  .dark .hikari-button:disabled,
+  .dark .btn-disabled {
+    border-color: hsl(var(--muted-foreground) / 0.5);
+    background: oklch(0.215 0.022 305 / 0.78);
+    color: hsl(var(--muted-foreground) / 0.7);
+    opacity: 1;
+    box-shadow: inset 3px 4px 8px oklch(0.055 0.016 305 / 0.32);
+    transform: none;
   }
 
   .dark .input,

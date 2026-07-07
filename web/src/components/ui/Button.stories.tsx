@@ -45,6 +45,56 @@ export const Variants: Story = {
   ),
 }
 
+export const VariantStateGallery: Story = {
+  render: () => {
+    const variants = [
+      ['Default', undefined],
+      ['Secondary', 'secondary'],
+      ['Outline', 'outline'],
+      ['Ghost', 'ghost'],
+      ['Success', 'success'],
+      ['Warning', 'warning'],
+      ['Destructive', 'destructive'],
+    ] as const
+
+    return (
+      <div
+        data-testid="button-variant-state-gallery"
+        className="grid w-fit max-w-[calc(100vw-32px)] gap-4 rounded-[20px] border border-border/55 bg-card/82 p-5 shadow-clayCard"
+      >
+        {variants.map(([label, variant]) => (
+          <div key={label} className="grid grid-cols-[120px_1fr_1fr] items-center gap-3">
+            <span className="text-sm font-bold text-muted-foreground">{label}</span>
+            <Button variant={variant}>Enabled</Button>
+            <Button variant={variant} disabled>Disabled</Button>
+          </div>
+        ))}
+        <div className="grid grid-cols-[120px_1fr_1fr] items-center gap-3">
+          <span className="text-sm font-bold text-muted-foreground">Link</span>
+          <Button variant="link">Enabled link</Button>
+          <Button variant="link" disabled>Disabled link</Button>
+        </div>
+      </div>
+    )
+  },
+}
+
+export const DarkVariantStateGallery: Story = {
+  globals: {
+    themeMode: 'dark',
+  },
+  parameters: {
+    viewport: { defaultViewport: '1440-device-desktop' },
+    docs: {
+      description: {
+        story:
+          'Dark-theme state matrix for the shared button primitive, covering enabled and disabled treatments for every variant.',
+      },
+    },
+  },
+  render: VariantStateGallery.render,
+}
+
 export const SizesAndIcon: Story = {
   render: () => (
     <div className="flex flex-wrap items-center gap-3">
