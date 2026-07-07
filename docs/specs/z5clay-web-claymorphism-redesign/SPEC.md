@@ -43,6 +43,75 @@ Tavily Hikari's web surfaces adopt a high-fidelity claymorphism visual system ac
 
 ## Visual Evidence
 
+- source_type: imagegen_reference
+  target_program: mock-only
+  capture_scope: design-reference
+  requested_viewport: 1672x941
+  viewport_strategy: generated-static-reference
+  sensitive_exclusion: N/A
+  submission_gate: owner-approved
+  state: public hero load-balancer visual reference
+  evidence_note: owner-approved static reference for the public hero load-balancing visual; implementation must preserve this first frame before adding motion overlays.
+  PR: include
+  image:
+  ![Public hero load-balancer design reference](./assets/public-hero-load-balancer-design.png)
+
+- source_type: ui_demo
+  target_program: mock-only
+  capture_scope: browser-viewport
+  requested_viewport: 1440x960
+  viewport_strategy: playwright-viewport
+  sensitive_exclusion: N/A
+  submission_gate: approved
+  story_id_or_title: public-home-ui-demo
+  state: public hero load-balancer desktop light
+  evidence_note: verifies the owner-approved static visual is used as the first-frame hero layer with motion-only request routing overlays, no duplicate hero title, and no audit semantics.
+  PR: include
+  image:
+  ![Public hero load-balancer desktop light](./assets/public-hero-load-balancer-storybook-desktop-light.png)
+
+- source_type: ui_demo
+  target_program: mock-only
+  capture_scope: browser-viewport
+  requested_viewport: 1440x960
+  viewport_strategy: playwright-viewport
+  sensitive_exclusion: N/A
+  submission_gate: approved
+  story_id_or_title: public-home-ui-demo
+  state: public hero load-balancer desktop dark
+  evidence_note: verifies the same static visual and motion layer remain aligned on the dark clay surface.
+  PR: include
+  image:
+  ![Public hero load-balancer desktop dark](./assets/public-hero-load-balancer-storybook-desktop-dark.png)
+
+- source_type: storybook_canvas
+  target_program: mock-only
+  capture_scope: browser-viewport
+  requested_viewport: 390x1100
+  viewport_strategy: cdp-device-metrics
+  sensitive_exclusion: N/A
+  submission_gate: approved
+  story_id_or_title: public-publichomeherocard--load-balancer-visual-proof-mobile
+  state: public hero load-balancer mobile light
+  evidence_note: verifies the 390px mobile layout has no horizontal page scroll, keeps the static visual intact, and stacks CTA controls without clipping.
+  PR: include
+  image:
+  ![Public hero load-balancer mobile light](./assets/public-hero-load-balancer-storybook-mobile-light.png)
+
+- source_type: ui_demo
+  target_program: mock-only
+  capture_scope: browser-viewport
+  requested_viewport: 390x900
+  viewport_strategy: playwright-viewport
+  sensitive_exclusion: N/A
+  submission_gate: approved
+  story_id_or_title: public-home-ui-demo
+  state: public hero load-balancer mobile dark
+  evidence_note: verifies the 390px mobile dark layout keeps the hero visual readable without clipping or overflow.
+  PR: include
+  image:
+  ![Public hero load-balancer mobile dark](./assets/public-hero-load-balancer-storybook-mobile-dark.png)
+
 - source_type: storybook_canvas
   target_program: mock-only
   capture_scope: browser-viewport

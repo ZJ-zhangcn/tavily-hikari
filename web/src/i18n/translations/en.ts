@@ -14,7 +14,7 @@ export const EN: TranslationShape = {
       heroTitle: 'Tavily Hikari Proxy',
       heroTagline: 'Transparent request visibility for your Tavily integration.',
       heroDescription:
-        'Tavily Hikari pools multiple Tavily API Keys into a single endpoint, balances usage across them, and ships with request auditing, rate monitoring, and shareable access tokens.',
+        'Tavily Hikari pools multiple Tavily API Keys into a single endpoint, balances usage across them, and ships with request routing, rate monitoring, and shareable access tokens.',
       metrics: {
         monthly: {
           title: 'Monthly Success (UTC)',

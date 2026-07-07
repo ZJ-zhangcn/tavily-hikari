@@ -14,7 +14,7 @@ export const ZH: TranslationShape = {
       heroTitle: 'Tavily Hikari Proxy',
       heroTagline: 'Transparent request visibility for your Tavily integration.',
       heroDescription:
-        'Tavily Hikari 将多组 Tavily API Key 聚合为统一入口，自动均衡密钥用量，并提供请求审计、速率监控与访问令牌管理。',
+        'Tavily Hikari 将多组 Tavily API Key 聚合为统一入口，自动均衡密钥用量，并提供请求转发、速率监控与访问令牌管理。',
       metrics: {
         monthly: {
           title: '本月成功请求（UTC）',

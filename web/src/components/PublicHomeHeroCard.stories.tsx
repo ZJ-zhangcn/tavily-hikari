@@ -22,7 +22,7 @@ function HeroStory(args: HeroStoryArgs): JSX.Element {
   })()
 
   return (
-    <div style={{ maxWidth: 1120, margin: '0 auto' }}>
+    <div style={{ width: 'min(100%, 1120px)', minWidth: 0, maxWidth: 1120, margin: '0 auto', overflowX: 'clip' }}>
       <PublicHomeHeroCard
         {...args}
         adminActionLabel={resolvedAdminLabel}
@@ -59,6 +59,7 @@ const baseArgs: HeroStoryArgs = {
 
 const meta = {
   title: 'Public/PublicHomeHeroCard',
+  tags: ['autodocs'],
   parameters: {
     layout: 'padded',
   },
@@ -98,6 +99,42 @@ export const LoggedOutNoToken: Story = {
     showLinuxDoLogin: true,
     showTokenAccessButton: true,
     showAdminAction: false,
+  },
+}
+
+export const LoadBalancerVisualProof: Story = {
+  args: {
+    ...baseArgs,
+    showLinuxDoLogin: true,
+    showTokenAccessButton: true,
+    showAdminAction: false,
+  },
+  parameters: {
+    viewport: { defaultViewport: '1440-device-desktop' },
+    docs: {
+      description: {
+        story:
+          'Owner-approved public hero load-balancer visual. The static image is the first-frame reference; motion layers only add subtle routing highlights.',
+      },
+    },
+  },
+}
+
+export const LoadBalancerVisualProofMobile: Story = {
+  args: {
+    ...baseArgs,
+    showLinuxDoLogin: true,
+    showTokenAccessButton: true,
+    showAdminAction: false,
+  },
+  parameters: {
+    viewport: { defaultViewport: '0390-device-iphone-14' },
+    docs: {
+      description: {
+        story:
+          'Mobile proof for the same load-balancer visual, verifying the image scales without cropped labels or route nodes.',
+      },
+    },
   },
 }
 
