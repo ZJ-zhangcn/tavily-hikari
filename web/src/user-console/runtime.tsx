@@ -114,7 +114,7 @@ import {
   type UserConsoleLandingSection,
   type UserConsoleRoute as ConsoleRoute,
 } from '../lib/userConsoleRoutes'
-import { MobileGuideDropdown, buildGuideContent, resolveGuideSamples } from './guide'
+import { GuideCodeSample, MobileGuideDropdown, buildGuideContent, resolveGuideCopyLabel, resolveGuideSamples, useGuideSampleCopy } from './guide'
 import { EN, ZH } from './text'
 import { useOfflineState } from '../pwa/useOfflineState'
 import { useOAuthCallbackFlow } from './useOAuthCallbackFlow'
@@ -143,7 +143,7 @@ const TAVILY_USAGE_UPSTREAM_ONLY_FIELDS = [
 ] as const
 
 export type GuideLanguage = 'toml' | 'json' | 'bash'
-export type GuideKey = 'codex' | 'claude' | 'vscode' | 'claudeDesktop' | 'cursor' | 'windsurf' | 'cherryStudio' | 'other'
+export type GuideKey = 'codex' | 'hikariCli' | 'claude' | 'vscode' | 'claudeDesktop' | 'cursor' | 'windsurf' | 'cherryStudio' | 'other'
 
 export interface GuideReference {
   label: string
@@ -172,16 +172,7 @@ interface ManualCopyBubbleState {
   value: string
 }
 
-const GUIDE_KEY_ORDER: GuideKey[] = [
-  'codex',
-  'claude',
-  'vscode',
-  'claudeDesktop',
-  'cursor',
-  'windsurf',
-  'cherryStudio',
-  'other',
-]
+const GUIDE_KEY_ORDER: GuideKey[] = ['codex', 'hikariCli', 'claude', 'vscode', 'claudeDesktop', 'cursor', 'windsurf', 'cherryStudio', 'other']
 
 interface McpProbeStepDefinition {
   id: string
@@ -2153,6 +2144,11 @@ export default function UserConsole(): JSX.Element {
   const detailTokenValue = detailTokenVisible ? tokenSecretValue ?? '' : ''
   const detailTokenLoading = detailTokenMatchesRoute && tokenSecretLoading
   const detailTokenError = detailTokenMatchesRoute ? tokenSecretError : null
+  const guideTokenToggleLabel = guideTokenLoading
+    ? text.detail.guideToken.loading
+    : guideTokenVisible
+      ? text.detail.guideToken.hide
+      : text.detail.guideToken.show
 
   const guideDescription = useMemo<GuideContent>(() => {
     const baseUrl = window.location.origin
@@ -2160,10 +2156,9 @@ export default function UserConsole(): JSX.Element {
     return guides[activeGuide]
   }, [activeGuide, guideToken, language])
 
-  const guideTabs = useMemo(
-    () => GUIDE_KEY_ORDER.map((id) => ({ id, label: publicStrings.guide.tabs[id] ?? id })),
-    [publicStrings.guide.tabs],
-  )
+  const guideTabs = useMemo(() => GUIDE_KEY_ORDER.map((id) => ({ id, label: publicStrings.guide.tabs[id] ?? id })), [publicStrings.guide.tabs])
+
+  const { guideCopyState, copyGuideSample } = useGuideSampleCopy()
   const detailLogFilterOptions = useMemo<ReadonlyArray<SegmentedTabsOption<UserTokenLogFilter>>>(
     () => [
       { value: 'all', label: text.detail.logFilters.all },
@@ -2634,6 +2629,8 @@ export default function UserConsole(): JSX.Element {
             disabled={!guideTokenId || guideTokenLoading}
             aria-pressed={guideTokenVisible}
             aria-busy={guideTokenLoading}
+            aria-label={guideTokenToggleLabel}
+            title={guideTokenToggleLabel}
             onClick={() => void toggleGuideTokenVisibility()}
           >
             <Icon
@@ -2643,13 +2640,7 @@ export default function UserConsole(): JSX.Element {
               aria-hidden="true"
               className={guideTokenLoading ? 'guide-token-toggle-icon-spin' : undefined}
             />
-            <span>
-              {guideTokenLoading
-                ? text.detail.guideToken.loading
-                : guideTokenVisible
-                  ? text.detail.guideToken.hide
-                  : text.detail.guideToken.show}
-            </span>
+            <span>{guideTokenToggleLabel}</span>
           </Button>
         </div>
         {guideTokenError ? (
@@ -2660,45 +2651,52 @@ export default function UserConsole(): JSX.Element {
             <li key={index}>{step}</li>
           ))}
         </ol>
-        {resolveGuideSamples(guideDescription).map((sample) => (
-          <div className="guide-sample" key={`${guideDescription.title}-${sample.title}`}>
-            <p className="guide-sample-title">{sample.title}</p>
-            <div className="mockup-code relative guide-code-shell">
-              <span className="guide-lang-badge badge badge-outline badge-sm">
-                {(sample.language ?? 'code').toUpperCase()}
-              </span>
-              <pre>
-                <code dangerouslySetInnerHTML={{ __html: sample.snippet }} />
-              </pre>
+        {resolveGuideSamples(guideDescription).map((sample) => {
+          const sampleKey = `${activeGuide}:${guideDescription.title}:${sample.title}`
+          const currentCopyState = guideCopyState[sampleKey] ?? 'idle'
+          const copyLabel = resolveGuideCopyLabel(currentCopyState, text.tokens)
+          return (
+            <div className="guide-sample" key={`${guideDescription.title}-${sample.title}`}>
+              <p className="guide-sample-title">{sample.title}</p>
+              <GuideCodeSample
+                copyLabel={copyLabel}
+                copyState={currentCopyState}
+                onCopy={(key, snippet) => void copyGuideSample(key, snippet)}
+                sample={sample}
+                sampleKey={sampleKey}
+              />
+              {sample.reference ? (
+                <p className="guide-reference">
+                  {publicStrings.guide.dataSourceLabel}
+                  <a href={sample.reference.url} target="_blank" rel="noreferrer">
+                    {sample.reference.label}
+                  </a>
+                </p>
+              ) : null}
             </div>
-            {sample.reference ? (
-              <p className="guide-reference">
-                {publicStrings.guide.dataSourceLabel}
-                <a href={sample.reference.url} target="_blank" rel="noreferrer">
-                  {sample.reference.label}
-                </a>
-              </p>
-            ) : null}
-          </div>
-        ))}
+          )
+        })}
       </div>
       {activeGuide === 'cherryStudio' && <CherryStudioMock apiKeyExample={guideToken} />}
     </section>
   ), [
     activeGuide,
     guideDescription,
+    guideCopyState,
     guideTabs,
     guideToken,
     guideTokenError,
     guideTokenId,
     guideTokenLoading,
+    guideTokenToggleLabel,
     guideTokenVisible,
     isCompactLayout,
+    copyGuideSample,
     publicStrings.guide.dataSourceLabel,
     publicStrings.guide.title,
-    text.detail.guideToken.hide,
-    text.detail.guideToken.loading,
-    text.detail.guideToken.show,
+    text.tokens.copied,
+    text.tokens.copy,
+    text.tokens.copyFailed,
     toggleGuideTokenVisibility,
   ])
 
