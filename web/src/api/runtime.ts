@@ -2897,15 +2897,6 @@ export interface TavilyResearchResultResponse {
   [key: string]: unknown
 }
 
-export interface TavilyUsageProbeResponse {
-  tokenId?: string
-  dailySuccess?: number
-  dailyError?: number
-  monthlySuccess?: number
-  monthlyQuotaExhausted?: number
-  [key: string]: unknown
-}
-
 export function probeApiTavilySearch(
   token: string,
   payload: Record<string, unknown>,
@@ -2977,14 +2968,8 @@ export function probeApiTavilyResearchResult(
   })
 }
 
-export function probeApiTavilyUsage(
-  token: string,
-  signal?: AbortSignal,
-): Promise<TavilyUsageProbeResponse> {
-  return requestJsonWithToken('/api/tavily/usage', token, {
-    method: 'GET',
-    signal,
-  })
+export function probeApiTavilyUsage(token: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  return requestJsonWithToken('/api/tavily/usage', token, { method: 'GET', signal })
 }
 
 export interface CreateKeyResponse {
