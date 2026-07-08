@@ -5,22 +5,22 @@ import { cva, type VariantProps } from 'class-variance-authority'
 import { cn } from '../../lib/utils'
 
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[20px] text-sm font-bold tracking-wide ring-offset-background transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/30 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 disabled:shadow-none active:scale-[0.94] active:shadow-clayPressed',
+  'hikari-button inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[20px] text-sm font-bold tracking-wide ring-offset-background transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-ring/30 focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 disabled:shadow-none active:scale-[0.94] active:shadow-clayPressed',
   {
     variants: {
       variant: {
         default:
-          'border border-primary/10 bg-gradient-to-br from-[#A78BFA] to-[#7C3AED] text-primary-foreground shadow-clayButton hover:-translate-y-1 hover:shadow-clayButtonHover',
+          'hikari-button-primary border border-primary/10 bg-gradient-to-br from-[#A78BFA] to-[#7C3AED] text-primary-foreground shadow-clayButton hover:-translate-y-1 hover:shadow-clayButtonHover',
         destructive:
-          'border border-destructive/10 bg-gradient-to-br from-red-400 to-destructive text-destructive-foreground shadow-clayButton hover:-translate-y-1 hover:shadow-clayButtonHover',
-        outline: 'border border-primary/25 bg-card/80 text-primary shadow-clayButton hover:-translate-y-1 hover:border-primary/45 hover:bg-primary/10',
-        secondary: 'border border-border/50 bg-card/80 text-foreground shadow-clayButton hover:-translate-y-1 hover:bg-secondary/10',
-        ghost: 'text-foreground/85 shadow-none hover:-translate-y-1 hover:bg-primary/10 hover:text-primary hover:shadow-clayButton',
-        link: 'text-primary underline-offset-4 hover:underline',
+          'hikari-button-destructive border border-destructive/10 bg-gradient-to-br from-red-400 to-destructive text-destructive-foreground shadow-clayButton hover:-translate-y-1 hover:shadow-clayButtonHover',
+        outline: 'hikari-button-outline border border-primary/25 bg-card/80 text-primary shadow-clayButton hover:-translate-y-1 hover:border-primary/45 hover:bg-primary/10',
+        secondary: 'hikari-button-secondary border border-border/50 bg-card/80 text-foreground shadow-clayButton hover:-translate-y-1 hover:bg-secondary/10',
+        ghost: 'hikari-button-ghost text-foreground/85 shadow-none hover:-translate-y-1 hover:bg-primary/10 hover:text-primary hover:shadow-clayButton',
+        link: 'hikari-button-link text-primary underline-offset-4 hover:underline',
         warning:
-          'border border-warning/10 bg-gradient-to-br from-amber-300 to-warning text-warning-foreground shadow-clayButton hover:-translate-y-1 hover:shadow-clayButtonHover',
+          'hikari-button-warning border border-warning/10 bg-gradient-to-br from-amber-300 to-warning text-warning-foreground shadow-clayButton hover:-translate-y-1 hover:shadow-clayButtonHover',
         success:
-          'border border-success/10 bg-gradient-to-br from-emerald-300 to-success text-success-foreground shadow-clayButton hover:-translate-y-1 hover:shadow-clayButtonHover',
+          'hikari-button-success border border-success/10 bg-gradient-to-br from-emerald-300 to-success text-success-foreground shadow-clayButton hover:-translate-y-1 hover:shadow-clayButtonHover',
       },
       size: {
         default: 'h-12 px-5 py-2',
