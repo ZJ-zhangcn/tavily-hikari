@@ -166,6 +166,19 @@ async function expectTokenListProof(
   }
 }
 
+function expectDarkTokenResetWarningStyle(canvasElement: HTMLElement): void {
+  const resetButton = Array.from(canvasElement.querySelectorAll<HTMLButtonElement>('.user-console-token-actions-desktop .btn-warning'))
+    .find((button) => button.textContent?.trim() === '重置')
+  if (!resetButton || resetButton.disabled || resetButton.getAttribute('aria-disabled') === 'true') {
+    throw new Error('Expected ConsoleHomeDark to render a desktop token reset action.')
+  }
+
+  const style = window.getComputedStyle(resetButton), expected = ['rgb(251, 216, 147)', 'rgba(245, 194, 92, 0.24)', 'rgba(245, 194, 92, 0.68)']
+  if ([style.color, style.backgroundColor, style.borderColor].some((value, index) => value !== expected[index])) {
+    throw new Error(`Expected dark reset warning style, got ${style.color} / ${style.backgroundColor} / ${style.borderColor}.`)
+  }
+}
+
 const mobileViewport = { viewport: { defaultViewport: '0390-device-iphone-14' } } as const
 
 const consoleHomeOverviewArgs: UserConsoleStoryArgs = {
@@ -1522,7 +1535,10 @@ export const ConsoleHomeDark: Story = {
       },
     },
   },
-  play: ConsoleHome.play,
+  play: async (context) => {
+    await ConsoleHome.play?.(context)
+    expectDarkTokenResetWarningStyle(context.canvasElement)
+  },
 }
 
 export const ConsoleHomeRechargeTestPrice: Story = {
