@@ -118,6 +118,7 @@
   requested_viewport: 1600x1900
   viewport_strategy: ui-demo-source
   sensitive_exclusion: N/A
+  PR: include
   evidence_note: verifies the live desktop billing page on the stable announcement-closed demo route. The purchase area has been distilled to three short metrics only, with the misleading long explanatory sentence removed and the pricing semantics kept as "50.00 LDC 可换 1,000 月积分".
 
 ![Live desktop billing page demo with clean monthly-credit wording](./assets/console-billing-monthly-credit-proof-wide.png)
@@ -130,6 +131,7 @@
   requested_viewport: 440x5200
   viewport_strategy: ui-demo-source
   sensitive_exclusion: N/A
+  PR: include
   evidence_note: verifies the same page at a narrow page-level viewport. The shorter purchase area still reads cleanly in the full mobile stack without reintroducing the removed explanatory paragraph.
 
 ![Live narrow billing page proof with readable purchase guide](./assets/console-billing-monthly-credit-proof-narrow.png)
