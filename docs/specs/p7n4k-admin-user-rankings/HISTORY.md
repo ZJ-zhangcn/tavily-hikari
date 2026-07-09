@@ -20,6 +20,7 @@
 - 2026-06-25: 根据最新验收反馈，彻底否定“双轴 tabs”解读，合同锁定为六个独立单选 tab；路由改为单一 `tab` 查询参数，缺失或非法值统一规范化为 `last24h`。
 - 2026-06-25: 根据“返回过来后数据不能丢”的要求，排行 snapshot 真相源上提到 runtime；从用户详情返回、浏览器前进后退与 tab 切换都复用已有 snapshot，只做后台刷新，不再回骨架首屏。
 - 2026-06-25: 根据交互验收，排行项新增 click 跳转用户详情，以及 hover / focus 同用户跨三榜联动高亮，联动范围只限当前可见 tab 下的三张榜。
+- 2026-07-09: 修复排行 runtime 在 `analysis` 父模块迁移后仍按旧 `module='rankings'` 判断的遗留问题；现在 `/admin/analysis?tab=*`、`/admin/rankings?tab=*` 与 `/admin/analysis/rankings?tab=*` 都会把地址栏 `tab` 查询参数同步回受控 `rankingsTab`，点击、浏览器前进后退与别名路由切换不再出现“URL 已变但激活态卡住”的假死，同时保留 `demo=true` 等非 `tab` 查询参数。
 
 ## Key Reasons / Replacements
 
@@ -33,6 +34,7 @@
 - 用户明确要求截图必须来自 `web demo` 而不是 Storybook，因此最终 owner-facing 视觉证据统一切到 demo 路由，旧的 story/live 中间图不再保留在 spec 资产里。
 - admin 运营入口现在需要把排行、用量与压力放到同一分析语义下，因此排行不再单独占据一级导航位，避免 admin 模块粒度继续分叉。
 - 用户明确指出“这是六个独立 Tab”，因此旧的“指标 tab 只切单选态、不切内容”定义被彻底废弃，避免后续再次误读成双轴模型。
+- `分析 -> 排行` 父子路由迁移后，runtime 若继续依赖旧模块名判断，就会让 `tab` 查询参数失去真相源地位；因此排行 tab 同步必须锚定到 `module='analysis' && analysisView='rankings'` 这一收敛后的 canonical route 语义，而不是历史一级模块名。
 
 ## References
 

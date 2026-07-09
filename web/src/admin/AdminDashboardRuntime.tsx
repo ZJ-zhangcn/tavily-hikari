@@ -1071,6 +1071,21 @@ function getAdminRankingsTabFromLocation(): RankingTabKey {
   return getRankingsTabFromSearch(window.location.search)
 }
 
+function buildRankingsRoutePath(
+  tab: RankingTabKey,
+  options?: { canonical?: boolean; pathname?: string | null; search?: string | null },
+): string {
+  const search = new URLSearchParams(options?.search ?? '')
+  search.set('tab', tab)
+  const pathname = options?.pathname?.trim()
+  const parsedPath = pathname ? parseAdminPath(pathname) : null
+  const preservesRankingsPath =
+    parsedPath?.name === 'module' && parsedPath.module === 'analysis' && parsedPath.analysisView === 'rankings'
+  const basePath =
+    options?.canonical ? analysisPath('rankings') : preservesRankingsPath && pathname ? pathname : rankingsPath().split('?')[0]
+  return `${basePath}?${search.toString()}`
+}
+
 function getUserTagIconSrc(icon: string | null | undefined): string | null {
   if (icon === 'linuxdo') {
     return '/assets/linuxdo-logo.svg'
@@ -2862,14 +2877,17 @@ function AdminDashboard(): JSX.Element {
   }, [route])
 
   useEffect(() => {
-    if (route.name !== 'module' || route.module !== 'rankings') {
+    if (!(route.name === 'module' && route.module === 'analysis' && route.analysisView === 'rankings')) {
       return
     }
 
     const nextTab = getRankingsTabFromSearch(locationSearch)
     setRankingsTab(nextTab)
 
-    const normalizedLocation = rankingsPath(nextTab)
+    const normalizedLocation = buildRankingsRoutePath(nextTab, {
+      pathname: window.location.pathname,
+      search: locationSearch,
+    })
     const currentLocation = `${window.location.pathname}${window.location.search}`
     if (currentLocation !== normalizedLocation) {
       window.history.replaceState(null, '', normalizedLocation)
@@ -4517,7 +4535,16 @@ function AdminDashboard(): JSX.Element {
           route.name === 'module' && route.module === 'analysis' && route.analysisView === 'rankings'
           ? rankingsTab
           : getAdminRankingsTabFromLocation()
-        navigateToPath(rankingsPath(currentTab))
+        const rememberedRankingsUrl = lastRankingsPathRef.current
+          ? new URL(lastRankingsPathRef.current, window.location.origin)
+          : null
+        const nextPath = lastRankingsPathRef.current
+          ? buildRankingsRoutePath(currentTab, {
+            pathname: rememberedRankingsUrl?.pathname,
+            search: rememberedRankingsUrl?.search,
+          })
+          : buildRankingsRoutePath(currentTab, { canonical: true })
+        navigateToPath(nextPath)
         return
       }
       if (target === 'tokens') {
@@ -4699,7 +4726,10 @@ function AdminDashboard(): JSX.Element {
   const navigateUser = useCallback(
     (id: string, options?: { preserveUsersContext?: boolean }) => {
       if (route.name === 'module' && route.module === 'analysis' && route.analysisView === 'rankings') {
-        lastRankingsPathRef.current = rankingsPath(rankingsTab)
+        lastRankingsPathRef.current = buildRankingsRoutePath(rankingsTab, {
+          pathname: window.location.pathname,
+          search: window.location.search,
+        })
       }
       if (options?.preserveUsersContext) {
         const collection = isAnalysisUsageRoute || getAdminUsersCollectionFromLocation() === 'usage' ? 'usage' : undefined
@@ -4713,7 +4743,10 @@ function AdminDashboard(): JSX.Element {
 
   const navigateRankingsTab = useCallback(
     (tab: RankingTabKey) => {
-      const nextPath = rankingsPath(tab)
+      const nextPath = buildRankingsRoutePath(tab, {
+        pathname: window.location.pathname,
+        search: window.location.search,
+      })
       lastRankingsPathRef.current = nextPath
       navigateToPath(nextPath)
     },

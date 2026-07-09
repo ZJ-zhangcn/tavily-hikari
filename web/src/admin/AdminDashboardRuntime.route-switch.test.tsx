@@ -11,6 +11,7 @@ import { LanguageProvider } from '../i18n'
 import { ThemeProvider } from '../theme'
 import AdminDashboard from './AdminDashboardRuntime'
 import {
+  analysisPath,
   buildAdminKeysPath,
   buildAdminTokensPath,
   buildAdminUsersOverviewPath,
@@ -36,7 +37,10 @@ interface MockMediaQueryList {
 }
 
 interface RouteExpectation {
+  pathname?: string
+  search?: string
   selector?: string
+  selectorText?: string
   text?: string
 }
 
@@ -126,6 +130,42 @@ const routeSwitchCases: RouteSwitchCase[] = [
     returnExpectation: {
       selector: '.admin-rankings-tab.is-active',
       text: 'IP',
+    },
+  },
+  {
+    name: 'rankings -> rankings syncs the selected tab from location and preserves demo params',
+    startPath: `${analysisPath('rankings')}?demo=true&tab=last7d`,
+    nextPath: `${analysisPath('rankings')}?demo=true&tab=businessCredits`,
+    nextExpectation: {
+      pathname: analysisPath('rankings'),
+      search: '?demo=true&tab=businessCredits',
+      selector: '.admin-rankings-tab.is-active',
+      selectorText: 'Credits',
+    },
+    returnPath: `${analysisPath('rankings')}?demo=true&tab=uniqueIp`,
+    returnExpectation: {
+      pathname: analysisPath('rankings'),
+      search: '?demo=true&tab=uniqueIp',
+      selector: '.admin-rankings-tab.is-active',
+      selectorText: 'IP',
+    },
+  },
+  {
+    name: 'rankings analysis alias preserves alias path and demo params',
+    startPath: '/admin/analysis?demo=true&tab=last7d',
+    nextPath: '/admin/analysis?demo=true&tab=businessCredits',
+    nextExpectation: {
+      pathname: '/admin/analysis',
+      search: '?demo=true&tab=businessCredits',
+      selector: '.admin-rankings-tab.is-active',
+      selectorText: 'Credits',
+    },
+    returnPath: '/admin/analysis?demo=true&tab=uniqueIp',
+    returnExpectation: {
+      pathname: '/admin/analysis',
+      search: '?demo=true&tab=uniqueIp',
+      selector: '.admin-rankings-tab.is-active',
+      selectorText: 'IP',
     },
   },
   {
@@ -227,8 +267,18 @@ function assertRouteRendered(container: HTMLElement, expectation: RouteExpectati
   const main = container.querySelector<HTMLElement>('[role="main"]')
   expect(main).not.toBeNull()
   expect(main?.textContent?.replace(/\s+/g, ' ').trim().length ?? 0).toBeGreaterThan(0)
+  if (expectation.pathname) {
+    expect(window.location.pathname).toBe(expectation.pathname)
+  }
+  if (expectation.search) {
+    expect(window.location.search).toBe(expectation.search)
+  }
   if (expectation.selector) {
-    expect(main?.querySelector(expectation.selector)).not.toBeNull()
+    const selected = main?.querySelector<HTMLElement>(expectation.selector) ?? null
+    expect(selected).not.toBeNull()
+    if (expectation.selectorText) {
+      expect(selected?.textContent).toContain(expectation.selectorText)
+    }
   }
   if (expectation.text) {
     expect(main?.textContent).toContain(expectation.text)
