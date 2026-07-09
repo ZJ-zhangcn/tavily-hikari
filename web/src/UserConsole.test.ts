@@ -23,6 +23,7 @@ import {
   resolveUserConsoleIdentityName,
   resolveUserConsoleProviderLabel,
   resolveUserConsoleView,
+  shouldRequireBillingSummary,
   shouldRedirectToLogoutTarget,
   shouldRenderLandingGuide,
   toLoggedOutConsoleProfile,
@@ -90,9 +91,14 @@ function createMcpProbeContext(overrides: Partial<Parameters<NonNullable<ReturnT
 describe('UserConsole landing guide helpers', () => {
   it('derives header view, identity, and provider labels from the active session state', () => {
     expect(resolveUserConsoleView({ name: 'landing', section: 'dashboard' })).toBe('dashboard')
+    expect(resolveUserConsoleView({ name: 'billing' })).toBe('billing')
     expect(resolveUserConsoleView({ name: 'landing', section: 'tokens' })).toBe('tokens')
     expect(resolveUserConsoleView({ name: 'token', id: 'a1b2' })).toBe('tokenDetail')
     expect(resolveUserConsoleView({ name: 'oauthCallback', provider: 'linuxdo' })).toBe('oauthCallback')
+    expect(shouldRequireBillingSummary({ name: 'billing' })).toBe(true)
+    expect(shouldRequireBillingSummary({ name: 'landing', section: 'dashboard' })).toBe(false)
+    expect(shouldRequireBillingSummary({ name: 'landing', section: 'tokens' })).toBe(false)
+    expect(shouldRequireBillingSummary({ name: 'token', id: 'a1b2' })).toBe(false)
 
     expect(resolveUserConsoleIdentityName({
       displayName: 'ops-admin',
