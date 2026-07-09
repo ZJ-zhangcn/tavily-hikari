@@ -227,6 +227,7 @@
         "tests::jobs_and_request_log_retention::linuxdo_",
         "tests::linuxdo_credit_recharge::account_entitlements_",
         "tests::linuxdo_credit_recharge::linuxdo_",
+        "tests::linuxdo_credit_recharge::user_",
         "tests::proxy_affinity_and_summary::token_",
         "tests::request_kind_and_core::token_",
         "tests::user_tokens_and_pending_billing::token_",
