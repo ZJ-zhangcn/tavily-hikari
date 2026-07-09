@@ -25,6 +25,7 @@
 - 排行页已补充 DOM 语义 fallback、实时连接状态、最后更新时间、断连降级提示与显式重试入口。
 - 排行页已补齐行级交互层：任一排行项支持 click 跳转用户详情，hover/focus 时当前三张榜内同用户联动高亮；离开时立即清除。
 - runtime 保持最近一次 `rankingsSnapshot`，因此 Tab 切换、浏览器前进后退、从用户详情返回排行时都会先复用现有数据，只在后台 refresh / reconnect，不会回到“从 0 开始”的 blocking skeleton。
+- 排行 Tab 的 URL 同步现在只在 `analysis/rankings` 语义路由下生效，不再误判历史一级模块名；因此点击 tab、浏览器前进后退以及 `/admin/analysis`、`/admin/analysis/rankings` 与旧 `/admin/rankings` alias 间切换时，地址栏 `tab` 参数与激活态都会保持一致，同时 `demo=true` 这类非 `tab` 查询参数不会被规范化流程吞掉。
 - 空态已改为等高内容舞台，不再使用单个普通提示框；三张卡在无数据时保持统一高度。
 - loading 期间已改为仅榜单内容区骨架屏；页头状态与六个单选 tab 保持真实文案，不再只显示纯文本 loading。
 - 之前出现“两种实现”的根因已确认是证据层级混用：一部分截图来自 story 内容模块，一部分来自真实页面。当前 owner-facing 排行证据已统一收敛为 `web demo` 路由截图；Storybook 仅保留开发验证用途。
