@@ -452,7 +452,8 @@
 - capture_scope: `browser-viewport`
 - requested_viewport: `1440-device-desktop`
 - viewport_strategy: `storybook-viewport`
-- submission_gate: `pending-owner-approval`
+- submission_gate: `approved`
+- PR: include
 - evidence_note:
   点击 `1h` 表头后，降序箭头激活，`Bob Chen` 以 rolling 1h `totalCount=62` 排在 `Alice Wang` 的 `36` 之前；比较只使用实际调用总数，不受两人的 1h 配额 `60 / 120` 影响。空白裁剪因 `ambiguous_border` 安全保留原图。
 
