@@ -232,7 +232,31 @@ describe('PWA runtime update lifecycle', () => {
     })
   })
 
-  it('reloads when controller takeover finishes before the update click handler runs', async () => {
+  it('reloads when the observed waiting worker activated before the click handler runs', async () => {
+    const registration = new MockRegistration()
+    const waitingWorker = new MockServiceWorker()
+    waitingWorker.state = 'installed'
+    registration.waiting = waitingWorker
+    const { runtime } = await loadRuntimeWithMock(registration)
+    const locationPrototype = Object.getPrototypeOf(window.location) as Location
+    const originalReload = locationPrototype.reload
+    let reloadCalls = 0
+    locationPrototype.reload = () => {
+      reloadCalls += 1
+    }
+
+    try {
+      await runtime.registerPwaServiceWorker('public')
+      waitingWorker.setState('activated')
+      registration.waiting = null
+      runtime.activateWaitingPwaUpdate()
+      expect(reloadCalls).toBe(1)
+    } finally {
+      locationPrototype.reload = originalReload
+    }
+  })
+
+  it('reloads when controller takeover completes after ready but before the click handler runs', async () => {
     const registration = new MockRegistration()
     const waitingWorker = new MockServiceWorker()
     waitingWorker.state = 'installed'
@@ -248,10 +272,9 @@ describe('PWA runtime update lifecycle', () => {
     try {
       await runtime.registerPwaServiceWorker('public')
       container.dispatchEvent(new Event('controllerchange'))
-
       runtime.activateWaitingPwaUpdate()
-
       expect(reloadCalls).toBe(1)
+      expect(waitingWorker.messages).toEqual([{ type: 'TAVILY_HIKARI_ACTIVATE_UPDATE' }])
     } finally {
       locationPrototype.reload = originalReload
     }

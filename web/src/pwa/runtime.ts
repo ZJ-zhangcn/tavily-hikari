@@ -28,6 +28,7 @@ let currentUpdateState: PwaUpdateSnapshot = {
 }
 let currentRegistration: ServiceWorkerRegistration | null = null
 let waitingWorker: ServiceWorker | null = null
+let waitingWorkerActivated = false
 let activationRequested = false
 let controllerReloadHandled = false
 let activationTimeout: number | null = null
@@ -97,11 +98,12 @@ function observeActivationWorker(worker: ServiceWorker): void {
   if (observedActivationWorkers.has(worker)) return
   observedActivationWorkers.add(worker)
   worker.addEventListener('statechange', () => {
-    if (!activationRequested) return
     if (worker.state === 'activated') {
-      reloadForActivatedUpdate()
+      if (worker === waitingWorker) waitingWorkerActivated = true
+      if (activationRequested) reloadForActivatedUpdate()
       return
     }
+    if (!activationRequested) return
     if (worker.state === 'redundant') {
       failActivation()
     }
@@ -187,11 +189,11 @@ export async function registerPwaServiceWorker(identity: PwaIdentity): Promise<v
 }
 
 function observePwaRegistration(registration: ServiceWorkerRegistration): void {
-  controllerChangedSinceRegistration = false
   const maybeWaiting = registration.waiting
   if (maybeWaiting) {
     if (registration.active) {
       waitingWorker = maybeWaiting
+      waitingWorkerActivated = maybeWaiting.state === 'activated'
       observeActivationWorker(maybeWaiting)
       publishUpdateState({ status: 'ready', hasUpdate: true })
     } else {
@@ -230,6 +232,7 @@ function observeInstallingWorker(registration: ServiceWorkerRegistration, worker
         return
       }
       waitingWorker = worker
+      waitingWorkerActivated = false
       observeActivationWorker(worker)
       publishUpdateState({ status: 'ready', hasUpdate: true })
       if (activationRequested) {
@@ -283,12 +286,16 @@ export function activateWaitingPwaUpdate(): void {
     ensureActivationTimeout()
   }
 
+  const registeredWaitingWorker = currentRegistration?.waiting ?? null
   if (controllerChangedSinceRegistration) {
+    if (registeredWaitingWorker?.state === 'installed') postActivationMessage(registeredWaitingWorker)
     reloadForActivatedUpdate()
     return
   }
-
-  const registeredWaitingWorker = currentRegistration?.waiting ?? null
+  if (!registeredWaitingWorker && waitingWorkerActivated) {
+    reloadForActivatedUpdate()
+    return
+  }
   const worker = registeredWaitingWorker ?? (waitingWorker?.state === 'installed' ? waitingWorker : null)
   if (!worker) {
     if (currentUpdateState.status !== 'installing') {
@@ -299,6 +306,7 @@ export function activateWaitingPwaUpdate(): void {
   }
 
   waitingWorker = worker
+  waitingWorkerActivated = worker.state === 'activated'
   observeActivationWorker(worker)
   publishUpdateState({ status: 'activating', hasUpdate: true, activationRequested: true })
   if (!postActivationMessage(worker)) {

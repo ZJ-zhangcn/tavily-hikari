@@ -49,7 +49,12 @@ export default function UpdateAvailableBanner({
         <span>{description}</span>
       </div>
       <div className="update-banner-actions">
-        <Button type="button" onClick={onUpdate} disabled={isActivating} aria-busy={loading}>
+        <Button
+          type="button"
+          onClick={onUpdate}
+          disabled={isActivating}
+          aria-busy={loading}
+        >
           {loading ? <Loader2 className="update-banner-button-spinner" size={16} aria-hidden="true" /> : <RefreshCw size={16} aria-hidden="true" />}
           {loading ? strings.refreshing : isFailed ? strings.retry : strings.refresh}
         </Button>
