@@ -7,6 +7,7 @@ const LANGUAGE_STORAGE_KEY = 'tavily-hikari-language'
 const THEME_STORAGE_KEY = 'tavily-hikari-theme-mode'
 const ACTIVATE_UPDATE_MESSAGE = 'TAVILY_HIKARI_ACTIVATE_UPDATE'
 const ACTIVATION_TIMEOUT_MS = 10_000
+const ACTIVATION_FALLBACK_RELOAD_MS = 1_500
 
 export interface OfflineStateSnapshot {
   isOffline: boolean
@@ -288,7 +289,17 @@ export function activateWaitingPwaUpdate(): void {
 
   const registeredWaitingWorker = currentRegistration?.waiting ?? null
   if (controllerChangedSinceRegistration) {
-    if (registeredWaitingWorker?.state === 'installed') postActivationMessage(registeredWaitingWorker)
+    if (registeredWaitingWorker?.state === 'installed') {
+      waitingWorker = registeredWaitingWorker
+      observeActivationWorker(registeredWaitingWorker)
+      publishUpdateState({ status: 'activating', hasUpdate: true, activationRequested: true })
+      if (!postActivationMessage(registeredWaitingWorker)) {
+        failActivation()
+      } else {
+        window.setTimeout(reloadForActivatedUpdate, ACTIVATION_FALLBACK_RELOAD_MS)
+      }
+      return
+    }
     reloadForActivatedUpdate()
     return
   }

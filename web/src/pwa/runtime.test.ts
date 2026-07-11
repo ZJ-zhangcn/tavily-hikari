@@ -273,8 +273,10 @@ describe('PWA runtime update lifecycle', () => {
       await runtime.registerPwaServiceWorker('public')
       container.dispatchEvent(new Event('controllerchange'))
       runtime.activateWaitingPwaUpdate()
-      expect(reloadCalls).toBe(1)
+      expect(reloadCalls).toBe(0)
       expect(waitingWorker.messages).toEqual([{ type: 'TAVILY_HIKARI_ACTIVATE_UPDATE' }])
+      waitingWorker.setState('activated')
+      expect(reloadCalls).toBe(1)
     } finally {
       locationPrototype.reload = originalReload
     }
