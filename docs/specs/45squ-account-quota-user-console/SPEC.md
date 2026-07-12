@@ -87,6 +87,10 @@
   When 用户查看未来安排
   Then 页面仍展示上月 / 本月 / 下月卡片，并用明确提示说明当前没有额外排期中的时效权益，而不是留白。
 
+- Given 进入 `/console/billing` 且时间线包含当前月
+  When 页面完成首次布局与滚动位置同步
+  Then 当前月卡片默认处于选中状态并驱动下方详情；桌面端仍可同时展示上月 / 本月 / 下月卡片。
+
 - Given 进入 `/console#/tokens`
   Then 能看到 token 列表列（token id、状态与最近使用、成功统计、复制、详情入口），且不再把账户级共享配额或内部备注字段重复渲染到前台 token 行。
 
@@ -114,6 +118,19 @@
 - [x] M5: fast-track 交付（push + PR + checks + review-loop）
 
 ## Visual Evidence
+
+- source_type: ui_demo
+  demo_entry_or_url: /console/billing?demo=1&announcements=closed
+  state: clay-theme-current-month-lifted-with-chevron-navigation
+  target_program: mock-only
+  capture_scope: billing natural-month timeline
+  requested_viewport: 1265x712
+  viewport_strategy: ui-demo-source
+  sensitive_exclusion: N/A
+  PR: include
+  evidence_note: verifies the initial desktop timeline leaves the previous and next month unselected while the current month is the only selected card after layout synchronization, using the shared Clay button elevation hierarchy and Lucide chevron month navigation.
+
+![Billing timeline defaults to the current month with Clay lifted state and chevron navigation](./assets/billing-timeline-chevron-navigation.jpg)
 
 - source_type: ui_demo
   demo_entry_or_url: /console/billing?demo=1&announcements=closed
@@ -210,6 +227,7 @@ Storybook `User Console/Fragments/Connectivity Checks/State Gallery`: renders MC
 - 2026-07-09: 修正 `/console/billing` 购买说明文案语义，不再把 `1,000 月积分` 与 `50 LDC` 写成等价物；页面统一改成“月积分档位 / 生效月数”口径，并把被公告弹窗遮挡的旧证据替换为 `announcements=closed` 的干净整页证据。
 - 2026-03-18: 补充 Token Detail probe 实调回归覆盖；前端将 MCP/API 检测步骤抽成共享定义并用请求级测试锁定浏览器侧调用，后端再新增真实合同测试，直接拉起 Hikari 验证 `/mcp tools/list` 返回的全部广告工具都能继续通过 `/mcp tools/call` 命中 mock upstream，同时覆盖 `/api/tavily/search|extract|crawl|map|research|research/:id` 的真实调用链；运行时与 Storybook 的 MCP probe 也已改成发现后逐个 `tools/call`，并把 probe 状态收敛为独立 `Connectivity Checks` gallery，移除仅为展示 probe 状态存在的全页 `UserConsole` stories。
 - 2026-07-09: Billing 月份卡片取消“当前月”独立高亮；当前月只保留默认选中语义，未选中时与其他月份保持同一静态层级，相关桌面/移动端视觉证据已更新。
+- 2026-07-12: 固定 Billing 时间线首次布局后的默认选择为当前月，避免初始滚动同步回退到上月；桌面三卡视图保持不变。
 - 2026-07-09: 所选月份详情把“基础接入额度 / 长期权益 / 标签调整”合并为统一的“基础权益”行，月度调整与充值权益继续独立展示，相关桌面/移动端视觉证据已同步更新。
 - 2026-07-08: 用户控制台新增独立 `/console/billing` 页面与顶部稳定入口；前端将权益构成、资费规则、未来自然月安排、近期订单与购买动作汇总为同页信息架构，后端补充 `/api/user/billing/summary` 供页面读取安全摘要。
 - 2026-03-21: 优化 Token Detail 的 MCP 检测气泡显示；`tools/call` 项统一改成“调用 {tool} 工具”式文案，工具名以 monospace chip 独立展示，并放宽气泡宽度以减少常见 Tavily 工具名的割裂换行。

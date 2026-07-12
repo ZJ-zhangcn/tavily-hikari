@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent } from 'react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 
 import type {
   RechargeConfig,
@@ -297,7 +298,11 @@ function TimelineNavButton({
       disabled={disabled}
       onClick={onClick}
     >
-      <span aria-hidden="true">{direction === 'prev' ? '←' : '→'}</span>
+      {direction === 'prev' ? (
+        <ChevronLeft aria-hidden="true" size={20} strokeWidth={2.25} />
+      ) : (
+        <ChevronRight aria-hidden="true" size={20} strokeWidth={2.25} />
+      )}
       <span className="sr-only">{label}</span>
     </button>
   )
@@ -538,6 +543,7 @@ export default function BillingPage({
     if (!viewport) return
 
     let frame = 0
+    let isInitialSync = true
     const syncWindowIndex = () => {
       const cards = Array.from(viewport.querySelectorAll<HTMLElement>('[data-timeline-index]'))
       if (cards.length === 0) {
@@ -558,7 +564,7 @@ export default function BillingPage({
       })
 
       setTimelineWindowIndex((current) => current === nextIndex ? current : nextIndex)
-      if (visibleTimelineCount === 1) {
+      if (visibleTimelineCount === 1 && !isInitialSync) {
         setSelectedTimelineIndex((current) => current === nextIndex ? current : nextIndex)
       }
     }
@@ -569,6 +575,7 @@ export default function BillingPage({
     }
 
     syncWindowIndex()
+    isInitialSync = false
     viewport.addEventListener('scroll', handleScroll, { passive: true })
 
     return () => {
