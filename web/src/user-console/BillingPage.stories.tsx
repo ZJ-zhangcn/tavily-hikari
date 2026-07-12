@@ -487,6 +487,14 @@ export const Default: Story = {
     await expect(canvas.getByText('+60 requests')).toBeInTheDocument()
     await expect(canvas.getByText('+300 credits')).toBeInTheDocument()
     await expect(canvas.getByText('+3,000 credits')).toBeInTheDocument()
+    await expect(canvas.getByRole('button', { name: 'Show details for Jul 2026' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    await expect(canvas.getByRole('button', { name: 'Show details for Jun 2026' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
 
     await userEvent.click(canvas.getByRole('button', { name: 'Show details for Aug 2026' }))
 

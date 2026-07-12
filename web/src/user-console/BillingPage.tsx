@@ -538,6 +538,7 @@ export default function BillingPage({
     if (!viewport) return
 
     let frame = 0
+    let isInitialSync = true
     const syncWindowIndex = () => {
       const cards = Array.from(viewport.querySelectorAll<HTMLElement>('[data-timeline-index]'))
       if (cards.length === 0) {
@@ -558,7 +559,7 @@ export default function BillingPage({
       })
 
       setTimelineWindowIndex((current) => current === nextIndex ? current : nextIndex)
-      if (visibleTimelineCount === 1) {
+      if (visibleTimelineCount === 1 && !isInitialSync) {
         setSelectedTimelineIndex((current) => current === nextIndex ? current : nextIndex)
       }
     }
@@ -569,6 +570,7 @@ export default function BillingPage({
     }
 
     syncWindowIndex()
+    isInitialSync = false
     viewport.addEventListener('scroll', handleScroll, { passive: true })
 
     return () => {
