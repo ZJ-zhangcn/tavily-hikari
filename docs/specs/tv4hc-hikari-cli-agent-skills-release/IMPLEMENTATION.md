@@ -32,8 +32,10 @@
 - The optional `RUN_NPX_SKILLS_INTEGRATION=1` test installs the local package into isolated user
   homes for Codex, OpenCode, and Claude Code, then verifies all seven skills through
   `npx skills list --global`.
-- Visual evidence is captured from Storybook with Chrome DevTools Protocol viewport emulation. The
-  mobile proof uses a 390 px viewport and verifies `scrollWidth=390` before writing the PNG.
+- Visual evidence is captured from mock-only Storybook canvas. Chrome Control browser discovery was
+  unavailable in this environment, so the approved escalation path used `agent-browser`; the mobile
+  proof uses the existing 390 px mobile Storybook state and confirms the Skills code sample is
+  horizontally scrollable before capturing its `--global` tail.
 
 ## References
 
