@@ -100,6 +100,8 @@ class TavilyHikariAgentSkillsTest(unittest.TestCase):
                 env = os.environ.copy()
                 env["HOME"] = str(home)
                 env["XDG_CONFIG_HOME"] = str(config_home)
+                env["CODEX_HOME"] = str(home / ".codex")
+                env["CLAUDE_CONFIG_DIR"] = str(home / ".claude")
                 env["npm_config_cache"] = str(temp_root / "npm-cache")
 
                 result = subprocess.run(
