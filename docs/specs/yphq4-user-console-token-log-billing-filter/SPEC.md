@@ -38,6 +38,16 @@
 
 ## Visual Evidence
 
+桌面近期请求滚动后的 sticky 表头使用同步模糊背景和半透明主题色覆盖，正文在表头内只保留不可辨认的模糊轮廓。
+
+PR: include
+
+![亮色 sticky 表头滚动状态](assets/token-detail-sticky-header-light.png)
+
+PR: include
+
+![暗色 sticky 表头滚动状态](assets/token-detail-sticky-header-dark.png)
+
 桌面 Token 详情页保留 50 条数据，但近期请求表格只显示 10 行并在表格内部滚动：
 
 ![桌面近期请求 10 行滚动](assets/token-detail-desktop-10-row-scroll.png)

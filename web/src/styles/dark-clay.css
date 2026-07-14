@@ -415,9 +415,13 @@
     background: hsl(var(--muted) / 0.48);
   }
 
-  .dark .table-sticky-header thead th {
-    background: hsl(var(--card) / 0.94);
-    box-shadow: 0 1px 0 hsl(var(--border) / 0.78);
+  .dark .table-sticky-header-overlay {
+    background: hsl(var(--card));
+    border-bottom-color: hsl(var(--border) / 0.78);
+  }
+
+  .dark .table-sticky-header-overlay::before {
+    background: hsl(var(--card) / 0.2);
   }
 
   .dark .table-wrapper .empty-state.alert,
