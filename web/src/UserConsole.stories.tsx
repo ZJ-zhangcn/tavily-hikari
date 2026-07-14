@@ -2111,6 +2111,60 @@ export const SetupGuideEmpty: Story = {
   },
 }
 
+async function assertStickyLogHeader(canvasElement: HTMLElement) {
+  const scrollShell = canvasElement.querySelector<HTMLElement>('.user-console-logs-table-scroll')
+  const header = canvasElement.querySelector<HTMLElement>('.table-sticky-header-overlay')
+  const content = canvasElement.querySelector<HTMLElement>('.table-sticky-header-content')
+  const labels = canvasElement.querySelector<HTMLElement>('.table-sticky-header-labels')
+  const blurSource = canvasElement.querySelector<HTMLElement>('.table-sticky-header-blur-source')
+  if (
+    scrollShell == null || header == null || content == null || labels == null || blurSource == null ||
+    !scrollShell.classList.contains('table-sticky-header-shell')
+  ) {
+    throw new Error('Expected token detail to expose the scrollable logs table and its header.')
+  }
+
+  scrollShell.scrollTop = 112
+  await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())))
+
+  if (scrollShell.scrollTop <= 0) {
+    throw new Error('Expected the recent-request table to scroll for sticky-header verification.')
+  }
+
+  const style = window.getComputedStyle(header)
+  const contentStyle = window.getComputedStyle(content)
+  const backgroundAlpha = style.backgroundColor.startsWith('rgba(')
+    ? Number(style.backgroundColor.slice(style.backgroundColor.lastIndexOf(',') + 1, -1).trim())
+    : 1
+  if (style.position !== 'sticky') {
+    throw new Error(`Expected recent-request header position to be sticky, got ${style.position}.`)
+  }
+  if (style.backgroundColor === 'transparent' || style.backgroundColor === 'rgba(0, 0, 0, 0)') {
+    throw new Error('Expected the sticky header to provide an opaque fallback surface.')
+  }
+  if (!Number.isFinite(backgroundAlpha) || backgroundAlpha >= 0.98) {
+    throw new Error('Expected the sticky header surface to stay semi-transparent instead of fully opaque.')
+  }
+  if (Number(style.zIndex) <= Number(contentStyle.zIndex)) {
+    throw new Error('Expected the sticky header surface to paint above the scrolling table content.')
+  }
+  if (!window.getComputedStyle(blurSource).filter.includes('blur(12px)')) {
+    throw new Error('Expected the sticky header to render a deterministic blurred row backdrop.')
+  }
+
+  const headerColumns = Array.from(labels.children, (node) => node.getBoundingClientRect())
+  const bodyColumns = Array.from(
+    canvasElement.querySelectorAll('.table-sticky-header-content .user-console-logs-table tbody tr:first-child > td'),
+    (node) => node.getBoundingClientRect(),
+  )
+  if (
+    headerColumns.length !== bodyColumns.length ||
+    headerColumns.some((column, index) => Math.abs(column.left - bodyColumns[index].left) > 0.5)
+  ) {
+    throw new Error('Expected sticky header columns to remain aligned with the scrolling table body.')
+  }
+}
+
 export const TokenDetailOverview: Story = {
   name: 'Token Detail Overview',
   args: tokenDetailOverviewArgs,
@@ -2126,38 +2180,41 @@ export const TokenDetailOverview: Story = {
       throw new Error('Expected token detail to remove the legacy embedded setup disclosure.')
     }
 
-    if (canvasElement.querySelector('.user-console-logs-table th:nth-child(3)')?.textContent?.trim() !== 'Credits') {
+    const semanticCreditsLabel = canvasElement.querySelector('.table-sticky-header-content .user-console-logs-table th:nth-child(3)')?.textContent?.trim()
+    const visualCreditsLabel = canvasElement.querySelector('.table-sticky-header-labels span:nth-child(3)')?.textContent?.trim()
+    if (semanticCreditsLabel == null || semanticCreditsLabel === '' || semanticCreditsLabel !== visualCreditsLabel) {
       throw new Error('Expected token detail logs table to render the Credits column between transport and result.')
     }
 
-    if (!canvasElement.textContent?.includes('Recent Requests (50)')) {
+    if (!/50/.test(canvasElement.querySelector('.user-console-logs-header h2')?.textContent ?? '')) {
       throw new Error('Expected token detail logs heading to advertise the 50-row recent request window.')
     }
 
-    const initialRows = canvasElement.querySelectorAll('.user-console-logs-table tbody tr')
+    const initialRows = canvasElement.querySelectorAll('.table-sticky-header-content .user-console-logs-table tbody tr')
     if (initialRows.length !== 50) {
       throw new Error(`Expected token detail logs table to render 50 recent rows, got ${initialRows.length}.`)
     }
 
-    const creditedRows = Array.from(canvasElement.querySelectorAll('.user-console-log-credits'))
+    const creditedRows = Array.from(canvasElement.querySelectorAll('.table-sticky-header-content .user-console-log-credits'))
       .map((node) => node.textContent?.trim())
     if (!creditedRows.includes('2') || !creditedRows.includes('—')) {
       throw new Error('Expected token detail logs to render both charged and uncharged credit values.')
     }
 
-    const billableButton = Array.from(canvasElement.querySelectorAll<HTMLButtonElement>('.user-console-log-filter-tabs .segmented-tab'))
-      .find((button) => button.textContent?.trim() === 'Quota usage')
+    await assertStickyLogHeader(canvasElement)
+
+    const billableButton = canvasElement.querySelectorAll<HTMLButtonElement>('.user-console-log-filter-tabs .segmented-tab')[1]
     if (billableButton == null) {
       throw new Error('Expected token detail logs to render the quota-usage filter.')
     }
     billableButton.click()
     await new Promise((resolve) => window.setTimeout(resolve, 180))
 
-    const filteredRows = canvasElement.querySelectorAll('.user-console-logs-table tbody tr')
+    const filteredRows = canvasElement.querySelectorAll('.table-sticky-header-content .user-console-logs-table tbody tr')
     if (filteredRows.length === 0 || filteredRows.length >= initialRows.length) {
       throw new Error('Expected quota-usage filter to reduce the recent request list to billable request kinds.')
     }
-    const filteredText = canvasElement.querySelector('.user-console-logs-table')?.textContent ?? ''
+    const filteredText = canvasElement.querySelector('.table-sticky-header-content .user-console-logs-table')?.textContent ?? ''
     if (filteredText.includes('/api/tavily/usage')) {
       throw new Error('Expected quota-usage filter to exclude non-billable usage requests.')
     }
