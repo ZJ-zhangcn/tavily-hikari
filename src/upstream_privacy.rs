@@ -93,6 +93,25 @@ pub fn derive_access_token_project_id(secret: &[u8], token_id: &str, period_code
     URL_SAFE_NO_PAD.encode(hmac::sign(&key, input.as_bytes()).as_ref())
 }
 
+pub fn research_response_is_terminal(body: &[u8]) -> bool {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return false;
+    };
+    let status = value
+        .get("status")
+        .or_else(|| value.get("state"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    matches!(
+        status.as_str(),
+        "completed" | "complete" | "failed" | "cancelled" | "canceled" | "error"
+    ) || value.get("results").is_some()
+        || value.get("answer").is_some()
+        || value.get("content").is_some()
+}
+
 pub(crate) fn validate_upstream_header_setting(
     field: &str,
     value: &str,

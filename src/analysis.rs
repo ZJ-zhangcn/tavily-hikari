@@ -737,7 +737,7 @@ pub(crate) fn extract_research_request_id_from_path(path: &str) -> Option<String
         .ok()
 }
 
-pub(crate) fn extract_research_request_id(body: &[u8]) -> Option<String> {
+pub fn extract_research_request_id(body: &[u8]) -> Option<String> {
     let parsed = serde_json::from_slice::<Value>(body).ok()?;
     let request_id = parsed
         .get("request_id")

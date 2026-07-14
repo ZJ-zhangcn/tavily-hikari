@@ -149,6 +149,24 @@ async fn put_system_settings(
         })
 }
 
+async fn get_upstream_privacy_status(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<tavily_hikari::UpstreamPrivacyStatus>, (StatusCode, String)> {
+    if !is_admin_request(state.as_ref(), &headers).await {
+        return Err((StatusCode::FORBIDDEN, "forbidden".to_string()));
+    }
+    state
+        .proxy
+        .upstream_privacy_status()
+        .await
+        .map(Json)
+        .map_err(|err| {
+            eprintln!("get upstream privacy status error: {err}");
+            (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+        })
+}
+
 async fn get_observed_client_ip_requests(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

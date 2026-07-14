@@ -960,6 +960,9 @@ function createDemoSystemSettings() {
     rebalanceMcpSessionPercent: 35,
     apiRebalanceEnabled: true,
     apiRebalancePercent: 25,
+    upstreamProjectIdMode: 'accessToken',
+    upstreamProjectIdFixedValue: '',
+    upstreamMcpUserAgent: 'codex-control/2026.07',
     adminDefaultActiveUsersOnly: true,
     rechargeFeatureEnabled: true,
     rechargeUserEnabled: true,
@@ -974,6 +977,46 @@ function createDemoSystemSettings() {
       heavyUsage: { businessBodyDays: 3, nonBusinessBodyDays: 0, nonSuccessBodyDays: 1 },
       debugShared: { businessBodyDays: 14, nonBusinessBodyDays: 1, nonSuccessBodyDays: 7 },
     },
+  }
+}
+
+function createDemoUpstreamPrivacyStatus() {
+  return {
+    phase: 'pending',
+    configuredProjectIdMode: 'accessToken',
+    effectiveProjectIdMode: 'accessToken',
+    fixedProjectIdConfigured: false,
+    configuredMcpUserAgent: 'codex-control/2026.07',
+    effectiveMcpUserAgent: 'codex-control/2026.07',
+    httpAllowedHeaders: ['accept', 'accept-encoding', 'content-type', 'x-project-id (policy injected)'],
+    controlMcpAllowedHeaders: ['accept', 'cache-control', 'mcp-protocol-version', 'mcp-session-id', 'user-agent (configured only)'],
+    gates: [
+      { key: 'accessTokenMode', ready: true, detail: 'AccessToken' },
+      { key: 'apiRebalance', ready: true, detail: '100%' },
+      { key: 'mcpRebalance', ready: true, detail: '100%' },
+      { key: 'controlSessionsDrained', ready: false, detail: '2' },
+    ],
+    completedGates: 3,
+    totalGates: 4,
+    activeControlSessions: 2,
+    currentPeriodCode: '2026-07-14/S2',
+    currentPeriodEndsAt: 1_783_994_400,
+    nextEpochAt: 1_783_994_400,
+    pendingResearch: 1,
+    queuedSettlements: 2,
+    degradedSettlements: 0,
+    recentAdjustments: [
+      {
+        settlementKey: 'v1:tok_demo:2026-07-14/S1',
+        tokenIdHint: 'tok_demo',
+        billingSubjectKind: 'token',
+        periodCode: '2026-07-14/S1',
+        deltaCredits: -3,
+        degradedReason: null,
+        createdAt: 1_783_958_100,
+      },
+    ],
+    generatedAt: 1_783_958_400,
   }
 }
 
@@ -2093,6 +2136,7 @@ async function handleDemoRoute(url: URL, method: string, init?: RequestInit): Pr
   }
   if (path === '/api/settings/forward-proxy') return jsonResponse(demoState.forwardProxy)
   if (path === '/api/settings/system') return jsonResponse(demoState.systemSettings)
+  if (path === '/api/settings/system/privacy-status') return jsonResponse(createDemoUpstreamPrivacyStatus())
   if (path === '/api/settings/forward-proxy/validate') return jsonResponse({ ok: true, message: 'Demo proxy candidate is reachable', normalizedValue: 'socks5://demo.internal:1080', discoveredNodes: 3, latencyMs: 94, nodes: [{ displayName: 'HK edge', protocol: 'socks5', ok: true, latencyMs: 94, ip: '198.51.100.30', location: 'HK' }] })
   if (path === '/api/settings/forward-proxy/revalidate') return jsonResponse(demoState.forwardProxy)
   if (path === '/api/settings/forward-proxy/nodes/state') return jsonResponse({ results: demoState.forwardProxy.nodes.map((node) => ({ proxyKey: node.key, disabled: Boolean(node.disabled), disabledAt: node.disabledAt ?? null })) })

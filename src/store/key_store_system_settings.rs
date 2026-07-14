@@ -206,6 +206,13 @@ impl KeyStore {
         settings: &SystemSettings,
     ) -> Result<SystemSettings, ProxyError> {
         let current_settings = self.get_system_settings().await?;
+        let reconciliation_gate_changed = current_settings.upstream_project_id_mode
+            != settings.upstream_project_id_mode
+            || current_settings.api_rebalance_enabled != settings.api_rebalance_enabled
+            || current_settings.api_rebalance_percent != settings.api_rebalance_percent
+            || current_settings.rebalance_mcp_enabled != settings.rebalance_mcp_enabled
+            || current_settings.rebalance_mcp_session_percent
+                != settings.rebalance_mcp_session_percent;
         if settings.request_rate_limit < REQUEST_RATE_LIMIT_MIN {
             return Err(ProxyError::Other(format!(
                 "request_rate_limit must be at least {}",
@@ -318,6 +325,10 @@ impl KeyStore {
             &settings.upstream_mcp_user_agent,
         )
         .await?;
+        if reconciliation_gate_changed {
+            self.set_meta_i64(META_KEY_UPSTREAM_RECONCILIATION_READY_AFTER_V1, 0)
+                .await?;
+        }
         self.set_meta_i64(
             META_KEY_RECHARGE_FEATURE_ENABLED_V1,
             i64::from(settings.recharge_feature_enabled),

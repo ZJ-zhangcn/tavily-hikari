@@ -998,6 +998,64 @@ pub struct SystemSettings {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct UpstreamReconciliationCandidate {
+    pub token_id: String,
+    pub period_code: String,
+    pub project_id: String,
+    pub billing_subject: String,
+    pub period_start: i64,
+    pub period_end: i64,
+    pub pending_research: i64,
+    pub degraded: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpstreamReconciliationAdjustment {
+    pub settlement_key: String,
+    pub token_id_hint: String,
+    pub billing_subject_kind: String,
+    pub period_code: String,
+    pub delta_credits: i64,
+    pub degraded_reason: Option<String>,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpstreamPrivacyGate {
+    pub key: String,
+    pub ready: bool,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct UpstreamPrivacyStatus {
+    pub phase: String,
+    pub configured_project_id_mode: UpstreamProjectIdMode,
+    pub effective_project_id_mode: UpstreamProjectIdMode,
+    pub fixed_project_id_configured: bool,
+    pub configured_mcp_user_agent: String,
+    pub effective_mcp_user_agent: Option<String>,
+    pub http_allowed_headers: Vec<String>,
+    pub control_mcp_allowed_headers: Vec<String>,
+    pub gates: Vec<UpstreamPrivacyGate>,
+    pub completed_gates: i64,
+    pub total_gates: i64,
+    pub active_control_sessions: i64,
+    pub current_period_code: String,
+    pub current_period_ends_at: i64,
+    pub next_epoch_at: Option<i64>,
+    pub pending_research: i64,
+    pub queued_settlements: i64,
+    pub degraded_settlements: i64,
+    pub recent_adjustments: Vec<UpstreamReconciliationAdjustment>,
+    pub generated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct AdminUserListStats {
     pub active_users_90d: i64,
     pub total_users: i64,

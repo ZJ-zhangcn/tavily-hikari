@@ -1,6 +1,7 @@
 use super::*;
 use super::core_support_and_parsing::*;
 use super::upstream_support_and_manual_jobs::*;
+use tavily_hikari::UpstreamProjectIdMode;
 
     #[tokio::test]
     async fn admin_user_management_requires_admin() {
@@ -1472,6 +1473,15 @@ use super::upstream_support_and_manual_jobs::*;
         )
         .await
         .expect("proxy created");
+        let mut settings = proxy
+            .get_system_settings()
+            .await
+            .expect("load system settings");
+        settings.upstream_project_id_mode = UpstreamProjectIdMode::Passthrough;
+        proxy
+            .set_system_settings(&settings)
+            .await
+            .expect("enable passthrough project id mode");
         let pool = connect_sqlite_test_pool(&db_str).await;
 
         let access_token = proxy
@@ -1578,10 +1588,11 @@ use super::upstream_support_and_manual_jobs::*;
             .expect("load system settings");
         settings.api_rebalance_enabled = true;
         settings.api_rebalance_percent = 100;
+        settings.upstream_project_id_mode = UpstreamProjectIdMode::Passthrough;
         proxy
             .set_system_settings(&settings)
             .await
-            .expect("enable API rebalance rollout");
+            .expect("enable API rebalance rollout with passthrough project id mode");
         let pool = connect_sqlite_test_pool(&db_str).await;
         let access_token = proxy
             .create_access_token(Some("http-search-api-rebalance-enabled"))

@@ -19,10 +19,10 @@ pub use analysis::{
     analyze_http_attempt, analyze_mcp_attempt, canonical_request_kind_key_for_filter,
     canonicalize_request_log_request_kind, classify_token_request_kind,
     display_result_status_for_request_kind, extract_mcp_has_error_by_id_from_bytes,
-    extract_mcp_usage_credits_by_id_from_bytes, extract_usage_credits_from_json_bytes,
-    extract_usage_credits_total_from_json_bytes, failure_kind_solution_guidance,
-    finalize_token_request_kind, is_canonical_request_kind_key, mcp_response_has_any_error,
-    mcp_response_has_any_success, normalize_operational_class_filter,
+    extract_mcp_usage_credits_by_id_from_bytes, extract_research_request_id,
+    extract_usage_credits_from_json_bytes, extract_usage_credits_total_from_json_bytes,
+    failure_kind_solution_guidance, finalize_token_request_kind, is_canonical_request_kind_key,
+    mcp_response_has_any_error, mcp_response_has_any_success, normalize_operational_class_filter,
     operational_class_for_request_kind, operational_class_for_request_log,
     operational_class_for_request_path, operational_class_for_token_log,
     should_append_solution_guidance, token_request_kind_billing_group,
@@ -1060,6 +1060,8 @@ const META_KEY_UPSTREAM_PROJECT_ID_MODE_V1: &str = "upstream_project_id_mode_v1"
 const META_KEY_UPSTREAM_PROJECT_ID_FIXED_VALUE_V1: &str = "upstream_project_id_fixed_value_v1";
 const META_KEY_UPSTREAM_MCP_USER_AGENT_V1: &str = "upstream_mcp_user_agent_v1";
 const META_KEY_UPSTREAM_PROJECT_ID_HMAC_SECRET_V1: &str = "upstream_project_id_hmac_secret_v1";
+const META_KEY_UPSTREAM_RECONCILIATION_READY_AFTER_V1: &str =
+    "upstream_reconciliation_ready_after_v1";
 const META_KEY_USER_BLOCKED_KEY_BASE_LIMIT_V1: &str = "user_blocked_key_base_limit_v1";
 const META_KEY_GLOBAL_IP_LIMIT_V1: &str = "global_ip_limit_v1";
 const META_KEY_TRUSTED_PROXY_CIDRS_V1: &str = "trusted_proxy_cidrs_v1";

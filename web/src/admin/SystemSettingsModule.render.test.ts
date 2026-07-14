@@ -43,6 +43,9 @@ describe('SystemSettingsModule rendering', () => {
           rebalanceMcpSessionPercent: 100,
           apiRebalanceEnabled: false,
           apiRebalancePercent: 0,
+          upstreamProjectIdMode: 'accessToken',
+          upstreamProjectIdFixedValue: '',
+          upstreamMcpUserAgent: '',
           rechargeFeatureEnabled: true,
           rechargeUserEnabled: true,
           adminDefaultActiveUsersOnly: false,
@@ -77,6 +80,9 @@ describe('SystemSettingsModule rendering', () => {
     expect(markup).toContain(zhStrings.form.currentValue.replace('{count}', '5'))
     expect(markup).toContain(zhStrings.form.currentPercentValue.replace('{percent}', '100'))
     expect(markup).toContain(zhStrings.form.currentApiRebalancePercentValue.replace('{percent}', '0'))
+    expect(markup).toContain(zhStrings.form.upstreamProjectIdModeLabel)
+    expect(markup).toContain(zhStrings.form.upstreamProjectIdModeAccessToken)
+    expect(markup).toContain(zhStrings.form.upstreamMcpUserAgentLabel)
     expect(markup).toContain(zhStrings.form.apiRebalancePercentDisabledHint)
     expect(markup).toContain(zhStrings.form.rechargeFeatureLabel)
     expect(markup).toContain(zhStrings.form.rechargeUserLabel)
@@ -107,6 +113,9 @@ describe('SystemSettingsModule rendering', () => {
           rebalanceMcpSessionPercent: 100,
           apiRebalanceEnabled: false,
           apiRebalancePercent: 0,
+          upstreamProjectIdMode: 'accessToken',
+          upstreamProjectIdFixedValue: '',
+          upstreamMcpUserAgent: '',
           rechargeFeatureEnabled: true,
           rechargeUserEnabled: true,
           adminDefaultActiveUsersOnly: false,
@@ -145,6 +154,9 @@ describe('SystemSettingsModule rendering', () => {
           rebalanceMcpSessionPercent: 35,
           apiRebalanceEnabled: true,
           apiRebalancePercent: 25,
+          upstreamProjectIdMode: 'accessToken',
+          upstreamProjectIdFixedValue: '',
+          upstreamMcpUserAgent: '',
           rechargeFeatureEnabled: true,
           rechargeUserEnabled: true,
           adminDefaultActiveUsersOnly: false,
@@ -182,6 +194,9 @@ describe('SystemSettingsModule rendering', () => {
           rebalanceMcpSessionPercent: 35,
           apiRebalanceEnabled: false,
           apiRebalancePercent: 25,
+          upstreamProjectIdMode: 'accessToken',
+          upstreamProjectIdFixedValue: '',
+          upstreamMcpUserAgent: '',
           rechargeFeatureEnabled: true,
           rechargeUserEnabled: true,
           adminDefaultActiveUsersOnly: false,

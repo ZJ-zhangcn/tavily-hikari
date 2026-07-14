@@ -4,23 +4,35 @@
 
 ## Current Status
 
-- Implementation: 进行中
-- Lifecycle: active
+- Implementation: 已实现
+- Lifecycle: merge-ready
 - Catalog note: strict upstream headers, period-scoped pseudonymous identity, and signed reconciliation.
 
 ## Coverage / rollout summary
 
-- 已锁定 Header policy、Project ID 模式、窗口与一次性结算合同。
+- 后端已统一三条出站路径的 Header allowlist：Tavily HTTP / Rebalance HTTP 仅保留 `accept`、`accept-encoding`、`content-type` 与策略注入后的 `x-project-id`；Control MCP 仅保留协议恢复头，并按配置选择性注入固定 `user-agent`。
+- `SystemSettings` 已持久化 `upstreamProjectIdMode`、`upstreamProjectIdFixedValue`、`upstreamMcpUserAgent`，默认 `accessToken`，并对 fixed/UA 输入做长度与控制字符校验。
+- `accessToken` 模式已接入 `HMAC-SHA256(secret, "v1" + token_id + period_code)`，业务窗口按服务器本地时区 `S1=00-11`、`S2=11-22`、`S3=22-24` 切分。
+- 已落地完整窗口对账、Research 终态等待、24 小时 degraded 兜底、signed reconciliation adjustment 账本，以及对小时/日/月额度的归属修正。
+- 管理端已新增系统设置中的上游身份配置控件、`/admin/system-settings/privacy-status` 状态页、对应 Storybook coverage 与 mock-only UI 证据。
 
 ## Remaining Gaps
 
-- 后端、HA、管理界面、Storybook、视觉证据与完整验证待实现。
+- 无已知功能缺口；剩余仅为 PR 创建、review convergence 与合并路径动作。
 
 ## Related Changes
 
-- None
+- `src/analysis.rs`
+- `src/upstream_privacy.rs`
+- `src/tavily_proxy/proxy_http_and_logs.rs`
+- `src/tavily_proxy/proxy_quota_sync_and_jobs.rs`
+- `src/store/key_store_upstream_reconciliation.rs`
+- `web/src/admin/SystemSettingsModule.tsx`
+- `web/src/admin/UpstreamPrivacyStatusModule.tsx`
+- `web/src/admin/AdminDashboardRuntime.tsx`
 
 ## References
 
 - `./SPEC.md`
 - `./HISTORY.md`
+- `../../high-anonymity-proxy.md`

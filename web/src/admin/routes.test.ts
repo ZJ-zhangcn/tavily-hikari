@@ -18,6 +18,7 @@ import {
   parseAdminPath,
   rankingsPath,
   systemSettingsAdminPath,
+  systemSettingsPrivacyPath,
   systemSettingsHaPath,
   systemSettingsHaNodePath,
   tokenDetailPath,
@@ -101,6 +102,14 @@ describe('admin user tag routes', () => {
     })
   })
 
+  it('parses the upstream privacy status route', () => {
+    expect(parseAdminPath('/admin/system-settings/privacy-status')).toEqual({
+      name: 'module',
+      module: 'system-settings',
+      systemSettingsView: 'privacy',
+    })
+  })
+
   it('parses the HA node detail route', () => {
     expect(parseAdminPath('/admin/system-settings/ha/nodes/demo-standby')).toEqual({
       name: 'ha-node',
@@ -163,6 +172,7 @@ describe('admin user tag routes', () => {
     expect(announcementCreatePath()).toBe('/admin/announcements/new')
     expect(announcementEditPath('ann 42')).toBe('/admin/announcements/ann%2042/edit')
     expect(systemSettingsAdminPath()).toBe('/admin/system-settings/admin')
+    expect(systemSettingsPrivacyPath()).toBe('/admin/system-settings/privacy-status')
     expect(systemSettingsHaPath()).toBe('/admin/system-settings/ha')
     expect(systemSettingsHaNodePath('demo standby')).toBe('/admin/system-settings/ha/nodes/demo%20standby')
   })

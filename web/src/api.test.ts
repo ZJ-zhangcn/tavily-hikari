@@ -33,6 +33,7 @@ import {
   fetchRequestLogDetails,
   fetchRequestLogsList,
   fetchSystemSettings,
+  fetchUpstreamPrivacyStatus,
   fetchTokenLogsCatalog,
   fetchTokenMetrics,
   fetchTokenLogDetails,
@@ -1527,6 +1528,9 @@ describe('admin user tag api helpers', () => {
               rebalanceMcpSessionPercent: 35,
               apiRebalanceEnabled: false,
               apiRebalancePercent: 0,
+              upstreamProjectIdMode: 'accessToken',
+              upstreamProjectIdFixedValue: '',
+              upstreamMcpUserAgent: '',
               rechargeFeatureEnabled: false,
               rechargeUserEnabled: false,
               adminDefaultActiveUsersOnly: true,
@@ -1562,6 +1566,9 @@ describe('admin user tag api helpers', () => {
       rebalanceMcpSessionPercent: 35,
       apiRebalanceEnabled: false,
       apiRebalancePercent: 0,
+      upstreamProjectIdMode: 'accessToken',
+      upstreamProjectIdFixedValue: '',
+      upstreamMcpUserAgent: '',
       rechargeFeatureEnabled: false,
       rechargeUserEnabled: false,
       adminDefaultActiveUsersOnly: true,
@@ -1578,6 +1585,47 @@ describe('admin user tag api helpers', () => {
       },
     })
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/settings')
+  })
+
+  it('loads the upstream privacy status from the dedicated endpoint', async () => {
+    const fetchMock = mock(() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            phase: 'pending',
+            configuredProjectIdMode: 'accessToken',
+            effectiveProjectIdMode: 'accessToken',
+            fixedProjectIdConfigured: false,
+            configuredMcpUserAgent: '',
+            effectiveMcpUserAgent: null,
+            httpAllowedHeaders: ['accept'],
+            controlMcpAllowedHeaders: ['mcp-protocol-version'],
+            gates: [{ key: 'accessTokenMode', ready: true, detail: 'AccessToken' }],
+            completedGates: 1,
+            totalGates: 4,
+            activeControlSessions: 2,
+            currentPeriodCode: '2026-07-14/S2',
+            currentPeriodEndsAt: 1_783_994_400,
+            nextEpochAt: 1_783_994_400,
+            pendingResearch: 1,
+            queuedSettlements: 2,
+            degradedSettlements: 0,
+            recentAdjustments: [],
+            generatedAt: 1_783_958_400,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+      ),
+    )
+    globalThis.fetch = fetchMock as typeof fetch
+
+    await expect(fetchUpstreamPrivacyStatus()).resolves.toMatchObject({
+      phase: 'pending',
+      configuredProjectIdMode: 'accessToken',
+      currentPeriodCode: '2026-07-14/S2',
+      activeControlSessions: 2,
+    })
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/settings/system/privacy-status')
   })
 
   it('fetches forward proxy settings from the dedicated endpoint', async () => {
@@ -1615,6 +1663,9 @@ describe('admin user tag api helpers', () => {
             rebalanceMcpSessionPercent: 100,
             apiRebalanceEnabled: true,
             apiRebalancePercent: 25,
+            upstreamProjectIdMode: 'accessToken',
+            upstreamProjectIdFixedValue: '',
+            upstreamMcpUserAgent: '',
             rechargeFeatureEnabled: false,
             rechargeUserEnabled: false,
             adminDefaultActiveUsersOnly: true,
@@ -1645,6 +1696,9 @@ describe('admin user tag api helpers', () => {
         rebalanceMcpSessionPercent: 100,
         apiRebalanceEnabled: true,
         apiRebalancePercent: 25,
+        upstreamProjectIdMode: 'accessToken',
+        upstreamProjectIdFixedValue: '',
+        upstreamMcpUserAgent: '',
         rechargeFeatureEnabled: false,
         rechargeUserEnabled: false,
         adminDefaultActiveUsersOnly: true,
@@ -1668,6 +1722,9 @@ describe('admin user tag api helpers', () => {
         rebalanceMcpSessionPercent: 100,
         apiRebalanceEnabled: true,
         apiRebalancePercent: 25,
+        upstreamProjectIdMode: 'accessToken',
+        upstreamProjectIdFixedValue: '',
+        upstreamMcpUserAgent: '',
         rechargeFeatureEnabled: false,
         rechargeUserEnabled: false,
         adminDefaultActiveUsersOnly: true,
@@ -1696,6 +1753,9 @@ describe('admin user tag api helpers', () => {
         rebalanceMcpSessionPercent: 100,
         apiRebalanceEnabled: true,
         apiRebalancePercent: 25,
+        upstreamProjectIdMode: 'accessToken',
+        upstreamProjectIdFixedValue: '',
+        upstreamMcpUserAgent: '',
         rechargeFeatureEnabled: false,
         rechargeUserEnabled: false,
         adminDefaultActiveUsersOnly: true,

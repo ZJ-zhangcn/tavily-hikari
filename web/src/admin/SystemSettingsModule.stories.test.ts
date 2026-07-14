@@ -16,6 +16,7 @@ describe('SystemSettingsModule Storybook proofs', () => {
     expect(systemSettingsStories.RebalanceDisabledSliderLocked).toMatchObject({})
     expect(systemSettingsStories.ApiRebalanceEnabled).toMatchObject({})
     expect(systemSettingsStories.ApiRebalanceDisabledSliderLocked).toMatchObject({})
+    expect(systemSettingsStories.FixedProjectIdAndControlUa).toMatchObject({})
     expect(systemSettingsStories.Applying).toMatchObject({})
     expect(systemSettingsStories.ErrorState).toMatchObject({})
     expect(systemSettingsStories.HelpBubbleOpen).toMatchObject({})
@@ -66,5 +67,15 @@ describe('SystemSettingsModule Storybook proofs', () => {
     const markup = renderToStaticMarkup(createElement(renderStory!))
     expect(markup).toContain('启用 API Rebalance')
     expect(markup).toContain('当前 API 比例：25%')
+  })
+
+  it('renders the fixed project id story with the configured Control MCP UA', () => {
+    const renderStory = systemSettingsStories.FixedProjectIdAndControlUa.render as (() => JSX.Element) | undefined
+    expect(renderStory).toBeDefined()
+
+    const markup = renderToStaticMarkup(createElement(renderStory!))
+    expect(markup).toContain('X-Project-ID 策略')
+    expect(markup).toContain('team-search-prod')
+    expect(markup).toContain('codex-control/2026.07')
   })
 })

@@ -646,7 +646,7 @@ export interface AdminTranslationsShape {
     title: string
     description: string
     helpLabel: string
-    subnav: { general: string; admin: string; highAvailability: string }
+    subnav: { general: string; privacyStatus: string; admin: string; highAvailability: string }
     admin: {
       title: string
       description: string
@@ -898,6 +898,57 @@ export interface AdminTranslationsShape {
       sourceInvalidOriginGroup: string
       sourceDialogCancel: string
     }
+    privacy: {
+      title: string
+      description: string
+      autoRefresh: string
+      refreshNow: string
+      generatedAt: string
+      currentPeriod: string
+      currentPeriodEndsAt: string
+      nextEpochAt: string
+      projectIdModeConfigured: string
+      projectIdModeEffective: string
+      fixedConfigured: string
+      userAgentConfigured: string
+      userAgentEffective: string
+      phaseConfigured: string
+      phaseDraining: string
+      phasePending: string
+      phaseActive: string
+      phaseDegraded: string
+      statusConfigured: string
+      statusActive: string
+      statusMissing: string
+      statusOmitted: string
+      gateTitle: string
+      gateDescription: string
+      gateReady: string
+      gateWaiting: string
+      gateAccessTokenMode: string
+      gateApiRebalance: string
+      gateMcpRebalance: string
+      gateControlSessionsDrained: string
+      countersTitle: string
+      counterControlSessions: string
+      counterPendingResearch: string
+      counterQueuedSettlements: string
+      counterDegradedSettlements: string
+      headersTitle: string
+      headersHttpTitle: string
+      headersControlTitle: string
+      adjustmentsTitle: string
+      adjustmentsEmpty: string
+      adjustmentPeriod: string
+      adjustmentDelta: string
+      adjustmentSubject: string
+      adjustmentCreatedAt: string
+      adjustmentSettlementKey: string
+      degradedReason: string
+      empty: string
+      loadFailed: string
+      loading: string
+    }
     form: {
       title: string
       description: string
@@ -911,6 +962,7 @@ export interface AdminTranslationsShape {
       gatewayTitle: string
       gatewaySectionTitle: string
       apiRebalanceTitle: string
+      upstreamIdentityTitle: string
       requestRateLimitLabel: string
       requestRateLimitHint: string
       currentRequestRateLimitValue: string
@@ -929,6 +981,21 @@ export interface AdminTranslationsShape {
       apiRebalancePercentHint: string
       apiRebalancePercentDisabledHint: string
       currentApiRebalancePercentValue: string
+      upstreamProjectIdModeLabel: string
+      upstreamProjectIdModeHint: string
+      upstreamProjectIdModePassthrough: string
+      upstreamProjectIdModeFixed: string
+      upstreamProjectIdModeAccessToken: string
+      upstreamProjectIdFixedValueLabel: string
+      upstreamProjectIdFixedValueHint: string
+      upstreamProjectIdFixedValuePlaceholder: string
+      currentUpstreamProjectIdModeValue: string
+      currentUpstreamProjectIdFixedValue: string
+      upstreamMcpUserAgentLabel: string
+      upstreamMcpUserAgentHint: string
+      upstreamMcpUserAgentPlaceholder: string
+      currentUpstreamMcpUserAgentValue: string
+      upstreamHttpUserAgentNotice: string
       rechargeFeatureLabel: string
       rechargeFeatureHint: string
       rechargeUserLabel: string
@@ -952,6 +1019,8 @@ export interface AdminTranslationsShape {
       invalidPercent: string
       invalidBlockedKeyBaseLimit: string
       invalidGlobalIpLimit: string
+      invalidUpstreamProjectIdFixedValue: string
+      invalidUpstreamMcpUserAgent: string
       saveFailed: string
     } & Record<SystemSettingsTotpTranslationKey | SystemSettingsTrustedClientIpTranslationKey, string>
     actions: {

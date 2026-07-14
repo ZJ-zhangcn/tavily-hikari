@@ -1492,6 +1492,27 @@ async fn proxy_handler(
                         total
                     };
 
+                    if credits > 0
+                        && active_mcp_gateway_mode
+                            == tavily_hikari::MCP_GATEWAY_MODE_REBALANCE
+                        && let (Some(api_key_id), Some(subject)) =
+                            (api_key_id, billing_subject.as_deref())
+                    {
+                        let research_request_id = extract_research_request_id(&resp.body);
+                        if let Err(err) = state
+                            .proxy
+                            .record_upstream_reconciliation_usage(
+                                tid,
+                                api_key_id,
+                                subject,
+                                research_request_id.as_deref(),
+                            )
+                            .await
+                        {
+                            eprintln!("record MCP reconciliation usage failed: {err}");
+                        }
+                    }
+
                     if credits > 0 {
                         match if let Some(subject) = billing_subject.as_deref() {
                             state

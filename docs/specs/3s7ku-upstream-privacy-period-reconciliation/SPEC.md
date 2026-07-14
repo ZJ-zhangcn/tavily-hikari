@@ -149,7 +149,18 @@
 
 ## Visual Evidence
 
-视觉证据将在实现与验收后写入本节。
+- source: `ui_demo` (`http://127.0.0.1:55174`, mock-only browser demo)
+- desktop system settings upstream identity section
+
+  ![System settings upstream identity section](./assets/system-settings-upstream-identity-desktop.png)
+
+- desktop upstream privacy status page
+
+  ![Upstream privacy status desktop](./assets/privacy-status-desktop.png)
+
+- mobile upstream privacy status page
+
+  ![Upstream privacy status mobile](./assets/privacy-status-mobile.png)
 
 ## Related PRs
 

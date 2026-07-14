@@ -149,6 +149,7 @@ import {
   parseAdminPath,
   rankingsPath,
   systemSettingsAdminPath,
+  systemSettingsPrivacyPath,
   systemSettingsHaPath,
   systemSettingsHaNodePath,
   buildAdminUsersPath,
@@ -293,6 +294,7 @@ import {
   type MonthlyBrokenKeyDetail,
   type ForwardProxySettings,
   type SystemSettings,
+  type UpstreamPrivacyStatus,
   type ForwardProxyErrorStatsResponse,
   type ForwardProxyStatsResponse,
   type ForwardProxyValidationKind,
@@ -306,6 +308,7 @@ import {
   type HaStatus,
   fetchForwardProxySettings,
   fetchSystemSettingsEnvelope,
+  fetchUpstreamPrivacyStatus,
   fetchForwardProxyErrorStats,
   fetchForwardProxyStats,
   revalidateForwardProxyWithProgress,
@@ -349,6 +352,7 @@ const LazyKeyStickyPanels = lazy(() => import('./KeyStickyPanels'))
 const LazyAlertsCenter = lazy(() => import('./AlertsCenter'))
 const LazyAnnouncementsModule = lazy(() => import('./AnnouncementsModule'))
 const LazySystemSettingsModule = lazy(() => import('./SystemSettingsModule'))
+const LazyUpstreamPrivacyStatusModule = lazy(() => import('./UpstreamPrivacyStatusModule'))
 const LazyAdminSecuritySettingsModule = lazy(() => import('./AdminSecuritySettingsModule'))
 const LazyAdminRechargeRecordsModule = lazy(() => import('./AdminRechargeRecordsModule'))
 const LazyUserDetailSharedUsagePanel = lazy(async () =>
@@ -1930,6 +1934,11 @@ function AdminDashboard(): JSX.Element {
     useState<QueryLoadState>('initial_loading')
   const [systemSettingsError, setSystemSettingsError] = useState<string | null>(null)
   const [systemSettingsSaving, setSystemSettingsSaving] = useState(false)
+  const [upstreamPrivacyStatus, setUpstreamPrivacyStatus] = useState<UpstreamPrivacyStatus | null>(null)
+  const [upstreamPrivacyStatusLoadState, setUpstreamPrivacyStatusLoadState] =
+    useState<QueryLoadState>('initial_loading')
+  const [upstreamPrivacyStatusError, setUpstreamPrivacyStatusError] = useState<string | null>(null)
+  const [upstreamPrivacyAutoRefreshEnabled, setUpstreamPrivacyAutoRefreshEnabled] = useState(true)
   const [rechargeRecordsMeta, setRechargeRecordsMeta] = useState<AdminRechargeListResponse | null>(null)
   const [adminDisplayDensity, setAdminDisplayDensity] = useState<AdminDisplayDensity>(() =>
     readStoredAdminDisplayDensity(),
@@ -1975,10 +1984,12 @@ function AdminDashboard(): JSX.Element {
   const unboundTokenUsageAbortRef = useRef<AbortController | null>(null)
   const forwardProxySettingsAbortRef = useRef<AbortController | null>(null)
   const systemSettingsAbortRef = useRef<AbortController | null>(null)
+  const upstreamPrivacyStatusAbortRef = useRef<AbortController | null>(null)
   const forwardProxyStatsAbortRef = useRef<AbortController | null>(null)
   const forwardProxyErrorStatsAbortRef = useRef<AbortController | null>(null)
   const forwardProxySettingsLoadedRef = useRef(false)
   const systemSettingsLoadedRef = useRef(false)
+  const upstreamPrivacyStatusLoadedRef = useRef(false)
   const forwardProxyStatsLoadedRef = useRef(false)
   const forwardProxyErrorStatsLoadedRef = useRef(false)
   const needsSystemSettingsForUsers =
@@ -3066,6 +3077,41 @@ function AdminDashboard(): JSX.Element {
     [loadSystemSettingsData, systemSettings, usersQuery],
   )
 
+  const loadUpstreamPrivacyStatusData = useCallback(
+    async ({
+      signal,
+      reason = 'refresh',
+    }: {
+      signal?: AbortSignal
+      reason?: 'initial' | 'switch' | 'refresh'
+    } = {}) => {
+      const request = beginManagedRequest(upstreamPrivacyStatusAbortRef, signal)
+      setUpstreamPrivacyStatusLoadState(
+        reason === 'refresh'
+          ? getRefreshingLoadState(upstreamPrivacyStatusLoadedRef.current)
+          : getBlockingLoadState(upstreamPrivacyStatusLoadedRef.current),
+      )
+      setUpstreamPrivacyStatusError(null)
+
+      try {
+        const nextStatus = await fetchUpstreamPrivacyStatus(request.signal)
+        if (request.signal.aborted) return
+        setUpstreamPrivacyStatus(nextStatus)
+        setUpstreamPrivacyStatusLoadState('ready')
+        setLastUpdated(new Date())
+        upstreamPrivacyStatusLoadedRef.current = true
+      } catch (err) {
+        if (request.signal.aborted) return
+        console.error(err)
+        setUpstreamPrivacyStatusError(err instanceof Error ? err.message : loadingStateStrings.error)
+        setUpstreamPrivacyStatusLoadState('error')
+      } finally {
+        request.cleanup()
+      }
+    },
+    [beginManagedRequest, loadingStateStrings.error],
+  )
+
   const loadForwardProxyStatsData = useCallback(
     async ({
       signal,
@@ -3579,6 +3625,22 @@ function AdminDashboard(): JSX.Element {
   }, [route, loadSystemSettingsData])
 
   useEffect(() => {
+    if (!(route.name === 'module'
+      && route.module === 'system-settings'
+      && (route.systemSettingsView ?? 'general') === 'privacy')) {
+      return
+    }
+
+    const controller = new AbortController()
+    void loadUpstreamPrivacyStatusData({
+      signal: controller.signal,
+      reason: upstreamPrivacyStatusLoadedRef.current ? 'switch' : 'initial',
+    })
+
+    return () => controller.abort()
+  }, [route, loadUpstreamPrivacyStatusData])
+
+  useEffect(() => {
     const controller = new AbortController()
     fetchAdminRecharges({ perPage: 1 }, controller.signal)
       .then(setRechargeRecordsMeta)
@@ -3637,6 +3699,21 @@ function AdminDashboard(): JSX.Element {
 
     return () => window.clearInterval(timer)
   }, [route, loadForwardProxyStatsData, loadForwardProxyErrorStatsData])
+
+  useEffect(() => {
+    if (!(route.name === 'module'
+      && route.module === 'system-settings'
+      && (route.systemSettingsView ?? 'general') === 'privacy'
+      && upstreamPrivacyAutoRefreshEnabled)) {
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      void loadUpstreamPrivacyStatusData({ reason: 'refresh' })
+    }, REFRESH_INTERVAL_MS)
+
+    return () => window.clearInterval(timer)
+  }, [route, loadUpstreamPrivacyStatusData, upstreamPrivacyAutoRefreshEnabled])
 
   const requestLogQuickFilters = useMemo(
     () => ({
@@ -4604,6 +4681,10 @@ function AdminDashboard(): JSX.Element {
         navigateToPath(systemSettingsHaPath())
         return
       }
+      if (target === 'system-settings-privacy') {
+        navigateToPath(systemSettingsPrivacyPath())
+        return
+      }
       if (target === 'system-settings-admin') {
         navigateToPath(systemSettingsAdminPath())
         return
@@ -5018,6 +5099,9 @@ function AdminDashboard(): JSX.Element {
     }
     if (route.name === 'module' && route.module === 'system-settings') {
       tasks.push(loadSystemSettingsData({ signal: controller.signal, reason: 'refresh' }))
+      if ((route.systemSettingsView ?? 'general') === 'privacy') {
+        tasks.push(loadUpstreamPrivacyStatusData({ signal: controller.signal, reason: 'refresh' }))
+      }
     }
     if (isUsersCollectionRoute || route.name === 'user') {
       usersSystemSettingsPromise = ensureUsersSystemSettings(controller.signal, systemSettings)
@@ -5888,6 +5972,7 @@ function AdminDashboard(): JSX.Element {
     [adminStrings.logs, requestLogsCatalog?.retentionDays],
   )
   const systemSettingsBlocking = isBlockingLoadState(systemSettingsLoadState)
+  const upstreamPrivacyStatusBlocking = isBlockingLoadState(upstreamPrivacyStatusLoadState)
   const forwardProxySettingsBlocking = isBlockingLoadState(forwardProxySettingsLoadState)
   const forwardProxyStatsBlocking = isBlockingLoadState(forwardProxyStatsLoadState)
   const forwardProxyErrorStatsBlocking = isBlockingLoadState(forwardProxyErrorStatsLoadState)
@@ -5898,7 +5983,10 @@ function AdminDashboard(): JSX.Element {
     || (route.name === 'module' && route.module === 'requests' && requestsBlocking)
     || (route.name === 'module' && route.module === 'jobs' && jobsBlocking)
     || (isUsersCollectionRoute || route.name === 'user') && usersBlocking
-    || (route.name === 'module' && route.module === 'system-settings' && systemSettingsBlocking)
+    || (route.name === 'module'
+      && route.module === 'system-settings'
+      && (systemSettingsBlocking
+        || ((route.systemSettingsView ?? 'general') === 'privacy' && upstreamPrivacyStatusBlocking)))
     || (route.name === 'module' && route.module === 'proxy-settings'
       && (forwardProxySettingsBlocking || forwardProxyStatsBlocking || forwardProxyErrorStatsBlocking))
     || (route.name === 'unbound-token-usage' && unboundTokenUsageBlocking)
@@ -6622,6 +6710,17 @@ function AdminDashboard(): JSX.Element {
       } catch (refreshErr) {
         console.error(refreshErr)
       }
+      if (
+        routeRef.current.name === 'module'
+        && routeRef.current.module === 'system-settings'
+        && (routeRef.current.systemSettingsView ?? 'general') === 'privacy'
+      ) {
+        try {
+          await loadUpstreamPrivacyStatusData({ reason: 'refresh' })
+        } catch (refreshErr) {
+          console.error(refreshErr)
+        }
+      }
     } catch (err) {
       console.error(err)
       setSystemSettingsError(
@@ -6631,7 +6730,7 @@ function AdminDashboard(): JSX.Element {
     } finally {
       setSystemSettingsSaving(false)
     }
-  }, [systemSettingsStrings.form.saveFailed])
+  }, [loadUpstreamPrivacyStatusData, systemSettingsStrings.form.saveFailed])
   const refreshUsersList = async () => {
     const settingsForUsers = await ensureUsersSystemSettings(undefined, systemSettings)
     const pagedUsers = await fetchAdminUsers(
@@ -7610,6 +7709,7 @@ function AdminDashboard(): JSX.Element {
       icon: <Icon icon="mdi:cog-outline" width={18} height={18} />,
       children: [
         { target: 'system-settings', label: systemSettingsStrings.subnav.general },
+        { target: 'system-settings-privacy', label: systemSettingsStrings.subnav.privacyStatus },
         { target: 'system-settings-admin', label: systemSettingsStrings.subnav.admin },
         { target: 'system-settings-ha', label: systemSettingsStrings.subnav.highAvailability },
         { target: 'proxy-settings', label: adminStrings.nav.proxySettings },
@@ -7621,6 +7721,8 @@ function AdminDashboard(): JSX.Element {
       ? route.module === 'system-settings'
         ? (route.systemSettingsView ?? 'general') === 'ha'
           ? 'system-settings-ha'
+          : (route.systemSettingsView ?? 'general') === 'privacy'
+            ? 'system-settings-privacy'
           : (route.systemSettingsView ?? 'general') === 'admin'
             ? 'system-settings-admin'
             : 'system-settings'
@@ -8845,6 +8947,7 @@ function AdminDashboard(): JSX.Element {
       ? 'ha'
       : 'general'
   const showSystemSettingsHa = showSystemSettings && systemSettingsView === 'ha'
+  const showSystemSettingsPrivacy = showSystemSettings && systemSettingsView === 'privacy'
   const showSystemSettingsAdmin = showSystemSettings && systemSettingsView === 'admin'
 
   useEffect(() => {
@@ -9825,6 +9928,12 @@ function AdminDashboard(): JSX.Element {
             description: route.name === 'ha-node'
               ? undefined
               : systemSettingsStrings.ha.description,
+          }
+        }
+        if (systemSettingsView === 'privacy') {
+          return {
+            title: systemSettingsStrings.privacy.title,
+            description: systemSettingsStrings.privacy.description,
           }
         }
         if (systemSettingsView === 'admin') {
@@ -12184,6 +12293,25 @@ function AdminDashboard(): JSX.Element {
             }}
             onDisplayDensityChange={setAdminDisplayDensity}
             onApply={saveSystemSettings}
+          />
+        </AdminLazyBoundary>
+      )}
+
+      {showSystemSettingsPrivacy && (
+        <AdminLazyBoundary loadingLabel={loadingStateStrings.switching} minHeight={260}>
+          <LazyUpstreamPrivacyStatusModule
+            strings={systemSettingsStrings.privacy}
+            formStrings={systemSettingsStrings.form}
+            language={language}
+            status={upstreamPrivacyStatus}
+            loadState={upstreamPrivacyStatusLoadState}
+            error={upstreamPrivacyStatusError}
+            refreshing={isRefreshingLoadState(upstreamPrivacyStatusLoadState)}
+            autoRefreshEnabled={upstreamPrivacyAutoRefreshEnabled}
+            onAutoRefreshChange={setUpstreamPrivacyAutoRefreshEnabled}
+            onRefresh={async () => {
+              await loadUpstreamPrivacyStatusData({ reason: 'refresh' })
+            }}
           />
         </AdminLazyBoundary>
       )}

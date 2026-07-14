@@ -23,6 +23,9 @@ function SystemSettingsCanvas(props: {
   rebalancePercent?: number
   apiRebalanceEnabled?: boolean
   apiRebalancePercent?: number
+  upstreamProjectIdMode?: SystemSettings['upstreamProjectIdMode']
+  upstreamProjectIdFixedValue?: string
+  upstreamMcpUserAgent?: string
   loadState?: 'initial_loading' | 'switch_loading' | 'refreshing' | 'ready' | 'error'
   error?: string | null
   saving?: boolean
@@ -41,6 +44,9 @@ function SystemSettingsCanvas(props: {
     rebalanceMcpSessionPercent: props.rebalancePercent ?? 100,
     apiRebalanceEnabled: props.apiRebalanceEnabled ?? false,
     apiRebalancePercent: props.apiRebalancePercent ?? 0,
+    upstreamProjectIdMode: props.upstreamProjectIdMode ?? 'accessToken',
+    upstreamProjectIdFixedValue: props.upstreamProjectIdFixedValue ?? '',
+    upstreamMcpUserAgent: props.upstreamMcpUserAgent ?? '',
     rechargeFeatureEnabled: true,
     rechargeUserEnabled: true,
     adminDefaultActiveUsersOnly: props.adminDefaultActiveUsersOnly ?? false,
@@ -204,6 +210,9 @@ const meta = {
       rebalanceMcpSessionPercent: 100,
       apiRebalanceEnabled: false,
       apiRebalancePercent: 0,
+      upstreamProjectIdMode: 'accessToken',
+      upstreamProjectIdFixedValue: '',
+      upstreamMcpUserAgent: '',
       rechargeFeatureEnabled: true,
       rechargeUserEnabled: true,
       adminDefaultActiveUsersOnly: false,
@@ -249,6 +258,16 @@ export const ApiRebalanceEnabled: Story = {
 
 export const ApiRebalanceDisabledSliderLocked: Story = {
   render: () => <SystemSettingsCanvas apiRebalanceEnabled={false} apiRebalancePercent={25} />,
+}
+
+export const FixedProjectIdAndControlUa: Story = {
+  render: () => (
+    <SystemSettingsCanvas
+      upstreamProjectIdMode="fixed"
+      upstreamProjectIdFixedValue="team-search-prod"
+      upstreamMcpUserAgent="codex-control/2026.07"
+    />
+  ),
 }
 
 export const Applying: Story = {

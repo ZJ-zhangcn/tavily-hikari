@@ -43,6 +43,7 @@ describe('AdminPages Storybook proofs', () => {
     expect(adminPageStories.Alerts).toMatchObject({})
     expect(adminPageStories.AlertsMobile).toMatchObject({})
     expect(adminPageStories.Recharges).toMatchObject({})
+    expect(adminPageStories.SystemSettingsPrivacy).toMatchObject({})
   })
 
   it('renders the sync-progress story with the progress bubble copy', () => {
@@ -395,6 +396,24 @@ describe('AdminPages Storybook proofs', () => {
     expect(markup).toContain('管理员密码')
     expect(markup).toContain('Passkey 管理')
     expect(markup).toContain('管理端 TOTP')
+  })
+
+  it('renders the system settings privacy child nav item as active', () => {
+    const renderStory = adminPageStories.SystemSettingsPrivacy.render as (() => JSX.Element) | undefined
+    expect(renderStory).toBeDefined()
+
+    const markup = renderToStaticMarkup(
+      createElement(
+        LanguageProvider,
+        { initialLanguage: 'zh' },
+        createElement(ThemeProvider, null, createElement(TooltipProvider, null, createElement(renderStory!))),
+      ),
+    )
+
+    expect(markup).toContain('上游隐私状态')
+    expect(markup).toContain('admin-nav-subitem-active')
+    expect(markup).toContain('出站 Header 白名单')
+    expect(markup).toContain('X-Project-ID')
   })
 
   it('renders the system settings HA page with node inventory and active child nav', () => {

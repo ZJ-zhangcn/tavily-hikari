@@ -108,6 +108,7 @@ import { ApiKeyBulkSyncProgressBubble } from '../ApiKeyBulkSyncProgressBubble'
 import ForwardProxySettingsModule from '../ForwardProxySettingsModule'
 import ModulePlaceholder from '../ModulePlaceholder'
 import SystemSettingsModule from '../SystemSettingsModule'
+import UpstreamPrivacyStatusModule from '../UpstreamPrivacyStatusModule'
 import AdminSecuritySettingsModule from '../AdminSecuritySettingsModule'
 import AdminRechargeRecordsModule from '../AdminRechargeRecordsModule'
 import type { ApiKeyBulkSyncProgressState } from '../apiKeyBulkSyncProgress'
@@ -3117,6 +3118,7 @@ function buildNavItems(
       icon: <Icon icon="mdi:cog-outline" width={18} height={18} />,
       children: [
         { target: 'system-settings', label: strings.systemSettings.subnav.general },
+        { target: 'system-settings-privacy', label: strings.systemSettings.subnav.privacyStatus },
         { target: 'system-settings-admin', label: strings.systemSettings.subnav.admin },
         { target: 'system-settings-ha', label: strings.systemSettings.subnav.highAvailability },
         { target: 'proxy-settings', label: strings.nav.proxySettings },
@@ -3219,6 +3221,11 @@ export function AdminPageFrame({
         return {
           title: admin.systemSettings.admin.title,
           description: admin.systemSettings.admin.description,
+        }
+      case 'system-settings-privacy':
+        return {
+          title: admin.systemSettings.privacy.title,
+          description: admin.systemSettings.privacy.description,
         }
       case 'system-settings-ha':
         return {
@@ -6339,6 +6346,9 @@ function SystemSettingsPageCanvas({
           rebalanceMcpSessionPercent: 100,
           apiRebalanceEnabled: false,
           apiRebalancePercent: 0,
+          upstreamProjectIdMode: 'accessToken',
+          upstreamProjectIdFixedValue: '',
+          upstreamMcpUserAgent: '',
           rechargeFeatureEnabled: true,
           rechargeUserEnabled: true,
           adminDefaultActiveUsersOnly: false,
@@ -6367,6 +6377,63 @@ function SystemSettingsPageCanvas({
           onToggle: () => {},
         }}
         onApply={() => {}}
+      />
+    </AdminPageFrame>
+  )
+}
+
+function SystemSettingsPrivacyPageCanvas(): JSX.Element {
+  const admin = useAdminTranslations()
+
+  return (
+    <AdminPageFrame activeModule="system-settings-privacy">
+      <UpstreamPrivacyStatusModule
+        strings={admin.systemSettings.privacy}
+        formStrings={admin.systemSettings.form}
+        language="zh"
+        status={{
+          phase: 'pending',
+          configuredProjectIdMode: 'accessToken',
+          effectiveProjectIdMode: 'accessToken',
+          fixedProjectIdConfigured: false,
+          configuredMcpUserAgent: 'codex-control/2026.07',
+          effectiveMcpUserAgent: 'codex-control/2026.07',
+          httpAllowedHeaders: ['accept', 'accept-encoding', 'content-type', 'x-project-id (policy injected)'],
+          controlMcpAllowedHeaders: ['accept', 'cache-control', 'mcp-protocol-version', 'mcp-session-id', 'user-agent (configured only)'],
+          gates: [
+            { key: 'accessTokenMode', ready: true, detail: 'AccessToken' },
+            { key: 'apiRebalance', ready: true, detail: '100%' },
+            { key: 'mcpRebalance', ready: true, detail: '100%' },
+            { key: 'controlSessionsDrained', ready: false, detail: '2' },
+          ],
+          completedGates: 3,
+          totalGates: 4,
+          activeControlSessions: 2,
+          currentPeriodCode: '2026-07-14/S2',
+          currentPeriodEndsAt: 1_783_994_400,
+          nextEpochAt: 1_783_994_400,
+          pendingResearch: 1,
+          queuedSettlements: 2,
+          degradedSettlements: 0,
+          recentAdjustments: [
+            {
+              settlementKey: 'v1:tok_demo:2026-07-14/S1',
+              tokenIdHint: 'tok_demo',
+              billingSubjectKind: 'token',
+              periodCode: '2026-07-14/S1',
+              deltaCredits: -3,
+              degradedReason: null,
+              createdAt: 1_783_958_100,
+            },
+          ],
+          generatedAt: 1_783_958_400,
+        }}
+        loadState="ready"
+        error={null}
+        refreshing={false}
+        autoRefreshEnabled
+        onAutoRefreshChange={() => {}}
+        onRefresh={() => {}}
       />
     </AdminPageFrame>
   )
@@ -7606,6 +7673,25 @@ export const SystemSettings: Story = {
     const navIcon = activeNavItem.querySelector<SVGElement>('.admin-nav-item-icon svg')
     if (!navIcon) {
       throw new Error('Expected system settings nav item to render its bundled SVG icon.')
+    }
+  },
+}
+
+export const SystemSettingsPrivacy: Story = {
+  render: () => <SystemSettingsPrivacyPageCanvas />,
+  parameters: {
+    viewport: { defaultViewport: '1440-device-desktop' },
+  },
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 80))
+    const activeSubitem = canvasElement.ownerDocument.querySelector<HTMLElement>('.admin-nav-subitem-active')
+    const activeText = activeSubitem?.textContent ?? ''
+    if (!activeText.includes('上游隐私状态') && !activeText.includes('Upstream Privacy Status')) {
+      throw new Error('Expected the upstream privacy status sidebar child item to be active.')
+    }
+    const pageText = canvasElement.ownerDocument.body.textContent ?? ''
+    if (!pageText.includes('出站 Header 白名单') && !pageText.includes('Outbound header allowlist')) {
+      throw new Error('Expected the privacy status page to render header allowlists.')
     }
   },
 }

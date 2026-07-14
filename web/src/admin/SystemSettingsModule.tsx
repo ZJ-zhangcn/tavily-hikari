@@ -7,6 +7,7 @@ import {
   type RequestLogRetentionProfile,
   type RequestLogRetentionSettings,
   type SystemSettings,
+  type UpstreamProjectIdMode,
 } from '../api'
 import type { QueryLoadState } from './queryLoadState'
 import type { AdminTranslations } from '../i18n'
@@ -57,6 +58,9 @@ type NormalSystemSettingsOverrides = Partial<
     | 'rebalanceMcpSessionPercent'
     | 'apiRebalanceEnabled'
     | 'apiRebalancePercent'
+    | 'upstreamProjectIdMode'
+    | 'upstreamProjectIdFixedValue'
+    | 'upstreamMcpUserAgent'
     | 'rechargeFeatureEnabled'
     | 'rechargeUserEnabled'
     | 'adminDefaultActiveUsersOnly'
@@ -132,6 +136,16 @@ function isValidPercentDraft(value: string): value is `${number}` {
   if (!/^\d+$/.test(value)) return false
   const parsed = Number.parseInt(value, 10)
   return Number.isSafeInteger(parsed) && parsed >= 0 && parsed <= 100
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).length
+}
+
+function isValidUpstreamHeaderDraft(value: string, maxBytes: number, allowEmpty: boolean): boolean {
+  if (!allowEmpty && value.length === 0) return false
+  if (/\p{Cc}/u.test(value)) return false
+  return utf8ByteLength(value) <= maxBytes
 }
 
 const clientIpHeaderPresets = [
@@ -263,6 +277,15 @@ export default function SystemSettingsModule({
   const [draftApiRebalancePercent, setDraftApiRebalancePercent] = useState(() =>
     settings ? String(settings.apiRebalancePercent) : '0',
   )
+  const [draftUpstreamProjectIdMode, setDraftUpstreamProjectIdMode] = useState<UpstreamProjectIdMode>(
+    settings?.upstreamProjectIdMode ?? 'accessToken',
+  )
+  const [draftUpstreamProjectIdFixedValue, setDraftUpstreamProjectIdFixedValue] = useState(
+    settings?.upstreamProjectIdFixedValue ?? '',
+  )
+  const [draftUpstreamMcpUserAgent, setDraftUpstreamMcpUserAgent] = useState(
+    settings?.upstreamMcpUserAgent ?? '',
+  )
   const [draftRechargeFeatureEnabled, setDraftRechargeFeatureEnabled] = useState(
     settings?.rechargeFeatureEnabled ?? true,
   )
@@ -295,6 +318,9 @@ export default function SystemSettingsModule({
     setDraftPercent(settings ? String(settings.rebalanceMcpSessionPercent) : '100')
     setDraftApiRebalanceEnabled(settings?.apiRebalanceEnabled ?? false)
     setDraftApiRebalancePercent(settings ? String(settings.apiRebalancePercent) : '0')
+    setDraftUpstreamProjectIdMode(settings?.upstreamProjectIdMode ?? 'accessToken')
+    setDraftUpstreamProjectIdFixedValue(settings?.upstreamProjectIdFixedValue ?? '')
+    setDraftUpstreamMcpUserAgent(settings?.upstreamMcpUserAgent ?? '')
     setDraftRechargeFeatureEnabled(settings?.rechargeFeatureEnabled ?? true)
     setDraftRechargeUserEnabled(settings?.rechargeUserEnabled ?? true)
     setDraftAdminDefaultActiveUsersOnly(settings?.adminDefaultActiveUsersOnly ?? false)
@@ -313,6 +339,9 @@ export default function SystemSettingsModule({
     settings?.rebalanceMcpSessionPercent,
     settings?.apiRebalanceEnabled,
     settings?.apiRebalancePercent,
+    settings?.upstreamProjectIdMode,
+    settings?.upstreamProjectIdFixedValue,
+    settings?.upstreamMcpUserAgent,
     settings?.rechargeFeatureEnabled,
     settings?.rechargeUserEnabled,
     settings?.adminDefaultActiveUsersOnly,
@@ -342,6 +371,8 @@ export default function SystemSettingsModule({
   const normalizedCount = draftCount.trim()
   const normalizedPercent = draftPercent.trim()
   const normalizedApiRebalancePercent = draftApiRebalancePercent.trim()
+  const normalizedUpstreamProjectIdFixedValue = draftUpstreamProjectIdFixedValue.trim()
+  const normalizedUpstreamMcpUserAgent = draftUpstreamMcpUserAgent.trim()
   const normalizedBlockedKeyBaseLimit = draftBlockedKeyBaseLimit.trim()
   const normalizedGlobalIpLimit = draftGlobalIpLimit.trim()
   const normalizedTrustedProxyCidrs = normalizedTrustedProxyCidrsFromDraft(draftTrustedProxyCidrs)
@@ -365,6 +396,21 @@ export default function SystemSettingsModule({
   const parsedGlobalIpLimit = isValidNonNegativeIntegerDraft(normalizedGlobalIpLimit)
     ? Number.parseInt(normalizedGlobalIpLimit, 10)
     : null
+  const upstreamProjectIdFixedValueValid = isValidUpstreamHeaderDraft(
+    normalizedUpstreamProjectIdFixedValue,
+    128,
+    draftUpstreamProjectIdMode !== 'fixed',
+  )
+  const upstreamMcpUserAgentValid = isValidUpstreamHeaderDraft(
+    normalizedUpstreamMcpUserAgent,
+    256,
+    true,
+  )
+  const projectIdModeLabels: Record<UpstreamProjectIdMode, string> = {
+    passthrough: strings.form.upstreamProjectIdModePassthrough,
+    fixed: strings.form.upstreamProjectIdModeFixed,
+    accessToken: strings.form.upstreamProjectIdModeAccessToken,
+  }
   const changed =
     settings != null &&
     parsedRequestRateLimit != null &&
@@ -373,6 +419,8 @@ export default function SystemSettingsModule({
     parsedApiRebalancePercent != null &&
     parsedBlockedKeyBaseLimit != null &&
     parsedGlobalIpLimit != null &&
+    upstreamProjectIdFixedValueValid &&
+    upstreamMcpUserAgentValid &&
     (parsedRequestRateLimit !== settings.requestRateLimit ||
       draftAuthTokenLogRetentionDays !== settings.authTokenLogRetentionDays ||
       parsedCount !== settings.mcpSessionAffinityKeyCount ||
@@ -380,6 +428,9 @@ export default function SystemSettingsModule({
       parsedPercent !== settings.rebalanceMcpSessionPercent ||
       draftApiRebalanceEnabled !== settings.apiRebalanceEnabled ||
       parsedApiRebalancePercent !== settings.apiRebalancePercent ||
+      draftUpstreamProjectIdMode !== settings.upstreamProjectIdMode ||
+      normalizedUpstreamProjectIdFixedValue !== settings.upstreamProjectIdFixedValue ||
+      normalizedUpstreamMcpUserAgent !== settings.upstreamMcpUserAgent ||
       draftRechargeFeatureEnabled !== settings.rechargeFeatureEnabled ||
       draftRechargeUserEnabled !== settings.rechargeUserEnabled ||
       draftAdminDefaultActiveUsersOnly !== settings.adminDefaultActiveUsersOnly ||
@@ -402,6 +453,10 @@ export default function SystemSettingsModule({
       normalizedApiRebalancePercent.length > 0 && parsedApiRebalancePercent == null
         ? strings.form.invalidPercent
         : null,
+    upstreamProjectIdFixedValue:
+      !upstreamProjectIdFixedValueValid ? strings.form.invalidUpstreamProjectIdFixedValue : null,
+    upstreamMcpUserAgent:
+      !upstreamMcpUserAgentValid ? strings.form.invalidUpstreamMcpUserAgent : null,
     blockedKeyBaseLimit:
       normalizedBlockedKeyBaseLimit.length > 0 && parsedBlockedKeyBaseLimit == null
         ? strings.form.invalidBlockedKeyBaseLimit
@@ -414,6 +469,8 @@ export default function SystemSettingsModule({
     fieldErrors.count ??
     fieldErrors.percent ??
     fieldErrors.apiRebalancePercent ??
+    fieldErrors.upstreamProjectIdFixedValue ??
+    fieldErrors.upstreamMcpUserAgent ??
     fieldErrors.blockedKeyBaseLimit ??
     fieldErrors.globalIpLimit ??
     parsedTrustedClientIpHeaders.duplicateError ??
@@ -424,8 +481,21 @@ export default function SystemSettingsModule({
   const affinityCountErrorId = 'system-settings-affinity-count-error'
   const rebalancePercentErrorId = 'system-settings-rebalance-percent-error'
   const apiRebalancePercentErrorId = 'system-settings-api-rebalance-percent-error'
+  const upstreamProjectIdFixedValueErrorId = 'system-settings-upstream-project-id-fixed-value-error'
+  const upstreamMcpUserAgentErrorId = 'system-settings-upstream-mcp-user-agent-error'
 
   const buildNormalSettingsPayload = (overrides: NormalSystemSettingsOverrides = {}): SystemSettings | null => {
+    const nextUpstreamProjectIdMode = overrides.upstreamProjectIdMode ?? draftUpstreamProjectIdMode
+    const nextUpstreamProjectIdFixedValue = (
+      overrides.upstreamProjectIdFixedValue ?? normalizedUpstreamProjectIdFixedValue
+    ).trim()
+    const nextUpstreamMcpUserAgent = (overrides.upstreamMcpUserAgent ?? normalizedUpstreamMcpUserAgent).trim()
+    const nextUpstreamProjectIdFixedValueValid = isValidUpstreamHeaderDraft(
+      nextUpstreamProjectIdFixedValue,
+      128,
+      nextUpstreamProjectIdMode !== 'fixed',
+    )
+    const nextUpstreamMcpUserAgentValid = isValidUpstreamHeaderDraft(nextUpstreamMcpUserAgent, 256, true)
     if (
       settings == null ||
       parsedRequestRateLimit == null ||
@@ -433,7 +503,9 @@ export default function SystemSettingsModule({
       parsedPercent == null ||
       parsedApiRebalancePercent == null ||
       parsedBlockedKeyBaseLimit == null ||
-      parsedGlobalIpLimit == null
+      parsedGlobalIpLimit == null ||
+      !nextUpstreamProjectIdFixedValueValid ||
+      !nextUpstreamMcpUserAgentValid
     )
       return null
     return {
@@ -445,6 +517,9 @@ export default function SystemSettingsModule({
       rebalanceMcpSessionPercent: overrides.rebalanceMcpSessionPercent ?? parsedPercent,
       apiRebalanceEnabled: overrides.apiRebalanceEnabled ?? draftApiRebalanceEnabled,
       apiRebalancePercent: overrides.apiRebalancePercent ?? parsedApiRebalancePercent,
+      upstreamProjectIdMode: nextUpstreamProjectIdMode,
+      upstreamProjectIdFixedValue: nextUpstreamProjectIdFixedValue,
+      upstreamMcpUserAgent: nextUpstreamMcpUserAgent,
       rechargeFeatureEnabled: overrides.rechargeFeatureEnabled ?? draftRechargeFeatureEnabled,
       rechargeUserEnabled: overrides.rechargeUserEnabled ?? draftRechargeUserEnabled,
       adminDefaultActiveUsersOnly:
@@ -466,6 +541,9 @@ export default function SystemSettingsModule({
       payload.rebalanceMcpSessionPercent !== settings.rebalanceMcpSessionPercent ||
       payload.apiRebalanceEnabled !== settings.apiRebalanceEnabled ||
       payload.apiRebalancePercent !== settings.apiRebalancePercent ||
+      payload.upstreamProjectIdMode !== settings.upstreamProjectIdMode ||
+      payload.upstreamProjectIdFixedValue !== settings.upstreamProjectIdFixedValue ||
+      payload.upstreamMcpUserAgent !== settings.upstreamMcpUserAgent ||
       payload.rechargeFeatureEnabled !== settings.rechargeFeatureEnabled ||
       payload.rechargeUserEnabled !== settings.rechargeUserEnabled ||
       payload.adminDefaultActiveUsersOnly !== settings.adminDefaultActiveUsersOnly ||
@@ -1375,6 +1453,138 @@ export default function SystemSettingsModule({
                     ? strings.form.apiRebalancePercentHint
                     : strings.form.apiRebalancePercentDisabledHint}
                 </p>
+              </div>
+            </div>
+          </section>
+
+          <section className="system-settings-config-section">
+            <h4>{strings.form.upstreamIdentityTitle}</h4>
+            <div className="system-settings-field-grid system-settings-field-grid--api">
+              <div className="system-settings-field">
+                <label className="text-sm font-medium" htmlFor="system-settings-upstream-project-id-mode">
+                  {strings.form.upstreamProjectIdModeLabel}
+                </label>
+                <div className="grid gap-2">
+                  <select
+                    id="system-settings-upstream-project-id-mode"
+                    className="input min-h-10"
+                    value={draftUpstreamProjectIdMode}
+                    disabled={saving}
+                  onChange={(event) => {
+                    setDraftUpstreamProjectIdMode(event.target.value as UpstreamProjectIdMode)
+                  }}
+                    onBlur={(event) => {
+                      void commitNormalSettings({
+                        upstreamProjectIdMode: event.currentTarget.value as UpstreamProjectIdMode,
+                      })
+                    }}
+                  >
+                    <option value="accessToken">{strings.form.upstreamProjectIdModeAccessToken}</option>
+                    <option value="passthrough">{strings.form.upstreamProjectIdModePassthrough}</option>
+                    <option value="fixed">{strings.form.upstreamProjectIdModeFixed}</option>
+                  </select>
+                  {settings && (
+                    <p className="system-settings-field-current text-xs text-muted-foreground">
+                      {strings.form.currentUpstreamProjectIdModeValue.replace(
+                        '{value}',
+                        projectIdModeLabels[settings.upstreamProjectIdMode],
+                      )}
+                    </p>
+                  )}
+                </div>
+                <p className="system-settings-field-hint text-xs text-muted-foreground">
+                  {strings.form.upstreamProjectIdModeHint}
+                </p>
+              </div>
+
+              <div className="system-settings-field">
+                <label className="text-sm font-medium" htmlFor="system-settings-upstream-project-id-fixed-value">
+                  {strings.form.upstreamProjectIdFixedValueLabel}
+                </label>
+                <Input
+                  id="system-settings-upstream-project-id-fixed-value"
+                  type="text"
+                  value={draftUpstreamProjectIdFixedValue}
+                  placeholder={strings.form.upstreamProjectIdFixedValuePlaceholder}
+                  disabled={saving}
+                  onChange={(event) => setDraftUpstreamProjectIdFixedValue(event.target.value)}
+                  onBlur={(event) => {
+                    void commitNormalSettings({
+                      upstreamProjectIdFixedValue: event.currentTarget.value.trim(),
+                    })
+                  }}
+                  onKeyDown={handleCommitKeyDown}
+                  aria-invalid={fieldErrors.upstreamProjectIdFixedValue ? true : undefined}
+                  aria-describedby={
+                    fieldErrors.upstreamProjectIdFixedValue ? upstreamProjectIdFixedValueErrorId : undefined
+                  }
+                />
+                {fieldErrors.upstreamProjectIdFixedValue && (
+                  <p
+                    id={upstreamProjectIdFixedValueErrorId}
+                    className="system-settings-field-error text-xs font-medium text-destructive"
+                  >
+                    {fieldErrors.upstreamProjectIdFixedValue}
+                  </p>
+                )}
+                {settings && (
+                  <p className="system-settings-field-current text-xs text-muted-foreground">
+                    {strings.form.currentUpstreamProjectIdFixedValue.replace(
+                      '{value}',
+                      settings.upstreamProjectIdFixedValue || '—',
+                    )}
+                  </p>
+                )}
+                <p className="system-settings-field-hint text-xs text-muted-foreground">
+                  {strings.form.upstreamProjectIdFixedValueHint}
+                </p>
+              </div>
+
+              <div className="system-settings-field">
+                <label className="text-sm font-medium" htmlFor="system-settings-upstream-mcp-user-agent">
+                  {strings.form.upstreamMcpUserAgentLabel}
+                </label>
+                <Input
+                  id="system-settings-upstream-mcp-user-agent"
+                  type="text"
+                  value={draftUpstreamMcpUserAgent}
+                  placeholder={strings.form.upstreamMcpUserAgentPlaceholder}
+                  disabled={saving}
+                  onChange={(event) => setDraftUpstreamMcpUserAgent(event.target.value)}
+                  onBlur={(event) => {
+                    void commitNormalSettings({
+                      upstreamMcpUserAgent: event.currentTarget.value.trim(),
+                    })
+                  }}
+                  onKeyDown={handleCommitKeyDown}
+                  aria-invalid={fieldErrors.upstreamMcpUserAgent ? true : undefined}
+                  aria-describedby={fieldErrors.upstreamMcpUserAgent ? upstreamMcpUserAgentErrorId : undefined}
+                />
+                {fieldErrors.upstreamMcpUserAgent && (
+                  <p
+                    id={upstreamMcpUserAgentErrorId}
+                    className="system-settings-field-error text-xs font-medium text-destructive"
+                  >
+                    {fieldErrors.upstreamMcpUserAgent}
+                  </p>
+                )}
+                {settings && (
+                  <p className="system-settings-field-current text-xs text-muted-foreground">
+                    {strings.form.currentUpstreamMcpUserAgentValue.replace(
+                      '{value}',
+                      settings.upstreamMcpUserAgent || '—',
+                    )}
+                  </p>
+                )}
+                <p className="system-settings-field-hint text-xs text-muted-foreground">
+                  {strings.form.upstreamMcpUserAgentHint}
+                </p>
+              </div>
+
+              <div className="system-settings-field system-settings-field--notice">
+                <div className="system-settings-field-copy">
+                  <strong className="text-sm font-medium">{strings.form.upstreamHttpUserAgentNotice}</strong>
+                </div>
               </div>
             </div>
           </section>
