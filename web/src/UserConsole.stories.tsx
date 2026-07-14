@@ -2238,11 +2238,17 @@ async function assertStickyLogHeader(canvasElement: HTMLElement) {
 
   const style = window.getComputedStyle(header)
   const contentStyle = window.getComputedStyle(content)
+  const backgroundAlpha = style.backgroundColor.startsWith('rgba(')
+    ? Number(style.backgroundColor.slice(style.backgroundColor.lastIndexOf(',') + 1, -1).trim())
+    : 1
   if (style.position !== 'sticky') {
     throw new Error(`Expected recent-request header position to be sticky, got ${style.position}.`)
   }
   if (style.backgroundColor === 'transparent' || style.backgroundColor === 'rgba(0, 0, 0, 0)') {
     throw new Error('Expected the sticky header to provide an opaque fallback surface.')
+  }
+  if (!Number.isFinite(backgroundAlpha) || backgroundAlpha >= 0.98) {
+    throw new Error('Expected the sticky header surface to stay semi-transparent instead of fully opaque.')
   }
   if (Number(style.zIndex) <= Number(contentStyle.zIndex)) {
     throw new Error('Expected the sticky header surface to paint above the scrolling table content.')

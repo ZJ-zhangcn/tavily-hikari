@@ -415,15 +415,6 @@
     background: hsl(var(--muted) / 0.48);
   }
 
-  .dark .table-sticky-header-overlay {
-    background: hsl(var(--card));
-    border-bottom-color: hsl(var(--border) / 0.78);
-  }
-
-  .dark .table-sticky-header-overlay::before {
-    background: hsl(var(--card) / 0.2);
-  }
-
   .dark .table-wrapper .empty-state.alert,
   .dark .error-banner {
     border-color: hsl(var(--destructive) / 0.34);

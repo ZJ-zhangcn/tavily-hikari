@@ -5,4 +5,6 @@
 - 2026-06-10: Implemented the API filter contract, user-console log metadata, desktop 10-row scroll
   layout, mobile entry-only detail surface, Storybook checks, and updated visual evidence.
 - 2026-07-14: Reworked the desktop scroll header into a synchronized blurred backdrop after native
-  backdrop filtering failed to obscure row text consistently inside the table scroll container.
+  backdrop filtering failed to obscure row text consistently inside the table scroll container, and
+  tuned the replacement surface to keep visible translucent blur in both themes without letting row
+  text remain legible.
