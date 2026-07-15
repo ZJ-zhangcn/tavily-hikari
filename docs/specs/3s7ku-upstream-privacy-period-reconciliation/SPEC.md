@@ -152,26 +152,31 @@
 - source: `ui_demo` (`http://127.0.0.1:55174`, mock-only browser demo)
 - PR: include
 - desktop system settings reconciliation controls
+- verifies: system settings now groups upstream identity controls and the new reconciliation enable switch under the same admin surface; `X-Project-ID` defaults to `accessToken`, Control MCP UA stays blank-by-default, and precise reconciliation remains disabled by default.
 
   ![System settings reconciliation controls](./assets/system-settings-reconciliation-controls-desktop.png)
 
 - PR: include
 - desktop users list comparison column
+- verifies: when precise reconciliation stays disabled, `/admin/users` renders the dedicated `新方案 24h` comparison column next to the live 24h column.
 
   ![Users list comparison column](./assets/users-list-shadow-comparison-desktop.png)
 
 - PR: include
 - desktop users usage comparison column
+- verifies: `/admin/users/usage` shows the same `新方案 24h` comparison column without collapsing the existing 5m / 1h / success-rate hierarchy.
 
   ![Users usage comparison column](./assets/users-usage-shadow-comparison-desktop.png)
 
 - PR: include
 - desktop system status page
+- verifies: `/admin/system-settings/status` uses the shared “系统状态” route, foregrounds only live gates / queues / counters, and keeps the detailed header allowlist + reconciliation disclosure below the fold.
 
   ![System status desktop](./assets/system-status-desktop.png)
 
 - PR: include
 - mobile system status page
+- verifies: the same system-status route keeps the switch, counters, gate chips, and summary cards readable on narrow screens without the previously broken switch layout.
 
   ![System status mobile](./assets/system-status-mobile.png)
 
