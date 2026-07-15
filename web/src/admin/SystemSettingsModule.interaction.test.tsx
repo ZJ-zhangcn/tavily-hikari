@@ -16,7 +16,7 @@ const initialSettings: SystemSettings = {
   authTokenLogRetentionDays: 92,
   mcpSessionAffinityKeyCount: 5,
   rebalanceMcpEnabled: false,
-  rebalanceMcpSessionPercent: 100,
+  rebalanceMcpSessionPercent: 0,
   apiRebalanceEnabled: false,
   apiRebalancePercent: 0,
   upstreamProjectIdMode: 'accessToken',
@@ -47,90 +47,11 @@ async function flushEffects(): Promise<void> {
   })
 }
 
-function setNativeTextValue(element: HTMLInputElement, value: string): void {
-  const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value')
-  descriptor?.set?.call(element, value)
-  element.dispatchEvent(new Event('input', { bubbles: true }))
-}
-
-function setNativeSelectValue(element: HTMLSelectElement, value: string): void {
-  const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), 'value')
-  descriptor?.set?.call(element, value)
-  element.dispatchEvent(new Event('change', { bubbles: true }))
-}
-
 afterEach(() => {
   document.body.innerHTML = ''
 })
 
 describe('SystemSettingsModule interactions', () => {
-  it('saves upstream identity controls on blur', async () => {
-    const applied: SystemSettings[] = []
-    const container = document.createElement('div')
-    document.body.appendChild(container)
-    const root = createRoot(container)
-
-    function Harness(): JSX.Element {
-      const [settings, setSettings] = useState<SystemSettings>(initialSettings)
-      return (
-        <SystemSettingsModule
-          strings={strings}
-          settings={settings}
-          loadState="ready"
-          error={null}
-          saving={false}
-          onApply={(nextSettings) => {
-            applied.push(nextSettings)
-            setSettings(nextSettings)
-          }}
-        />
-      )
-    }
-
-    await act(async () => {
-      root.render(<Harness />)
-    })
-    await flushEffects()
-
-    const modeSelect = document.querySelector<HTMLSelectElement>('#system-settings-upstream-project-id-mode')
-    const fixedValueInput = document.querySelector<HTMLInputElement>('#system-settings-upstream-project-id-fixed-value')
-    const userAgentInput = document.querySelector<HTMLInputElement>('#system-settings-upstream-mcp-user-agent')
-    expect(modeSelect).not.toBeNull()
-    expect(fixedValueInput).not.toBeNull()
-    expect(userAgentInput).not.toBeNull()
-
-    await act(async () => {
-      setNativeSelectValue(modeSelect!, 'fixed')
-    })
-    await flushEffects()
-
-    await act(async () => {
-      setNativeTextValue(fixedValueInput!, 'team-search-prod')
-    })
-    await flushEffects()
-
-    await act(async () => {
-      fixedValueInput!.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
-    })
-    await flushEffects()
-
-    await act(async () => {
-      setNativeTextValue(userAgentInput!, 'custom-control-mcp')
-    })
-    await flushEffects()
-
-    await act(async () => {
-      userAgentInput!.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
-    })
-    await flushEffects()
-
-    expect(applied.at(-1)?.upstreamProjectIdMode).toBe('fixed')
-    expect(applied.at(-1)?.upstreamProjectIdFixedValue).toBe('team-search-prod')
-    expect(applied.at(-1)?.upstreamMcpUserAgent).toBe('custom-control-mcp')
-
-    await act(async () => root.unmount())
-  })
-
   it('saves switches immediately and keeps the previous value when save fails', async () => {
     const applied: SystemSettings[] = []
     const container = document.createElement('div')

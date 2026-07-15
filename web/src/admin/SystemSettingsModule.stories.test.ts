@@ -13,9 +13,7 @@ describe('SystemSettingsModule Storybook proofs', () => {
     expect(systemSettingsStories.Default).toMatchObject({})
     expect(systemSettingsStories.RequestRateEdited).toMatchObject({})
     expect(systemSettingsStories.RebalanceEnabled).toMatchObject({})
-    expect(systemSettingsStories.RebalanceDisabledSliderLocked).toMatchObject({})
     expect(systemSettingsStories.ApiRebalanceEnabled).toMatchObject({})
-    expect(systemSettingsStories.ApiRebalanceDisabledSliderLocked).toMatchObject({})
     expect(systemSettingsStories.FixedProjectIdAndControlUa).toMatchObject({})
     expect(systemSettingsStories.ComparisonOnlyReconciliation).toMatchObject({})
     expect(systemSettingsStories.Applying).toMatchObject({})
@@ -61,13 +59,13 @@ describe('SystemSettingsModule Storybook proofs', () => {
     expect(markup).toContain('当前基础值：8')
   })
 
-  it('renders the API rebalance story with the configured rollout ratio', () => {
+  it('renders the API rebalance story without rollout controls', () => {
     const renderStory = systemSettingsStories.ApiRebalanceEnabled.render as (() => JSX.Element) | undefined
     expect(renderStory).toBeDefined()
 
     const markup = renderToStaticMarkup(createElement(renderStory!))
     expect(markup).toContain('启用 API Rebalance')
-    expect(markup).toContain('当前 API 比例：25%')
+    expect(markup).not.toContain('API 请求放量比例')
   })
 
   it('renders the fixed project id story with the configured Control MCP UA', () => {

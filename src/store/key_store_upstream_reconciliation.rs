@@ -32,9 +32,7 @@ impl KeyStore {
         let active_control_sessions = self.count_active_control_mcp_sessions(now).await?;
         let static_ready = settings.upstream_project_id_mode == UpstreamProjectIdMode::AccessToken
             && settings.api_rebalance_enabled
-            && settings.api_rebalance_percent == 100
-            && settings.rebalance_mcp_enabled
-            && settings.rebalance_mcp_session_percent == 100;
+            && settings.rebalance_mcp_enabled;
         let current = self
             .get_meta_i64(META_KEY_UPSTREAM_RECONCILIATION_READY_AFTER_V1)
             .await?

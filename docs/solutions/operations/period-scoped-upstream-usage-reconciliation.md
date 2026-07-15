@@ -99,12 +99,12 @@ In Tavily Hikari:
 Operators need to know whether exact reconciliation is active or merely configured. Expose:
 
 - configured vs effective anonymization mode;
-- rollout gates;
+- activation gates;
 - active legacy sessions still preventing precise mode;
 - queued settlements;
 - pending async work;
 - degraded settlements;
 - recent signed adjustments.
 
-This is why Tavily Hikari ships a dedicated `Upstream Privacy Status` admin page instead of hiding
-the state inside logs.
+This is why Tavily Hikari ships a dedicated `System Status` admin page instead of hiding the state
+inside logs.

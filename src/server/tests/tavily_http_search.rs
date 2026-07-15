@@ -1460,7 +1460,8 @@ use tavily_hikari::UpstreamProjectIdMode;
     }
 
     #[tokio::test]
-    async fn tavily_http_search_default_rollout_uses_legacy_project_affinity_effect() {
+    async fn tavily_http_search_default_api_rebalance_disabled_uses_legacy_project_affinity_effect()
+    {
         let db_path = temp_db_path("http-search-project-header-forward");
         let db_str = db_path.to_string_lossy().to_string();
 
@@ -1570,7 +1571,7 @@ use tavily_hikari::UpstreamProjectIdMode;
     }
 
     #[tokio::test]
-    async fn tavily_http_search_api_rebalance_percent_100_uses_generic_selector() {
+    async fn tavily_http_search_api_rebalance_enabled_uses_generic_selector() {
         let db_path = temp_db_path("http-search-api-rebalance-enabled");
         let db_str = db_path.to_string_lossy().to_string();
 
@@ -1595,7 +1596,7 @@ use tavily_hikari::UpstreamProjectIdMode;
         proxy
             .set_system_settings(&settings)
             .await
-            .expect("enable API rebalance rollout with passthrough project id mode");
+            .expect("enable API rebalance with passthrough project id mode");
         let pool = connect_sqlite_test_pool(&db_str).await;
         let access_token = proxy
             .create_access_token(Some("http-search-api-rebalance-enabled"))
@@ -1644,7 +1645,7 @@ use tavily_hikari::UpstreamProjectIdMode;
     }
 
     #[tokio::test]
-    async fn tavily_http_search_api_rebalance_percent_zero_uses_legacy_primary() {
+    async fn tavily_http_search_api_rebalance_disabled_uses_legacy_primary() {
         let db_path = temp_db_path("http-search-api-rebalance-zero");
         let db_str = db_path.to_string_lossy().to_string();
         let primary_secret = "tvly-http-api-rollout-zero-primary";
@@ -1694,18 +1695,18 @@ use tavily_hikari::UpstreamProjectIdMode;
             .get_system_settings()
             .await
             .expect("load system settings");
-        settings.api_rebalance_enabled = true;
+        settings.api_rebalance_enabled = false;
         settings.api_rebalance_percent = 0;
         proxy
             .set_system_settings(&settings)
             .await
-            .expect("set API rebalance zero rollout");
+            .expect("disable API rebalance");
 
         let proxy_addr = spawn_proxy_server(proxy.clone(), usage_base).await;
         let resp = Client::new()
             .post(format!("http://{}/api/tavily/search", proxy_addr))
             .header("Authorization", format!("Bearer {}", token.token))
-            .json(&serde_json::json!({ "query": "api rebalance disabled by percent" }))
+            .json(&serde_json::json!({ "query": "api rebalance disabled" }))
             .send()
             .await
             .expect("request to proxy succeeds");

@@ -20,8 +20,8 @@ const pendingStatus: UpstreamPrivacyStatus = {
   controlMcpAllowedHeaders: ['accept', 'cache-control', 'mcp-protocol-version', 'mcp-session-id', 'user-agent (configured only)'],
   gates: [
     { key: 'accessTokenMode', ready: true, detail: 'accessToken' },
-    { key: 'apiRebalance', ready: true, detail: '100%' },
-    { key: 'mcpRebalance', ready: true, detail: '100%' },
+    { key: 'apiRebalance', ready: true, detail: 'enabled' },
+    { key: 'mcpRebalance', ready: true, detail: 'enabled' },
     { key: 'controlSessionsDrained', ready: false, detail: '2' },
   ],
   completedGates: 3,

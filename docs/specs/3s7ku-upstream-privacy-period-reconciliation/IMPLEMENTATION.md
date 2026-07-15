@@ -12,9 +12,10 @@
 
 - 后端已统一三条出站路径的 Header allowlist：Tavily HTTP / Rebalance HTTP 仅保留 `accept`、`accept-encoding`、`content-type` 与策略注入后的 `x-project-id`；Control MCP 仅保留协议恢复头，并按配置选择性注入固定 `user-agent`。
 - `SystemSettings` 已持久化 `upstreamProjectIdMode`、`upstreamProjectIdFixedValue`、`upstreamMcpUserAgent`，默认 `accessToken`，并对 fixed/UA 输入做长度与控制字符校验。
+- `rebalanceMcpSessionPercent` 与 `apiRebalancePercent` 继续作为兼容字段保留，但运行时与管理端都只按对应开关工作，并统一归一化为 `0|100`。
 - `accessToken` 模式已接入 `HMAC-SHA256(secret, "v1" + token_id + period_code)`，业务窗口按服务器本地时区 `S1=00-11`、`S2=11-22`、`S3=22-24` 切分。
 - 已落地完整窗口对账、Research 终态等待、24 小时 degraded 兜底、signed reconciliation adjustment 账本，以及对小时/日/月额度的归属修正。
-- 管理端已新增系统设置中的上游身份配置控件、`/admin/system-settings/status` 系统状态页、对应 Storybook coverage 与 mock-only UI 证据。
+- 管理端已新增系统设置中的上游身份配置控件、`/admin/system-settings/status` 系统状态页，并移除了独立的 rebalance 比例控件；对应 Storybook coverage 与 mock-only UI 证据已更新为开关语义。
 
 ## Remaining Gaps
 

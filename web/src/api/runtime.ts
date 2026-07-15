@@ -3828,7 +3828,7 @@ function createEmptySystemSettings(): SystemSettings {
     authTokenLogRetentionDays: 92,
     mcpSessionAffinityKeyCount: 5,
     rebalanceMcpEnabled: false,
-    rebalanceMcpSessionPercent: 100,
+    rebalanceMcpSessionPercent: 0,
     apiRebalanceEnabled: false,
     apiRebalancePercent: 0,
     upstreamProjectIdMode: 'accessToken',

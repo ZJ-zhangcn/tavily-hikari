@@ -7,15 +7,7 @@ enum TavilyUpstreamMode {
 const HIKARI_ROUTING_KEY_HEADER: &str = "x-hikari-routing-key";
 
 fn should_use_api_rebalance(settings: &tavily_hikari::SystemSettings) -> bool {
-    if !settings.api_rebalance_enabled || settings.api_rebalance_percent <= 0 {
-        return false;
-    }
-    if settings.api_rebalance_percent >= 100 {
-        return true;
-    }
-
-    let mut rng = rand::thread_rng();
-    rng.gen_range(0..100) < settings.api_rebalance_percent
+    settings.api_rebalance_enabled
 }
 
 #[derive(Clone, Copy)]

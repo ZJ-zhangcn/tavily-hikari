@@ -13,9 +13,8 @@ impl TavilyProxy {
             .await?
             .unwrap_or(0);
         let mode_ready = settings.upstream_project_id_mode == UpstreamProjectIdMode::AccessToken;
-        let api_ready = settings.api_rebalance_enabled && settings.api_rebalance_percent == 100;
-        let mcp_ready = settings.rebalance_mcp_enabled
-            && settings.rebalance_mcp_session_percent == 100;
+        let api_ready = settings.api_rebalance_enabled;
+        let mcp_ready = settings.rebalance_mcp_enabled;
         let sessions_ready = active_control_sessions == 0;
         let gates = vec![
             UpstreamPrivacyGate {
@@ -26,12 +25,12 @@ impl TavilyProxy {
             UpstreamPrivacyGate {
                 key: "apiRebalance".to_string(),
                 ready: api_ready,
-                detail: format!("{}%", settings.api_rebalance_percent),
+                detail: if api_ready { "enabled" } else { "disabled" }.to_string(),
             },
             UpstreamPrivacyGate {
                 key: "mcpRebalance".to_string(),
                 ready: mcp_ready,
-                detail: format!("{}%", settings.rebalance_mcp_session_percent),
+                detail: if mcp_ready { "enabled" } else { "disabled" }.to_string(),
             },
             UpstreamPrivacyGate {
                 key: "controlSessionsDrained".to_string(),

@@ -9922,7 +9922,11 @@ function AdminDashboard(): JSX.Element {
           title: adminStrings.modules.announcements.title,
           description: adminStrings.modules.announcements.description,
         }
-      case 'system-settings':
+      case 'system-settings': {
+        const systemStatusDescription =
+          language === 'zh'
+            ? '查看系统当前在出站 Header 白名单、`X-Project-ID` 策略、Control MCP UA、生效门禁与分段对账上的实际状态。'
+            : 'Review the effective system state for the outbound header allowlist, `X-Project-ID` policy, Control MCP UA, activation gates, and segmented reconciliation.'
         if (systemSettingsView === 'ha') {
           return {
             title: systemSettingsStrings.ha.title,
@@ -9934,7 +9938,7 @@ function AdminDashboard(): JSX.Element {
         if (systemSettingsView === 'status') {
           return {
             title: systemSettingsStrings.privacy.title,
-            description: systemSettingsStrings.privacy.description,
+            description: systemStatusDescription,
           }
         }
         if (systemSettingsView === 'admin') {
@@ -9947,6 +9951,7 @@ function AdminDashboard(): JSX.Element {
           title: systemSettingsStrings.title,
           description: systemSettingsStrings.description,
         }
+      }
       case 'proxy-settings':
         return {
           title: proxySettingsStrings.title,

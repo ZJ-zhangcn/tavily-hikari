@@ -109,7 +109,6 @@ async fn proxy_handler(
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             !has_active_control_session
                 && settings.rebalance_mcp_enabled
-                && settings.rebalance_mcp_session_percent > 0
         }
     } else {
         false
@@ -451,9 +450,7 @@ async fn proxy_handler(
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let proxy_session_id = nanoid::nanoid!(24);
         let ab_bucket = stable_rebalance_bucket(&proxy_session_id);
-        let use_rebalance = settings.rebalance_mcp_enabled
-            && settings.rebalance_mcp_session_percent > 0
-            && ab_bucket < settings.rebalance_mcp_session_percent;
+        let use_rebalance = settings.rebalance_mcp_enabled;
         planned_initialize_proxy_session_id = Some(proxy_session_id);
         planned_initialize_ab_bucket = Some(ab_bucket);
         planned_initialize_gateway_mode = if use_rebalance {
@@ -476,7 +473,7 @@ async fn proxy_handler(
             .get_system_settings()
             .await
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        if settings.rebalance_mcp_enabled && settings.rebalance_mcp_session_percent > 0 {
+        if settings.rebalance_mcp_enabled {
             active_mcp_gateway_mode = tavily_hikari::MCP_GATEWAY_MODE_REBALANCE.to_string();
         }
     }

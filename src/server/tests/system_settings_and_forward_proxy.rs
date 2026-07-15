@@ -59,7 +59,7 @@ use super::upstream_support_and_manual_jobs::*;
         assert_eq!(updated_body["requestRateLimit"].as_i64(), Some(88));
         assert_eq!(updated_body["mcpSessionAffinityKeyCount"].as_i64(), Some(3));
         assert_eq!(updated_body["rebalanceMcpEnabled"].as_bool(), Some(true));
-        assert_eq!(updated_body["rebalanceMcpSessionPercent"].as_i64(), Some(40));
+        assert_eq!(updated_body["rebalanceMcpSessionPercent"].as_i64(), Some(100));
         assert_eq!(updated_body["apiRebalanceEnabled"].as_bool(), Some(false));
         assert_eq!(updated_body["apiRebalancePercent"].as_i64(), Some(0));
         assert_eq!(updated_body["userBlockedKeyBaseLimit"].as_i64(), Some(7));
@@ -729,7 +729,7 @@ use super::upstream_support_and_manual_jobs::*;
     }
 
     #[tokio::test]
-    async fn admin_system_settings_reject_invalid_rebalance_percent() {
+    async fn admin_system_settings_normalizes_rebalance_percent_to_toggle_state() {
         let db_path = temp_db_path("admin-system-settings-invalid-rebalance-percent");
         let db_str = db_path.to_string_lossy().to_string();
         let upstream_addr = spawn_forward_proxy_probe_upstream().await;
@@ -751,20 +751,21 @@ use super::upstream_support_and_manual_jobs::*;
             }))
             .send()
             .await
-            .expect("update invalid rebalance percent");
+            .expect("update rebalance percent");
 
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let body = response.text().await.expect("invalid body");
-        assert!(
-            body.contains("rebalance_mcp_session_percent"),
-            "expected range validation error, got {body}"
-        );
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response
+            .json::<serde_json::Value>()
+            .await
+            .expect("decode normalized body");
+        assert_eq!(body["rebalanceMcpEnabled"].as_bool(), Some(true));
+        assert_eq!(body["rebalanceMcpSessionPercent"].as_i64(), Some(100));
 
         let _ = std::fs::remove_file(db_path);
     }
 
     #[tokio::test]
-    async fn admin_system_settings_reject_invalid_api_rebalance_percent() {
+    async fn admin_system_settings_normalizes_api_rebalance_percent_to_toggle_state() {
         let db_path = temp_db_path("admin-system-settings-invalid-api-rebalance-percent");
         let db_str = db_path.to_string_lossy().to_string();
         let upstream_addr = spawn_forward_proxy_probe_upstream().await;
@@ -787,14 +788,15 @@ use super::upstream_support_and_manual_jobs::*;
             }))
             .send()
             .await
-            .expect("update invalid API rebalance percent");
+            .expect("update API rebalance percent");
 
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        let body = response.text().await.expect("invalid body");
-        assert!(
-            body.contains("api_rebalance_percent"),
-            "expected API rebalance range validation error, got {body}"
-        );
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response
+            .json::<serde_json::Value>()
+            .await
+            .expect("decode normalized body");
+        assert_eq!(body["apiRebalanceEnabled"].as_bool(), Some(true));
+        assert_eq!(body["apiRebalancePercent"].as_i64(), Some(100));
 
         let _ = std::fs::remove_file(db_path);
     }

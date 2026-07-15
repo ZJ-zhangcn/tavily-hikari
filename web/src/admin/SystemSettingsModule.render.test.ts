@@ -40,7 +40,7 @@ describe('SystemSettingsModule rendering', () => {
           authTokenLogRetentionDays: 92,
           mcpSessionAffinityKeyCount: 5,
           rebalanceMcpEnabled: false,
-          rebalanceMcpSessionPercent: 100,
+          rebalanceMcpSessionPercent: 0,
           apiRebalanceEnabled: false,
           apiRebalancePercent: 0,
           upstreamProjectIdMode: 'accessToken',
@@ -79,14 +79,13 @@ describe('SystemSettingsModule rendering', () => {
     expect(markup).toContain(zhStrings.form.currentRequestRateLimitValue.replace('{count}', '100'))
     expect(markup).toContain(zhStrings.form.requestRateLimitHint)
     expect(markup).toContain(zhStrings.form.currentValue.replace('{count}', '5'))
-    expect(markup).toContain(zhStrings.form.currentPercentValue.replace('{percent}', '100'))
-    expect(markup).toContain(zhStrings.form.currentApiRebalancePercentValue.replace('{percent}', '0'))
+    expect(markup).toContain(zhStrings.form.rebalanceLabel)
+    expect(markup).toContain(zhStrings.form.apiRebalanceLabel)
     expect(markup).toContain(zhStrings.form.upstreamProjectIdModeLabel)
     expect(markup).toContain(zhStrings.form.upstreamProjectIdModeAccessToken)
     expect(markup).toContain(zhStrings.form.upstreamMcpUserAgentLabel)
     expect(markup).toContain(zhStrings.form.upstreamPreciseReconciliationTitle)
     expect(markup).toContain(zhStrings.form.upstreamPreciseReconciliationEnabledValue)
-    expect(markup).toContain(zhStrings.form.apiRebalancePercentDisabledHint)
     expect(markup).toContain(zhStrings.form.rechargeFeatureLabel)
     expect(markup).toContain(zhStrings.form.rechargeUserLabel)
     expect(markup).toContain(zhStrings.form.activeUsersDefaultLabel)
@@ -101,6 +100,8 @@ describe('SystemSettingsModule rendering', () => {
     expect(markup).not.toContain(zhStrings.form.description)
     expect(markup).not.toContain(zhStrings.form.countHint)
     expect(markup).not.toContain(zhStrings.form.percentHint)
+    expect(markup).not.toContain(zhStrings.form.percentLabel)
+    expect(markup).not.toContain(zhStrings.form.apiRebalancePercentLabel)
     expect(markup).not.toContain(zhStrings.form.applyScopeHint)
   })
 
@@ -113,7 +114,7 @@ describe('SystemSettingsModule rendering', () => {
           authTokenLogRetentionDays: 14,
           mcpSessionAffinityKeyCount: 5,
           rebalanceMcpEnabled: false,
-          rebalanceMcpSessionPercent: 100,
+          rebalanceMcpSessionPercent: 0,
           apiRebalanceEnabled: false,
           apiRebalancePercent: 0,
           upstreamProjectIdMode: 'accessToken',
@@ -155,9 +156,9 @@ describe('SystemSettingsModule rendering', () => {
           authTokenLogRetentionDays: 92,
           mcpSessionAffinityKeyCount: 5,
           rebalanceMcpEnabled: true,
-          rebalanceMcpSessionPercent: 35,
+          rebalanceMcpSessionPercent: 100,
           apiRebalanceEnabled: true,
-          apiRebalancePercent: 25,
+          apiRebalancePercent: 100,
           upstreamProjectIdMode: 'accessToken',
           upstreamProjectIdFixedValue: '',
           upstreamMcpUserAgent: '',
@@ -187,7 +188,7 @@ describe('SystemSettingsModule rendering', () => {
     expect(markup).toContain(zhStrings.actions.applying)
   })
 
-  it('shows the locked hint when rebalance is disabled', () => {
+  it('does not render the removed rebalance rollout controls', () => {
     const markup = renderToStaticMarkup(
       createElement(SystemSettingsModule, {
         strings: zhStrings,
@@ -196,9 +197,9 @@ describe('SystemSettingsModule rendering', () => {
           authTokenLogRetentionDays: 92,
           mcpSessionAffinityKeyCount: 5,
           rebalanceMcpEnabled: false,
-          rebalanceMcpSessionPercent: 35,
+          rebalanceMcpSessionPercent: 0,
           apiRebalanceEnabled: false,
-          apiRebalancePercent: 25,
+          apiRebalancePercent: 0,
           upstreamProjectIdMode: 'accessToken',
           upstreamProjectIdFixedValue: '',
           upstreamMcpUserAgent: '',
@@ -225,7 +226,9 @@ describe('SystemSettingsModule rendering', () => {
       }),
     )
 
-    expect(markup).toContain(zhStrings.form.percentDisabledHint)
-    expect(markup).toContain(zhStrings.form.apiRebalancePercentDisabledHint)
+    expect(markup).not.toContain(zhStrings.form.percentLabel)
+    expect(markup).not.toContain(zhStrings.form.apiRebalancePercentLabel)
+    expect(markup).not.toContain('system-settings-rebalance-percent')
+    expect(markup).not.toContain('system-settings-api-rebalance-percent')
   })
 })

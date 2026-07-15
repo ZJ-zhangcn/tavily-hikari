@@ -54,14 +54,18 @@ interface StatusIssue {
   tone: 'warning' | 'error' | 'info'
 }
 
-function gateLabel(strings: AdminTranslations['systemSettings']['privacy'], gate: UpstreamPrivacyGate): string {
+function gateLabel(
+  strings: AdminTranslations['systemSettings']['privacy'],
+  language: Language,
+  gate: UpstreamPrivacyGate,
+): string {
   switch (gate.key) {
     case 'accessTokenMode':
       return strings.gateAccessTokenMode
     case 'apiRebalance':
-      return strings.gateApiRebalance
+      return language === 'zh' ? 'API Rebalance 已启用' : 'API Rebalance enabled'
     case 'mcpRebalance':
-      return strings.gateMcpRebalance
+      return language === 'zh' ? 'Rebalance MCP 已启用' : 'Rebalance MCP enabled'
     case 'controlSessionsDrained':
       return strings.gateControlSessionsDrained
     default:
@@ -142,7 +146,7 @@ export default function UpstreamPrivacyStatusModule({
     pendingGates.forEach((gate) => {
       issues.push({
         key: `gate:${gate.key}`,
-        title: gateLabel(strings, gate),
+        title: gateLabel(strings, language, gate),
         detail: gate.detail,
         tone: 'warning',
       })
@@ -176,7 +180,7 @@ export default function UpstreamPrivacyStatusModule({
     }
 
     return issues
-  }, [numberFormatter, status, strings])
+  }, [language, numberFormatter, status, strings])
 
   const summarySignals = useMemo(
     () =>
@@ -411,7 +415,7 @@ export default function UpstreamPrivacyStatusModule({
                     {status.gates.map((gate) => (
                       <article key={gate.key} className="upstream-privacy-gate">
                         <div className="upstream-privacy-gate__head">
-                          <strong>{gateLabel(strings, gate)}</strong>
+                          <strong>{gateLabel(strings, language, gate)}</strong>
                           <StatusBadge tone={gate.ready ? 'success' : 'warning'}>
                             {gate.ready ? strings.gateReady : strings.gateWaiting}
                           </StatusBadge>

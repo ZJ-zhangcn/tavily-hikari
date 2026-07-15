@@ -1396,7 +1396,7 @@ use tavily_hikari::UpstreamProjectIdMode;
         proxy
             .set_system_settings(&settings)
             .await
-            .expect("enable API rebalance rollout and passthrough project id mode for Hikari routing assertion");
+            .expect("enable API rebalance and passthrough project id mode for Hikari routing assertion");
         let token = proxy
             .create_access_token(Some("http-search-hikari-routing"))
             .await

@@ -34,14 +34,14 @@ async fn reconciliation_waits_for_a_complete_eligible_period() {
     .expect("create proxy");
     let mut settings = proxy.get_system_settings().await.expect("load settings");
     settings.upstream_project_id_mode = UpstreamProjectIdMode::AccessToken;
-    settings.api_rebalance_enabled = true;
-    settings.api_rebalance_percent = 99;
+    settings.api_rebalance_enabled = false;
+    settings.api_rebalance_percent = 0;
     settings.rebalance_mcp_enabled = true;
     settings.rebalance_mcp_session_percent = 100;
     proxy
         .set_system_settings(&settings)
         .await
-        .expect("save 99% settings");
+        .expect("save ineligible settings");
     let (eligible, epoch, _) = proxy
         .key_store
         .refresh_upstream_reconciliation_epoch()
@@ -50,6 +50,7 @@ async fn reconciliation_waits_for_a_complete_eligible_period() {
     assert!(!eligible);
     assert_eq!(epoch, 0);
 
+    settings.api_rebalance_enabled = true;
     settings.api_rebalance_percent = 100;
     proxy
         .set_system_settings(&settings)

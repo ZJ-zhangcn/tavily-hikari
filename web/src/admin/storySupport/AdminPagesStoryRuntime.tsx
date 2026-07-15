@@ -3157,6 +3157,7 @@ export function AdminPageFrame({
   actions, introActions, introOverride, sidebarUtilityActions,
 }: AdminPageFrameProps): JSX.Element {
   const admin = useAdminTranslations()
+  const { language } = useLanguage()
   const isStackedAdminLayout = useAdminStackedLayout()
   const headerActions = actions ?? introActions
   const intro = introOverride ?? (() => {
@@ -3230,11 +3231,16 @@ export function AdminPageFrame({
           title: admin.systemSettings.admin.title,
           description: admin.systemSettings.admin.description,
         }
-      case 'system-settings-status':
+      case 'system-settings-status': {
+        const systemStatusDescription =
+          language === 'zh'
+            ? '查看系统当前在出站 Header 白名单、`X-Project-ID` 策略、Control MCP UA、生效门禁与分段对账上的实际状态。'
+            : 'Review the effective system state for the outbound header allowlist, `X-Project-ID` policy, Control MCP UA, activation gates, and segmented reconciliation.'
         return {
           title: admin.systemSettings.privacy.title,
-          description: admin.systemSettings.privacy.description,
+          description: systemStatusDescription,
         }
+      }
       case 'system-settings-ha':
         return {
           title: admin.systemSettings.ha.title,
@@ -6361,7 +6367,7 @@ function SystemSettingsPageCanvas({
           authTokenLogRetentionDays: 92,
           mcpSessionAffinityKeyCount: 5,
           rebalanceMcpEnabled: false,
-          rebalanceMcpSessionPercent: 100,
+          rebalanceMcpSessionPercent: 0,
           apiRebalanceEnabled: false,
           apiRebalancePercent: 0,
           upstreamProjectIdMode: 'accessToken',
@@ -6422,8 +6428,8 @@ function SystemSettingsStatusPageCanvas(): JSX.Element {
           controlMcpAllowedHeaders: ['accept', 'cache-control', 'mcp-protocol-version', 'mcp-session-id', 'user-agent (configured only)'],
           gates: [
             { key: 'accessTokenMode', ready: true, detail: 'AccessToken' },
-            { key: 'apiRebalance', ready: true, detail: '100%' },
-            { key: 'mcpRebalance', ready: true, detail: '100%' },
+            { key: 'apiRebalance', ready: true, detail: 'enabled' },
+            { key: 'mcpRebalance', ready: true, detail: 'enabled' },
             { key: 'controlSessionsDrained', ready: false, detail: '2' },
           ],
           completedGates: 3,

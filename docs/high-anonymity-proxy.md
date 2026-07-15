@@ -18,7 +18,7 @@
    - `fixed`：发送管理员配置的固定名称。
    - `accessToken`：发送 `HMAC-SHA256(secret, "v1" + token_id + period_code)` 的 Base64URL-no-pad 值，默认启用。
 4. **窗口化匿名与对账**：`accessToken` 模式按服务器业务时区切成 `00-11`、`11-22`、`22-24` 三段；完整窗口结束后再按实际上游 `/usage` 做一次多退少补。
-5. **透明审计**：数据库 `request_logs` 记录 `forwarded_headers` 与 `dropped_headers` 字段名列表；管理端 `上游隐私状态` 页面展示 configured/effective 策略、门禁、结算队列与最近 adjustment。
+5. **透明审计**：数据库 `request_logs` 记录 `forwarded_headers` 与 `dropped_headers` 字段名列表；管理端“系统状态”页面展示 configured/effective 策略、门禁、结算队列与最近 adjustment。
 
 ## 配置与运行
 
@@ -37,14 +37,14 @@ cargo run -- --bind 0.0.0.0 --port 58087
 
 状态确认页：
 
-- `/admin/system-settings/privacy-status`
+- `/admin/system-settings/status`
 
 ## 验证建议
 
 1. 对 Tavily HTTP 或 Rebalance MCP HTTP 请求注入 `User-Agent`、`X-Forwarded-For`、`Cookie`、`Origin` 等字段，确认上游日志中的 `forwarded_headers` 不再包含它们。
-2. 切换 `X-Project-ID` 模式并检查 `/admin/system-settings/privacy-status`，确认 configured/effective 值与 HTTP allowlist 一致。
+2. 切换 `X-Project-ID` 模式并检查 `/admin/system-settings/status`，确认 configured/effective 值与 HTTP allowlist 一致。
 3. 在 `accessToken` 模式下跨 `S1/S2/S3` 时间段验证同一 token 的上游项目标识会按窗口变化，而 token secret 轮换不改变匿名身份。
-4. 当 API/MCP rebalance 都为 100% 且旧 Control session 排空后，检查状态页门禁进入 ready，并在窗口结束后只执行一次结算。
+4. 当 API/MCP rebalance 开关都启用且旧 Control session 排空后，检查状态页门禁进入 ready，并在窗口结束后只执行一次结算。
 
 ## 运维提示
 

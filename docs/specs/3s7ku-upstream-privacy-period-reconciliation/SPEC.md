@@ -16,7 +16,7 @@
 - 所有 Tavily 出站调用统一通过严格 Header 白名单。
 - `X-Project-ID` 支持 `passthrough / fixed / accessToken`，默认 `accessToken`。
 - 使用稳定 token id 与业务时间段派生不可逆上游项目标识，并在 HA 节点间保持一致。
-- 在完整窗口、全量 Rebalance 与旧 Control session 排空后执行一次幂等多退少补。
+- 在完整窗口、API/MCP Rebalance 开关均启用且旧 Control session 排空后执行一次幂等多退少补。
 - 提供只读“系统状态”管理页，明确展示配置、实际生效状态、门禁与结算队列。
 
 ### Non-goals
@@ -51,7 +51,7 @@
 - `accessToken` 使用 `HMAC-SHA256(secret, "v1" + token_id + period_code)` 的完整 Base64URL-no-pad 输出。
 - secret 为自动生成的 32 字节 HA 同步秘密，任何 API、日志与状态页均不得返回。
 - 窗口按服务器业务时区划分为 `S1=00-11`、`S2=11-22`、`S3=22-24`。
-- 精准对账仅在 `accessToken`、API/MCP Rebalance 均为 100%、Control session 为 0 且进入下一完整窗口时启用。
+- 精准对账仅在 `accessToken`、API/MCP Rebalance 均启用（新流量全量走 rebalance）、Control session 为 0 且进入下一完整窗口时启用。
 - 结算只查询实际使用过的 `(token_id, upstream_key_id, period_code)`，每个 settlement key 只成功一次。
 - adjustment 支持正负值，归属原业务窗口并参与对应额度、HA billing 同步和审计。
 
@@ -93,7 +93,7 @@
 
 - canonical route 为 `/admin/system-settings/status`，系统设置下级标签为“系统状态”。
 - 状态 API 区分 `configured / effective / pending / draining / active / degraded`。
-- 页面展示 Header policy、UA 实际值、Project ID 模式、三项 Rebalance/Control 门禁、下一 epoch、当前 period、
+- 页面展示 Header policy、UA 实际值、Project ID 模式、API/MCP Rebalance 与 Control session 排空门禁、下一 epoch、当前 period、
   Research 等待、usage 队列、最近 adjustment 和 degraded 原因。
 
 ## 接口契约（Interfaces & Contracts）
