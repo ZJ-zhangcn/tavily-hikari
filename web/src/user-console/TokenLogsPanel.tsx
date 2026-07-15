@@ -56,6 +56,44 @@ export default function TokenLogsPanel({
   formatLogCredits,
   statusTone,
 }: TokenLogsPanelProps): JSX.Element {
+  const renderDesktopRows = (keyPrefix: string) =>
+    logs.map((log, index) => (
+      <tr key={`${keyPrefix}-${log.id}-${index}`}>
+        <td>
+          <div className="user-console-log-stack">
+            <strong className="user-console-log-main">{formatTimestamp(log.created_at)}</strong>
+            <span className="user-console-log-meta">
+              {log.method} {log.path}
+              {log.query ? ` · ${log.query}` : ''}
+            </span>
+          </div>
+        </td>
+        <td>
+          <div className="user-console-log-transport">
+            <span className="user-console-log-transport-item">
+              <em>H</em>
+              <strong>{log.http_status ?? '—'}</strong>
+            </span>
+            <span className="user-console-log-transport-item">
+              <em>T</em>
+              <strong>{log.mcp_status ?? '—'}</strong>
+            </span>
+          </div>
+        </td>
+        <td className="user-console-log-credits">
+          {formatLogCredits(log.business_credits)}
+        </td>
+        <td>
+          <div className="user-console-log-result-line">
+            <StatusBadge className="user-console-log-status" tone={statusTone(log.result_status)}>
+              {log.result_status}
+            </StatusBadge>
+            <span className="user-console-log-error">{log.error_message ?? '—'}</span>
+          </div>
+        </td>
+      </tr>
+    ))
+
   return (
     <section className={`surface panel user-console-detail-panel user-console-logs-panel is-${mode}`}>
       <TokenLogsHeader
@@ -84,58 +122,53 @@ export default function TokenLogsPanel({
           </span>
         </button>
       ) : null}
-      <div className={`table-wrapper user-console-md-up ${mode === 'detail' ? 'user-console-logs-table-scroll' : ''}`}>
+      <div
+        className={`table-wrapper user-console-md-up ${mode === 'detail' ? 'table-sticky-header-shell user-console-logs-table-scroll' : ''}`}
+        onScroll={mode === 'detail'
+          ? (event) => event.currentTarget.style.setProperty('--table-scroll-y', `${event.currentTarget.scrollTop}px`)
+          : undefined}
+      >
         {logs.length === 0 ? (
           <div className="empty-state alert">{text.emptyLogs}</div>
         ) : (
-          <table className="token-detail-table user-console-logs-table">
-            <thead>
-              <tr>
-                <th>{text.table.request}</th>
-                <th>{text.table.transport}</th>
-                <th>{text.table.credits}</th>
-                <th>{text.table.result}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {logs.map((log) => (
-                <tr key={log.id}>
-                  <td>
-                    <div className="user-console-log-stack">
-                      <strong className="user-console-log-main">{formatTimestamp(log.created_at)}</strong>
-                      <span className="user-console-log-meta">
-                        {log.method} {log.path}
-                        {log.query ? ` · ${log.query}` : ''}
-                      </span>
-                    </div>
-                  </td>
-                  <td>
-                    <div className="user-console-log-transport">
-                      <span className="user-console-log-transport-item">
-                        <em>H</em>
-                        <strong>{log.http_status ?? '—'}</strong>
-                      </span>
-                      <span className="user-console-log-transport-item">
-                        <em>T</em>
-                        <strong>{log.mcp_status ?? '—'}</strong>
-                      </span>
-                    </div>
-                  </td>
-                  <td className="user-console-log-credits">
-                    {formatLogCredits(log.business_credits)}
-                  </td>
-                  <td>
-                    <div className="user-console-log-result-line">
-                      <StatusBadge className="user-console-log-status" tone={statusTone(log.result_status)}>
-                        {log.result_status}
-                      </StatusBadge>
-                      <span className="user-console-log-error">{log.error_message ?? '—'}</span>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <>
+            {mode === 'detail' ? (
+              <div className="table-sticky-header-overlay" aria-hidden="true">
+                <div className="table-sticky-header-blur-source">
+                  <table className="token-detail-table user-console-logs-table">
+                    <thead>
+                      <tr>
+                        <th>{text.table.request}</th>
+                        <th>{text.table.transport}</th>
+                        <th>{text.table.credits}</th>
+                        <th>{text.table.result}</th>
+                      </tr>
+                    </thead>
+                    <tbody>{renderDesktopRows('blur')}</tbody>
+                  </table>
+                </div>
+                <div className="table-sticky-header-labels">
+                  <span>{text.table.request}</span>
+                  <span>{text.table.transport}</span>
+                  <span>{text.table.credits}</span>
+                  <span>{text.table.result}</span>
+                </div>
+              </div>
+            ) : null}
+            <div className={mode === 'detail' ? 'table-sticky-header-content' : undefined}>
+              <table className={`${mode === 'detail' ? 'table-sticky-header ' : ''}token-detail-table user-console-logs-table`}>
+                <thead>
+                  <tr>
+                    <th>{text.table.request}</th>
+                    <th>{text.table.transport}</th>
+                    <th>{text.table.credits}</th>
+                    <th>{text.table.result}</th>
+                  </tr>
+                </thead>
+                <tbody>{renderDesktopRows('content')}</tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
       {mode === 'full' ? (

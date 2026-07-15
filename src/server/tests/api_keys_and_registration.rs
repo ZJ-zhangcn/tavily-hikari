@@ -15,7 +15,6 @@ use super::upstream_support_and_manual_jobs::*;
             .add_or_undelete_key_in_group("tvly-existing", Some("old"))
             .await
             .expect("existing key created in old group");
-
         let options = SqliteConnectOptions::new()
             .filename(&db_str)
             .create_if_missing(true)
@@ -142,10 +141,8 @@ use super::upstream_support_and_manual_jobs::*;
         .expect("private key metadata");
         assert!(private_row.0.is_none(), "private ip should not be stored");
         assert!(private_row.1.is_none(), "private region should stay empty");
-
         let _ = std::fs::remove_file(db_path);
     }
-
     #[tokio::test]
     async fn api_keys_batch_structured_items_persist_assigned_proxy_hint_without_registration_metadata()
      {
@@ -1083,8 +1080,7 @@ colo=LAX
         let forbidden = client
             .post(format!("{admin_base}/api/announcements"))
             .json(&serde_json::json!({
-                "title": "Hidden notice",
-                "body": "Missing admin header",
+                "content": "# Hidden notice\n\nMissing admin header",
                 "displayKind": "modal"
             }))
             .send()
@@ -1096,8 +1092,7 @@ colo=LAX
             .post(format!("{admin_base}/api/announcements"))
             .header("x-forward-user", "admin")
             .json(&serde_json::json!({
-                "title": "Launch notice",
-                "body": "Initial announcement body",
+                "content": "# Launch notice\n\nInitial announcement body",
                 "displayKind": "modal"
             }))
             .send()
@@ -1111,6 +1106,10 @@ colo=LAX
             .expect("draft id")
             .to_string();
         assert_eq!(draft.get("status").and_then(|value| value.as_str()), Some("draft"));
+        assert_eq!(
+            draft.get("content").and_then(|value| value.as_str()),
+            Some("# Launch notice\n\nInitial announcement body")
+        );
 
         let publish_resp = client
             .post(format!("{admin_base}/api/announcements/{draft_id}/publish"))
@@ -1151,8 +1150,7 @@ colo=LAX
             .patch(format!("{admin_base}/api/announcements/{draft_id}"))
             .header("x-forward-user", "admin")
             .json(&serde_json::json!({
-                "title": "Updated notice",
-                "body": "Updated announcement body",
+                "content": "# Updated notice\n\nUpdated announcement body",
                 "displayKind": "modal"
             }))
             .send()
@@ -1169,6 +1167,10 @@ colo=LAX
         assert_eq!(
             updated.get("status").and_then(|value| value.as_str()),
             Some("published")
+        );
+        assert_eq!(
+            updated.get("content").and_then(|value| value.as_str()),
+            Some("# Updated notice\n\nUpdated announcement body")
         );
 
         let history_resp = client
@@ -1252,8 +1254,7 @@ colo=LAX
             .post(format!("{admin_base}/api/announcements"))
             .header("x-forward-user", "admin")
             .json(&serde_json::json!({
-                "title": "Bodyless banner",
-                "body": "",
+                "content": "# Bodyless banner",
                 "displayKind": "ticker"
             }))
             .send()
@@ -1261,7 +1262,7 @@ colo=LAX
             .expect("create bodyless ticker request");
         assert_eq!(ticker_resp.status(), reqwest::StatusCode::OK);
         let ticker: serde_json::Value = ticker_resp.json().await.expect("ticker json");
-        assert_eq!(ticker.get("body").and_then(|value| value.as_str()), Some(""));
+        assert_eq!(ticker.get("content").and_then(|value| value.as_str()), Some("# Bodyless banner"));
         assert_eq!(
             ticker.get("displayKind").and_then(|value| value.as_str()),
             Some("ticker")
@@ -1276,8 +1277,7 @@ colo=LAX
             .post(format!("{admin_base}/api/announcements"))
             .header("x-forward-user", "admin")
             .json(&serde_json::json!({
-                "title": "Bodyless modal",
-                "body": "",
+                "content": "# Bodyless modal",
                 "displayKind": "modal"
             }))
             .send()
@@ -1285,14 +1285,30 @@ colo=LAX
             .expect("create bodyless modal request");
         assert_eq!(modal_resp.status(), reqwest::StatusCode::BAD_REQUEST);
         let modal_error = modal_resp.text().await.expect("modal error text");
-        assert!(modal_error.contains("body is required"));
+        assert!(modal_error.contains("body content after the leading title"));
+
+        let modal_without_title_resp = client
+            .post(format!("{admin_base}/api/announcements"))
+            .header("x-forward-user", "admin")
+            .json(&serde_json::json!({
+                "content": "Plain paragraph first",
+                "displayKind": "modal"
+            }))
+            .send()
+            .await
+            .expect("create modal without title request");
+        assert_eq!(modal_without_title_resp.status(), reqwest::StatusCode::BAD_REQUEST);
+        let modal_without_title_error = modal_without_title_resp
+            .text()
+            .await
+            .expect("modal without title error text");
+        assert!(modal_without_title_error.contains("content must start with a markdown title"));
 
         let updated_resp = client
             .patch(format!("{admin_base}/api/announcements/{ticker_id}"))
             .header("x-forward-user", "admin")
             .json(&serde_json::json!({
-                "title": "Still bodyless",
-                "body": "   ",
+                "content": "Still bodyless ticker copy",
                 "displayKind": "ticker"
             }))
             .send()
@@ -1300,7 +1316,10 @@ colo=LAX
             .expect("update bodyless ticker request");
         assert_eq!(updated_resp.status(), reqwest::StatusCode::OK);
         let updated: serde_json::Value = updated_resp.json().await.expect("updated ticker json");
-        assert_eq!(updated.get("body").and_then(|value| value.as_str()), Some(""));
+        assert_eq!(
+            updated.get("content").and_then(|value| value.as_str()),
+            Some("Still bodyless ticker copy")
+        );
         assert_eq!(
             updated.get("displayKind").and_then(|value| value.as_str()),
             Some("ticker")

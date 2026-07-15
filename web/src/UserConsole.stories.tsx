@@ -15,32 +15,19 @@ import type {
   UserTokenSummary,
 } from './api'
 import UserConsole from './UserConsole'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from './components/ui/dropdown-menu'
-import { Icon, getGuideClientIconName } from './lib/icons'
-import {
-  GuideCodeSample,
-  MobileGuideDropdown,
-  buildGuideContent,
-  resolveGuideSamples,
-} from './user-console/guide'
 import { userConsoleRouteToPath } from './lib/userConsoleRoutes'
 
-type ConsoleView = 'Console Home' | 'Token Detail'
+type ConsoleView = 'Console Home' | 'Setup Guide' | 'Token Detail'
 type LandingFocus = 'Overview Focus' | 'Token Focus'
 type TokenListState = 'Single Token' | 'Multiple Tokens' | 'Empty'
 type TokenDetailPreview = 'Overview' | 'Token Revealed'
 type PushStatusPreview = 'Live' | 'Reconnecting' | 'Unsupported'
-type AnnouncementPreview = 'Active' | 'Ticker Bodyless' | 'Closed' | 'History Open' | 'None'
+type AnnouncementPreview = 'Active' | 'Ticker Title Only' | 'Ticker Untitled' | 'Closed' | 'History Open' | 'None'
 type RechargePreview = 'normal' | 'test-price' | 'disabled' | 'hidden'
 type RechargeQuotePreview = 'normal' | 'month-end-clamp'
 
 type CopyRecoveryMode = 'none' | 'list-manual-bubble' | 'detail-inline'
-type GuideRevealMode = 'none' | 'landing-guide' | 'landing-cli-skills' | 'detail-guide'
+type GuideRevealMode = 'none' | 'setup-guide' | 'setup-cli-skills'
 
 interface UserConsoleStoryArgs {
   consoleView: ConsoleView
@@ -72,12 +59,7 @@ type MockEventSourceShape = EventSource & {
 }
 
 const TOKEN_DETAIL_PATH = '/console/tokens/a1b2'
-const guideProofLabels = [
-  { id: 'codex', label: 'Codex CLI' },
-  { id: 'hikariCli', label: 'CLI + Skills' },
-  { id: 'claude', label: 'Claude Code' },
-  { id: 'vscode', label: 'VS Code' },
-] as const
+const SETUP_PATH = '/console/setup'
 const removedTokenQuotaLabels = ['配额窗口', 'Quota Windows', '任意请求(1h)', 'Any Req (1h)']
 const removedTokenQuotaLabelsMobile = [...removedTokenQuotaLabels, '小时', '日', '月']
 const removedTokenInternalLabels = ['primary', 'backup', '备注', 'Note']
@@ -208,6 +190,14 @@ const consoleHomeAdminTokenFocusArgs: UserConsoleStoryArgs = {
 const tokenDetailOverviewArgs: UserConsoleStoryArgs = {
   ...consoleHomeOverviewArgs,
   consoleView: 'Token Detail',
+  announcementPreview: 'None',
+}
+
+const setupGuideArgs: UserConsoleStoryArgs = {
+  ...consoleHomeOverviewArgs,
+  consoleView: 'Setup Guide',
+  tokenListState: 'Multiple Tokens',
+  announcementPreview: 'None',
 }
 
 const tokenDetailAdminOverviewArgs: UserConsoleStoryArgs = {
@@ -785,8 +775,7 @@ const tokenLogsSample: ServerPublicTokenLogMock[] = Array.from({ length: 50 }, (
 
 const announcementModalSample: Announcement = {
   id: 'ann-modal-01',
-  title: 'Maintenance window',
-  body: '**Tavily Hikari will restart tonight** between 23:00 and 23:10.\n\n- Existing MCP sessions may reconnect once.\n- API requests should retry normally.',
+  content: '# Maintenance window\n\n**Tavily Hikari will restart tonight** between 23:00 and 23:10.\n\n- Existing MCP sessions may reconnect once.\n- API requests should retry normally.',
   displayKind: 'modal',
   status: 'published',
   createdAt: 1_762_380_000,
@@ -797,8 +786,7 @@ const announcementModalSample: Announcement = {
 
 const announcementTickerSample: Announcement = {
   id: 'ann-ticker-01',
-  title: 'Quota refresh',
-  body: 'Daily quota counters have refreshed. Token detail pages now include `live request` updates.',
+  content: '# Quota refresh\n\nDaily quota counters have refreshed. Token detail pages now include `live request` updates.',
   displayKind: 'ticker',
   status: 'published',
   createdAt: 1_762_378_000,
@@ -807,17 +795,21 @@ const announcementTickerSample: Announcement = {
   archivedAt: null,
 }
 
-const announcementBodylessTickerSample: Announcement = {
+const announcementTitleOnlyTickerSample: Announcement = {
   ...announcementTickerSample,
-  id: 'ann-ticker-empty-01',
-  title: 'Quota refresh complete',
-  body: '',
+  id: 'ann-ticker-title-only-01',
+  content: '# Quota refresh complete',
+}
+
+const announcementUntitledTickerSample: Announcement = {
+  ...announcementTickerSample,
+  id: 'ann-ticker-untitled-01',
+  content: 'Check the [status page](https://example.com) for live updates.',
 }
 
 const announcementArchivedSample: Announcement = {
   id: 'ann-archived-01',
-  title: 'Endpoint migration completed',
-  body: 'The previous Tavily-compatible endpoint migration has been completed. See [migration notes](https://example.com).',
+  content: '# Endpoint migration completed\n\nThe previous Tavily-compatible endpoint migration has been completed. See [migration notes](https://example.com).',
   displayKind: 'ticker',
   status: 'archived',
   createdAt: 1_762_200_000,
@@ -876,6 +868,7 @@ function jsonResponse(data: unknown, status = 200): Response {
 function routePathFromView(view: ConsoleView, landingFocus: LandingFocus, routePathOverride?: string): string {
   if (typeof routePathOverride === 'string') return routePathOverride
   if (view === 'Token Detail') return TOKEN_DETAIL_PATH
+  if (view === 'Setup Guide') return SETUP_PATH
   return userConsoleRouteToPath({
     name: 'landing',
     section: landingFocus === 'Token Focus' ? 'tokens' : 'dashboard',
@@ -883,9 +876,7 @@ function routePathFromView(view: ConsoleView, landingFocus: LandingFocus, routeP
 }
 
 function resolveStoryState(args: UserConsoleStoryArgs): UserConsoleStoryState {
-  const tokenListMode = args.consoleView !== 'Console Home'
-    ? 'single'
-    : args.tokenListState === 'Empty'
+  const tokenListMode = args.tokenListState === 'Empty'
       ? 'empty'
       : args.tokenListState === 'Multiple Tokens'
         ? 'multiple'
@@ -900,146 +891,6 @@ function resolveStoryState(args: UserConsoleStoryArgs): UserConsoleStoryState {
     tokenListMode,
     announcementPreview: args.announcementPreview ?? 'Active',
   }
-}
-
-function UserConsoleMobileGuideMenuProof(): JSX.Element {
-  const active = guideProofLabels[0]
-
-  return (
-    <div
-      style={{
-        display: 'grid',
-        gap: 20,
-        maxWidth: 420,
-        margin: '0 auto',
-      }}
-    >
-      <section className="surface panel">
-        <div className="panel-header">
-          <div>
-            <h2>Mobile guide menu proof</h2>
-            <p className="panel-description">
-              The console guide dropdown uses the shared portal layer and must not clip inside the mobile token card.
-            </p>
-          </div>
-        </div>
-        <div
-          style={{
-            overflow: 'hidden',
-            borderRadius: 28,
-            border: '1px dashed hsl(var(--accent) / 0.42)',
-            background: 'linear-gradient(180deg, hsl(var(--card) / 0.98), hsl(var(--muted) / 0.3))',
-            padding: 18,
-          }}
-        >
-          <div style={{ minHeight: 120 }}>
-            <DropdownMenu open>
-              <DropdownMenuTrigger asChild>
-                <button type="button" className="btn btn-outline w-full justify-between btn-sm md:btn-md">
-                  <span className="inline-flex items-center gap-2">
-                    <Icon
-                      icon={getGuideClientIconName(active.id)}
-                      width={18}
-                      height={18}
-                      aria-hidden="true"
-                      style={{ color: '#475569' }}
-                    />
-                    {active.label}
-                  </span>
-                  <Icon
-                    icon="mdi:chevron-down"
-                    width={16}
-                    height={16}
-                    aria-hidden="true"
-                    style={{ color: '#647589' }}
-                  />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="guide-select-menu p-1">
-                {guideProofLabels.map((tab) => (
-                  <DropdownMenuItem
-                    key={tab.id}
-                    className={`flex items-center gap-2 ${tab.id === active.id ? 'bg-accent/45 text-accent-foreground' : ''}`}
-                  >
-                    <Icon
-                      icon={getGuideClientIconName(tab.id)}
-                      width={16}
-                      height={16}
-                      aria-hidden="true"
-                      style={{ color: '#475569' }}
-                    />
-                    <span className="truncate">{tab.label}</span>
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-      </section>
-    </div>
-  )
-}
-
-function UserConsoleCliSkillsGuideFragment({ compact = false }: { compact?: boolean }): JSX.Element {
-  const [activeGuide, setActiveGuide] = useState<'hikariCli'>('hikariCli')
-  const guide = buildGuideContent('en', 'https://hikari.example.com', 'th-a1b2-1234567890abcdef').hikariCli
-  const guideTabs = [
-    { id: 'codex' as const, label: 'Codex CLI' },
-    { id: 'hikariCli' as const, label: 'CLI + Skills' },
-    { id: 'claude' as const, label: 'Claude Code CLI' },
-    { id: 'vscode' as const, label: 'VS Code / Copilot' },
-  ]
-
-  return (
-    <main className="user-console-cli-skills-guide-proof">
-      <section className="surface panel public-home-guide">
-        <h2>Connect Tavily Hikari to common clients</h2>
-        {compact ? (
-          <div className="guide-select" aria-label="Client selector (mobile)">
-            <MobileGuideDropdown active={activeGuide} onChange={() => setActiveGuide('hikariCli')} labels={guideTabs} />
-          </div>
-        ) : (
-          <div className="guide-tabs">
-            {guideTabs.map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                className={`guide-tab${tab.id === activeGuide ? ' active' : ''}`}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="guide-panel">
-          <div className="guide-panel-header">
-            <h3>{guide.title}</h3>
-            <button type="button" className="guide-token-toggle btn btn-outline btn-sm" aria-pressed="true" aria-label="Hide token" title="Hide token">
-              <Icon icon="mdi:eye-off-outline" width={16} height={16} aria-hidden="true" />
-              <span>Hide token</span>
-            </button>
-          </div>
-          <ol>
-            {guide.steps.map((step, index) => (
-              <li key={index}>{step}</li>
-            ))}
-          </ol>
-          {resolveGuideSamples(guide).map((sample) => (
-            <div className="guide-sample" key={sample.title}>
-              <p className="guide-sample-title">{sample.title}</p>
-              <GuideCodeSample
-                copyLabel="Copy"
-                copyState="idle"
-                onCopy={() => undefined}
-                sample={sample}
-                sampleKey={sample.title}
-              />
-            </div>
-          ))}
-        </div>
-      </section>
-    </main>
-  )
 }
 
 export const __testables = {
@@ -1128,9 +979,11 @@ function installUserConsoleFetchMock(state: UserConsoleStoryState): () => void {
     }
 
     if (url.pathname === '/api/user/announcements') {
-      const activeAnnouncements = state.announcementPreview === 'Ticker Bodyless'
-        ? [announcementBodylessTickerSample]
-        : [announcementModalSample, announcementTickerSample]
+      const activeAnnouncements = state.announcementPreview === 'Ticker Title Only'
+        ? [announcementTitleOnlyTickerSample]
+        : state.announcementPreview === 'Ticker Untitled'
+          ? [announcementUntitledTickerSample]
+          : [announcementModalSample, announcementTickerSample]
       return jsonResponse({
         items: state.announcementPreview === 'None'
           ? []
@@ -1139,9 +992,11 @@ function installUserConsoleFetchMock(state: UserConsoleStoryState): () => void {
     }
 
     if (url.pathname === '/api/user/announcements/history') {
-      const historyAnnouncements = state.announcementPreview === 'Ticker Bodyless'
-        ? [announcementBodylessTickerSample, announcementArchivedSample]
-        : [announcementModalSample, announcementTickerSample, announcementArchivedSample]
+      const historyAnnouncements = state.announcementPreview === 'Ticker Title Only'
+        ? [announcementTitleOnlyTickerSample, announcementArchivedSample]
+        : state.announcementPreview === 'Ticker Untitled'
+          ? [announcementUntitledTickerSample, announcementArchivedSample]
+          : [announcementModalSample, announcementTickerSample, announcementArchivedSample]
       return jsonResponse({
         items: state.announcementPreview === 'None'
           ? []
@@ -1463,7 +1318,8 @@ function UserConsoleStory(
       window.localStorage.setItem(storageKey, JSON.stringify({
         [announcementModalSample.id]: 1_762_390_000,
         [announcementTickerSample.id]: 1_762_390_120,
-        [announcementBodylessTickerSample.id]: 1_762_390_120,
+        [announcementTitleOnlyTickerSample.id]: 1_762_390_120,
+        [announcementUntitledTickerSample.id]: 1_762_390_120,
       }))
     } else {
       window.localStorage.removeItem(storageKey)
@@ -1520,17 +1376,14 @@ function UserConsoleStory(
   useEffect(() => {
     if (!ready || guideRevealMode === 'none') return
     const timer = window.setTimeout(() => {
-      if (guideRevealMode === 'detail-guide') {
-        document.querySelector<HTMLButtonElement>('.user-console-guide-disclosure-trigger')?.click()
-      }
-      if (guideRevealMode === 'landing-cli-skills') {
+      if (guideRevealMode === 'setup-cli-skills') {
         const cliTab = Array.from(document.querySelectorAll<HTMLButtonElement>('.guide-tab'))
           .find((button) => button.textContent?.trim() === 'CLI + Skills')
         cliTab?.click()
       }
       const button = document.querySelector<HTMLButtonElement>('.guide-token-toggle')
       button?.click()
-    }, guideRevealMode === 'landing-guide' ? 200 : 120)
+    }, 180)
     return () => window.clearTimeout(timer)
   }, [guideRevealMode, ready])
 
@@ -1604,8 +1457,8 @@ const meta = {
   argTypes: {
     consoleView: {
       name: 'Console view',
-      description: 'Pick the merged console landing page or the dedicated token detail page.',
-      options: ['Console Home', 'Token Detail'],
+      description: 'Pick the merged console landing page, setup guide, or dedicated token detail page.',
+      options: ['Console Home', 'Setup Guide', 'Token Detail'],
       control: { type: 'inline-radio' },
     },
     isAdmin: {
@@ -1625,7 +1478,7 @@ const meta = {
       description: 'Pick the token list presentation for the merged landing page.',
       options: ['Single Token', 'Multiple Tokens', 'Empty'],
       control: { type: 'inline-radio' },
-      if: { arg: 'consoleView', eq: 'Console Home' },
+      if: { arg: 'consoleView', neq: 'Token Detail' },
     },
     tokenDetailPreview: {
       name: 'Token detail preview',
@@ -1909,7 +1762,7 @@ export const ConsoleHomeAnnouncements: Story = {
     await new Promise((resolve) => window.setTimeout(resolve, 120))
 
     const tickerDialog = canvasElement.ownerDocument.querySelector<HTMLElement>('.user-console-announcement-dialog')
-    if (!tickerDialog?.textContent?.includes(announcementTickerSample.title)) {
+    if (!tickerDialog?.textContent?.includes('Quota refresh')) {
       throw new Error('Expected clicking ticker announcement to open its detail dialog.')
     }
     if (!tickerDialog.textContent?.includes('Daily quota counters have refreshed')) {
@@ -1963,7 +1816,7 @@ export const ConsoleHomeTickerDetailClose: Story = {
     await new Promise((resolve) => window.setTimeout(resolve, 120))
 
     const tickerDialog = canvasElement.ownerDocument.querySelector<HTMLElement>('.user-console-announcement-dialog')
-    if (!tickerDialog?.textContent?.includes(announcementTickerSample.title)) {
+    if (!tickerDialog?.textContent?.includes('Quota refresh')) {
       throw new Error('Expected clicking ticker title to open its detail dialog.')
     }
 
@@ -1985,22 +1838,22 @@ export const ConsoleHomeTickerDetailClose: Story = {
 }
 
 export const ConsoleHomeBodylessTicker: Story = {
-  name: 'Console Home Bodyless Ticker',
+  name: 'Console Home Title Only Ticker',
   args: {
     consoleView: 'Console Home',
     isAdmin: false,
     landingFocus: 'Overview Focus',
-    announcementPreview: 'Ticker Bodyless',
+    announcementPreview: 'Ticker Title Only',
   },
   play: async ({ canvasElement }) => {
     await new Promise((resolve) => window.setTimeout(resolve, 180))
 
     const ticker = canvasElement.querySelector<HTMLElement>('.user-console-announcement-ticker')
     if (ticker == null) {
-      throw new Error('Expected bodyless ticker announcement to render.')
+      throw new Error('Expected title-only ticker announcement to render.')
     }
-    if (canvasElement.querySelector('.user-console-announcement-ticker-main--static') == null) {
-      throw new Error('Expected bodyless ticker copy to render without a details trigger.')
+    if (canvasElement.querySelector('.user-console-announcement-ticker-main--titled') == null) {
+      throw new Error('Expected title-only ticker copy to render as a titled banner without a details trigger.')
     }
 
     const closeAction = canvasElement.querySelector<HTMLButtonElement>('.user-console-announcement-ticker .user-console-announcement-close')
@@ -2008,10 +1861,38 @@ export const ConsoleHomeBodylessTicker: Story = {
     await new Promise((resolve) => window.setTimeout(resolve, 120))
 
     if (canvasElement.querySelector('.user-console-announcement-ticker') != null) {
-      throw new Error('Expected bodyless ticker close action to dismiss the announcement.')
+      throw new Error('Expected title-only ticker close action to dismiss the announcement.')
     }
     if (canvasElement.ownerDocument.querySelector('.user-console-announcement-dialog') != null) {
-      throw new Error('Expected bodyless ticker close action to avoid opening a detail dialog.')
+      throw new Error('Expected title-only ticker close action to avoid opening a detail dialog.')
+    }
+  },
+}
+
+export const ConsoleHomeUntitledTicker: Story = {
+  name: 'Console Home Untitled Ticker',
+  args: {
+    consoleView: 'Console Home',
+    isAdmin: false,
+    landingFocus: 'Overview Focus',
+    announcementPreview: 'Ticker Untitled',
+  },
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 180))
+
+    const ticker = canvasElement.querySelector<HTMLElement>('.user-console-announcement-ticker')
+    if (ticker == null) {
+      throw new Error('Expected untitled ticker announcement to render.')
+    }
+    if (canvasElement.querySelector('.user-console-announcement-ticker-main--untitled') == null) {
+      throw new Error('Expected untitled ticker copy to render inline without a separate title.')
+    }
+    if (!ticker.textContent?.includes('Check the status page for live updates.')) {
+      throw new Error('Expected untitled ticker to show the Markdown content directly.')
+    }
+    const link = ticker.querySelector<HTMLAnchorElement>('.user-console-announcement-ticker-content a')
+    if (link?.getAttribute('href') !== 'https://example.com') {
+      throw new Error('Expected untitled ticker content links to remain clickable.')
     }
   },
 }
@@ -2032,6 +1913,36 @@ export const ConsoleHomeAnnouncementHistory: Story = {
 
     if (canvasElement.ownerDocument.querySelector('.user-console-announcement-history') == null) {
       throw new Error('Expected announcement history drawer to render.')
+    }
+  },
+}
+
+export const ConsoleHomeAnnouncementHistoryUntitled: Story = {
+  name: 'Console Home Announcement History Untitled',
+  args: {
+    consoleView: 'Console Home',
+    isAdmin: true,
+    landingFocus: 'Overview Focus',
+    announcementPreview: 'Ticker Untitled',
+  },
+  parameters: {
+    viewport: { defaultViewport: '1440-device-desktop' },
+  },
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 180))
+    document.querySelector<HTMLButtonElement>('.user-console-announcements-trigger')?.click()
+    await new Promise((resolve) => window.setTimeout(resolve, 180))
+
+    const history = canvasElement.ownerDocument.querySelector<HTMLElement>('.user-console-announcement-history')
+    if (history == null) {
+      throw new Error('Expected untitled announcement history drawer to render.')
+    }
+    const firstItemText = history.querySelector('.user-console-announcement-history-item')?.textContent ?? ''
+    if (!firstItemText.includes('Check the status page for live updates.')) {
+      throw new Error('Expected untitled announcement history to render full content.')
+    }
+    if (firstItemText.includes('Untitled')) {
+      throw new Error('Expected untitled announcement history to avoid generating a fake title.')
     }
   },
 }
@@ -2166,16 +2077,41 @@ export const ConsoleHomeCopyFailureRecovery: Story = {
   render: (args) => <UserConsoleStory {...args} copyRecoveryMode="list-manual-bubble" />,
 }
 
-export const ConsoleHomeGuideTokenRevealed: Story = {
-  name: 'Console Home Guide Token Revealed',
-  args: consoleHomeTokenFocusArgs,
-  render: (args) => <UserConsoleStory {...args} guideRevealMode="landing-guide" />,
+export const SetupGuide: Story = {
+  name: 'Setup Guide',
+  args: setupGuideArgs,
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 240))
+    if (!canvasElement.textContent?.includes('Usage Guide')) {
+      throw new Error('Expected the setup route to render the usage guide page.')
+    }
+    if (canvasElement.querySelector('[aria-label="Token used in setup examples"]') == null) {
+      throw new Error('Expected the setup guide to expose a Token selector.')
+    }
+    const setupTab = Array.from(canvasElement.querySelectorAll<HTMLButtonElement>('.segmented-tab'))
+      .find((button) => button.textContent?.trim() === 'Setup Guide')
+    if (setupTab?.getAttribute('aria-checked') !== 'true') {
+      throw new Error('Expected the Setup Guide navigation tab to be active.')
+    }
+  },
 }
 
-export const ConsoleHomeCliSkillsGuide: Story = {
-  name: 'Console Home CLI + Skills Guide',
-  args: consoleHomeTokenFocusArgs,
-  render: (args) => <UserConsoleStory {...args} guideRevealMode="landing-cli-skills" />,
+export const SetupGuideTokenRevealed: Story = {
+  name: 'Setup Guide Token Revealed',
+  args: {
+    ...setupGuideArgs,
+    routePathOverride: `${SETUP_PATH}?token=a1b2`,
+  },
+  render: (args) => <UserConsoleStory {...args} guideRevealMode="setup-guide" />,
+}
+
+export const SetupGuideCliSkills: Story = {
+  name: 'Setup Guide CLI + Skills',
+  args: {
+    ...setupGuideArgs,
+    routePathOverride: `${SETUP_PATH}?token=a1b2&guide=hikariCli`,
+  },
+  render: (args) => <UserConsoleStory {...args} guideRevealMode="setup-cli-skills" />,
   play: async ({ canvasElement }) => {
     await new Promise((resolve) => window.setTimeout(resolve, 520))
     const proofText = canvasElement.textContent ?? ''
@@ -2194,26 +2130,110 @@ export const ConsoleHomeCliSkillsGuide: Story = {
     if (!proofText.includes('npx skills add https://github.com/IvanLi-CN/tavily-hikari --global')) {
       throw new Error('Expected the optional global Agent Skills install command to render.')
     }
+    if (!window.location.search.includes('guide=hikariCli')) {
+      throw new Error('Expected the setup guide URL to keep the selected client method.')
+    }
   },
 }
 
-export const CliSkillsGuideFragment: Story = {
-  name: 'CLI + Skills Guide Fragment',
-  args: consoleHomeTokenFocusArgs,
-  render: () => <UserConsoleCliSkillsGuideFragment />,
-  parameters: {
-    layout: 'fullscreen',
+export const SetupGuideMobile: Story = {
+  name: 'Setup Guide Mobile',
+  args: setupGuideArgs,
+  globals: { language: 'zh' },
+  parameters: { ...mobileViewport },
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 240))
+    const page = canvasElement.querySelector<HTMLElement>('.user-console-setup-page')
+    if (!page || page.scrollWidth > page.clientWidth) {
+      throw new Error('Expected the mobile setup guide to fit without horizontal overflow.')
+    }
+    if (canvasElement.querySelector('.guide-select') == null) {
+      throw new Error('Expected the mobile setup guide to use the compact client selector.')
+    }
   },
 }
 
-export const CliSkillsGuideFragmentMobile: Story = {
-  name: 'CLI + Skills Guide Fragment Mobile',
-  args: consoleHomeTokenFocusArgs,
-  render: () => <UserConsoleCliSkillsGuideFragment compact />,
-  parameters: {
-    layout: 'fullscreen',
-    ...mobileViewport,
+export const SetupGuideCliSkillsMobile: Story = {
+  name: 'Setup Guide CLI + Skills Mobile',
+  args: {
+    ...setupGuideArgs,
+    routePathOverride: `${SETUP_PATH}?token=a1b2&guide=hikariCli`,
   },
+  globals: { language: 'en' },
+  parameters: { ...mobileViewport },
+  render: (args) => <UserConsoleStory {...args} guideRevealMode="setup-cli-skills" />,
+}
+
+export const SetupGuideEmpty: Story = {
+  name: 'Setup Guide Empty',
+  args: {
+    ...setupGuideArgs,
+    tokenListState: 'Empty',
+  },
+  globals: { language: 'zh' },
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 200))
+    if (!canvasElement.textContent?.includes('暂无可用 Token')) {
+      throw new Error('Expected the setup guide to explain that no enabled Token is available.')
+    }
+    if (canvasElement.querySelector('.guide-panel') != null) {
+      throw new Error('Expected the empty setup guide not to render client configuration samples.')
+    }
+  },
+}
+
+async function assertStickyLogHeader(canvasElement: HTMLElement) {
+  const scrollShell = canvasElement.querySelector<HTMLElement>('.user-console-logs-table-scroll')
+  const header = canvasElement.querySelector<HTMLElement>('.table-sticky-header-overlay')
+  const content = canvasElement.querySelector<HTMLElement>('.table-sticky-header-content')
+  const labels = canvasElement.querySelector<HTMLElement>('.table-sticky-header-labels')
+  const blurSource = canvasElement.querySelector<HTMLElement>('.table-sticky-header-blur-source')
+  if (
+    scrollShell == null || header == null || content == null || labels == null || blurSource == null ||
+    !scrollShell.classList.contains('table-sticky-header-shell')
+  ) {
+    throw new Error('Expected token detail to expose the scrollable logs table and its header.')
+  }
+
+  scrollShell.scrollTop = 112
+  await new Promise<void>((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(() => resolve())))
+
+  if (scrollShell.scrollTop <= 0) {
+    throw new Error('Expected the recent-request table to scroll for sticky-header verification.')
+  }
+
+  const style = window.getComputedStyle(header)
+  const contentStyle = window.getComputedStyle(content)
+  const backgroundAlpha = style.backgroundColor.startsWith('rgba(')
+    ? Number(style.backgroundColor.slice(style.backgroundColor.lastIndexOf(',') + 1, -1).trim())
+    : 1
+  if (style.position !== 'sticky') {
+    throw new Error(`Expected recent-request header position to be sticky, got ${style.position}.`)
+  }
+  if (style.backgroundColor === 'transparent' || style.backgroundColor === 'rgba(0, 0, 0, 0)') {
+    throw new Error('Expected the sticky header to provide an opaque fallback surface.')
+  }
+  if (!Number.isFinite(backgroundAlpha) || backgroundAlpha >= 0.98) {
+    throw new Error('Expected the sticky header surface to stay semi-transparent instead of fully opaque.')
+  }
+  if (Number(style.zIndex) <= Number(contentStyle.zIndex)) {
+    throw new Error('Expected the sticky header surface to paint above the scrolling table content.')
+  }
+  if (!window.getComputedStyle(blurSource).filter.includes('blur(12px)')) {
+    throw new Error('Expected the sticky header to render a deterministic blurred row backdrop.')
+  }
+
+  const headerColumns = Array.from(labels.children, (node) => node.getBoundingClientRect())
+  const bodyColumns = Array.from(
+    canvasElement.querySelectorAll('.table-sticky-header-content .user-console-logs-table tbody tr:first-child > td'),
+    (node) => node.getBoundingClientRect(),
+  )
+  if (
+    headerColumns.length !== bodyColumns.length ||
+    headerColumns.some((column, index) => Math.abs(column.left - bodyColumns[index].left) > 0.5)
+  ) {
+    throw new Error('Expected sticky header columns to remain aligned with the scrolling table body.')
+  }
 }
 
 export const TokenDetailOverview: Story = {
@@ -2222,53 +2242,82 @@ export const TokenDetailOverview: Story = {
   play: async ({ canvasElement }) => {
     await new Promise((resolve) => window.setTimeout(resolve, 160))
 
-    const guideTrigger = canvasElement.querySelector<HTMLButtonElement>('.user-console-guide-disclosure-trigger')
-    if (guideTrigger == null) {
-      throw new Error('Expected token detail to render a collapsed setup guide trigger.')
+    const guideButton = Array.from(canvasElement.querySelectorAll<HTMLButtonElement>('.user-console-detail-actions button'))
+      .find((button) => button.textContent?.trim() === 'Usage Guide')
+    if (guideButton == null) {
+      throw new Error('Expected token detail to render the Usage Guide action beside the back button.')
+    }
+    if (canvasElement.querySelector('.user-console-guide-disclosure') != null) {
+      throw new Error('Expected token detail to remove the legacy embedded setup disclosure.')
     }
 
-    if (guideTrigger.getAttribute('aria-expanded') !== 'false') {
-      throw new Error('Expected setup guide to be collapsed by default.')
-    }
-
-    if (canvasElement.querySelector('.user-console-guide-disclosure-body') != null) {
-      throw new Error('Expected setup guide body to stay out of the initial detail layout.')
-    }
-
-    if (canvasElement.querySelector('.user-console-logs-table th:nth-child(3)')?.textContent?.trim() !== 'Credits') {
+    const semanticCreditsLabel = canvasElement.querySelector('.table-sticky-header-content .user-console-logs-table th:nth-child(3)')?.textContent?.trim()
+    const visualCreditsLabel = canvasElement.querySelector('.table-sticky-header-labels span:nth-child(3)')?.textContent?.trim()
+    if (semanticCreditsLabel == null || semanticCreditsLabel === '' || semanticCreditsLabel !== visualCreditsLabel) {
       throw new Error('Expected token detail logs table to render the Credits column between transport and result.')
     }
 
-    if (!canvasElement.textContent?.includes('Recent Requests (50)')) {
+    if (!/50/.test(canvasElement.querySelector('.user-console-logs-header h2')?.textContent ?? '')) {
       throw new Error('Expected token detail logs heading to advertise the 50-row recent request window.')
     }
 
-    const initialRows = canvasElement.querySelectorAll('.user-console-logs-table tbody tr')
+    const initialRows = canvasElement.querySelectorAll('.table-sticky-header-content .user-console-logs-table tbody tr')
     if (initialRows.length !== 50) {
       throw new Error(`Expected token detail logs table to render 50 recent rows, got ${initialRows.length}.`)
     }
 
-    const creditedRows = Array.from(canvasElement.querySelectorAll('.user-console-log-credits'))
+    const creditedRows = Array.from(canvasElement.querySelectorAll('.table-sticky-header-content .user-console-log-credits'))
       .map((node) => node.textContent?.trim())
     if (!creditedRows.includes('2') || !creditedRows.includes('—')) {
       throw new Error('Expected token detail logs to render both charged and uncharged credit values.')
     }
 
-    const billableButton = Array.from(canvasElement.querySelectorAll<HTMLButtonElement>('.user-console-log-filter-tabs .segmented-tab'))
-      .find((button) => button.textContent?.trim() === 'Quota usage')
+    await assertStickyLogHeader(canvasElement)
+
+    const billableButton = canvasElement.querySelectorAll<HTMLButtonElement>('.user-console-log-filter-tabs .segmented-tab')[1]
     if (billableButton == null) {
       throw new Error('Expected token detail logs to render the quota-usage filter.')
     }
     billableButton.click()
     await new Promise((resolve) => window.setTimeout(resolve, 180))
 
-    const filteredRows = canvasElement.querySelectorAll('.user-console-logs-table tbody tr')
+    const filteredRows = canvasElement.querySelectorAll('.table-sticky-header-content .user-console-logs-table tbody tr')
     if (filteredRows.length === 0 || filteredRows.length >= initialRows.length) {
       throw new Error('Expected quota-usage filter to reduce the recent request list to billable request kinds.')
     }
-    const filteredText = canvasElement.querySelector('.user-console-logs-table')?.textContent ?? ''
+    const filteredText = canvasElement.querySelector('.table-sticky-header-content .user-console-logs-table')?.textContent ?? ''
     if (filteredText.includes('/api/tavily/usage')) {
       throw new Error('Expected quota-usage filter to exclude non-billable usage requests.')
+    }
+  },
+}
+
+export const TokenDetailSetupAction: Story = {
+  name: 'Token Detail Setup Action',
+  args: tokenDetailOverviewArgs,
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 180))
+    const actions = canvasElement.querySelector<HTMLElement>('.user-console-detail-actions')
+    if (!actions || !actions.textContent?.includes('Usage Guide') || !actions.textContent?.includes('Back to Token List')) {
+      throw new Error('Expected the detail header to show both Usage Guide and back actions.')
+    }
+    if (actions.scrollWidth > actions.clientWidth) {
+      throw new Error('Expected the detail header actions to fit without overflow.')
+    }
+  },
+}
+
+export const TokenDetailSetupNavigation: Story = {
+  name: 'Token Detail Setup Navigation',
+  args: tokenDetailOverviewArgs,
+  play: async ({ canvasElement }) => {
+    await new Promise((resolve) => window.setTimeout(resolve, 180))
+    const guideButton = Array.from(canvasElement.querySelectorAll<HTMLButtonElement>('.user-console-detail-actions button'))
+      .find((button) => button.textContent?.trim() === 'Usage Guide')
+    guideButton?.click()
+    await new Promise((resolve) => window.setTimeout(resolve, 100))
+    if (`${window.location.pathname}${window.location.search}` !== '/console/setup?token=a1b2') {
+      throw new Error('Expected the detail Usage Guide action to open setup with the current Token selected.')
     }
   },
 }
@@ -2388,23 +2437,7 @@ export const TokenRevealed: Story = {
   },
 }
 
-export const TokenDetailGuideTokenRevealed: Story = {
-  name: 'Token Detail Guide Token Revealed',
-  args: tokenDetailOverviewArgs,
-  render: (args) => <UserConsoleStory {...args} guideRevealMode="detail-guide" />,
-}
-
 export const TokenDetailAdmin: Story = {
   name: 'Token Detail Admin',
   args: tokenDetailAdminOverviewArgs,
-}
-
-export const MobileGuideMenuProof: Story = {
-  name: 'Mobile Guide Menu Proof',
-  args: consoleHomeOverviewArgs,
-  render: () => <UserConsoleMobileGuideMenuProof />,
-  parameters: {
-    layout: 'padded',
-    ...mobileViewport,
-  },
 }

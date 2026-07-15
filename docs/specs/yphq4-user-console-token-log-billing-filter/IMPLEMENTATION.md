@@ -12,8 +12,16 @@
   the separate token logs route.
 - Storybook coverage includes desktop token detail and mobile logs entry states, with visual evidence
   captured for the desktop 10-row scroll layout.
+- The desktop log table keeps its native header for semantics and column sizing while rendering an
+  aligned visual header outside the browser's table painting context. The shared sticky-header
+  stylesheet uses a 56px semi-transparent surface, progressive backdrop filtering, and a
+  synchronized 12px-blurred row backdrop so both light and dark themes keep a visible frosted
+  effect while preventing sharp body-row text from painting over labels.
 
 ## Validation
 
 - `bun test ./src/UserConsole.stories.test.ts`
 - `bun run build`
+- `bun run build-storybook`
+- Playwright verification of light/dark Storybook canvases at `1440x1100`, including internal
+  scrolling, sticky positioning, semi-transparent header backgrounds, and blurred backdrop styles.
