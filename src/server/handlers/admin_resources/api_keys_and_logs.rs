@@ -156,7 +156,7 @@ async fn post_validate_api_keys(
                 (pos, result, kind)
             }
         })
-        .buffer_unordered(8)
+        .buffer_unordered(2)
         .collect::<Vec<_>>()
         .await;
 

@@ -4040,3 +4040,61 @@ export function updateForwardProxyNodesDisabled(proxyKeys: string[], disabled: b
 export function fetchForwardProxyDashboardSummary(signal?: AbortSignal): Promise<ForwardProxyDashboardSummaryResponse> {
   return requestJson('/api/stats/forward-proxy/summary', { signal })
 }
+
+export interface ForwardProxyKeyAffinityItem {
+  keyId: string
+  primaryProxyKey?: string | null
+  secondaryProxyKey?: string | null
+  locked: boolean
+  updatedAt: number
+}
+
+export interface ForwardProxyAssignmentCount {
+  proxyKey: string
+  primary: number
+  secondary: number
+}
+
+export interface ForwardProxyKeyAffinityListResponse {
+  items: ForwardProxyKeyAffinityItem[]
+  assignmentCounts: ForwardProxyAssignmentCount[]
+}
+
+export interface RebalanceForwardProxyKeyAffinityResponse {
+  updated: number
+}
+
+export function fetchForwardProxyKeyAffinity(
+  signal?: AbortSignal,
+): Promise<ForwardProxyKeyAffinityListResponse> {
+  return requestJson('/api/settings/forward-proxy/key-affinity', { signal })
+}
+
+export function putForwardProxyKeyAffinity(
+  keyId: string,
+  payload: {
+    primaryProxyKey?: string | null
+    secondaryProxyKey?: string | null
+    locked?: boolean
+  },
+  signal?: AbortSignal,
+): Promise<ForwardProxyKeyAffinityItem> {
+  return requestJson(`/api/settings/forward-proxy/key-affinity/${encodeURIComponent(keyId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+    signal,
+  })
+}
+
+export function rebalanceForwardProxyKeyAffinity(
+  onlyUnlocked = true,
+  signal?: AbortSignal,
+): Promise<RebalanceForwardProxyKeyAffinityResponse> {
+  return requestJson('/api/settings/forward-proxy/key-affinity', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ onlyUnlocked }),
+    signal,
+  })
+}

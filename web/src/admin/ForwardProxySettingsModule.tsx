@@ -44,6 +44,7 @@ import {
   updateDialogProgressState,
 } from './forwardProxyDialogProgress'
 import ForwardProxyEgressControl from './ForwardProxyEgressControl'
+import ForwardProxyKeyAffinityPanel from './ForwardProxyKeyAffinityPanel'
 import ForwardProxyProgressBubble from './ForwardProxyProgressBubble'
 import type { QueryLoadState } from './queryLoadState'
 
@@ -2766,6 +2767,8 @@ export default function ForwardProxySettingsModule({
           )}
         </CardContent>
       </Card>
+
+      <ForwardProxyKeyAffinityPanel />
 
       <Card className="surface panel">
         <CardHeader className="forward-proxy-panel-header">

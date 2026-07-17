@@ -368,6 +368,14 @@ pub async fn serve(
             post(post_forward_proxy_node_state),
         )
         .route(
+            "/api/settings/forward-proxy/key-affinity",
+            get(get_forward_proxy_key_affinity).post(post_forward_proxy_key_affinity_rebalance),
+        )
+        .route(
+            "/api/settings/forward-proxy/key-affinity/:key_id",
+            put(put_forward_proxy_key_affinity),
+        )
+        .route(
             "/api/stats/forward-proxy/summary",
             get(get_forward_proxy_dashboard_summary),
         )

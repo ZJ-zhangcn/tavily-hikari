@@ -204,7 +204,15 @@ pub struct ForwardProxyValidationNodeResult {
 pub struct ForwardProxyAffinityRecord {
     pub primary_proxy_key: Option<String>,
     pub secondary_proxy_key: Option<String>,
+    /// When true, auto rebalance / weight-driven reassignment must not overwrite this binding.
+    pub locked: bool,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct ForwardProxyAssignmentCounts {
+    pub primary: i64,
+    pub secondary: i64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

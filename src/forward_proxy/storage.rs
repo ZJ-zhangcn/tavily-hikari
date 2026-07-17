@@ -121,12 +121,14 @@ pub async fn ensure_forward_proxy_schema(pool: &SqlitePool) -> Result<(), ProxyE
             key_id TEXT PRIMARY KEY,
             primary_proxy_key TEXT,
             secondary_proxy_key TEXT,
+            locked INTEGER NOT NULL DEFAULT 0,
             updated_at INTEGER NOT NULL DEFAULT (strftime('%s', 'now'))
         )
         "#,
     )
     .execute(pool)
     .await?;
+    ensure_forward_proxy_affinity_column(pool, "locked", "INTEGER NOT NULL DEFAULT 0").await?;
 
     sqlx::query(
         r#"CREATE INDEX IF NOT EXISTS idx_forward_proxy_attempts_proxy_time
@@ -630,6 +632,27 @@ async fn ensure_forward_proxy_settings_column(
     Ok(())
 }
 
+async fn ensure_forward_proxy_affinity_column(
+    pool: &SqlitePool,
+    column_name: &str,
+    column_def: &str,
+) -> Result<(), ProxyError> {
+    let exists = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM pragma_table_info('forward_proxy_key_affinity') WHERE name = ?1",
+    )
+    .bind(column_name)
+    .fetch_one(pool)
+    .await?;
+    if exists == 0 {
+        sqlx::query(&format!(
+            "ALTER TABLE forward_proxy_key_affinity ADD COLUMN {column_name} {column_def}"
+        ))
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
 async fn delete_forward_proxy_runtime_rows_not_in(
     pool: &SqlitePool,
     active_keys: &[String],
@@ -723,7 +746,7 @@ async fn load_forward_proxy_affinity(
     key_id: &str,
 ) -> Result<Option<ForwardProxyKeyAffinity>, ProxyError> {
     let row = sqlx::query(
-        "SELECT primary_proxy_key, secondary_proxy_key FROM forward_proxy_key_affinity WHERE key_id = ? LIMIT 1",
+        "SELECT primary_proxy_key, secondary_proxy_key, COALESCE(locked, 0) AS locked FROM forward_proxy_key_affinity WHERE key_id = ? LIMIT 1",
     )
     .bind(key_id)
     .fetch_optional(pool)
@@ -737,6 +760,7 @@ async fn load_forward_proxy_affinity(
             .try_get("secondary_proxy_key")
             .ok()
             .filter(|value: &String| !value.trim().is_empty()),
+        locked: row.try_get::<i64, _>("locked").ok().unwrap_or(0) != 0,
     }))
 }
 
@@ -747,17 +771,19 @@ async fn save_forward_proxy_affinity(
 ) -> Result<(), ProxyError> {
     sqlx::query(
         r#"
-        INSERT INTO forward_proxy_key_affinity (key_id, primary_proxy_key, secondary_proxy_key, updated_at)
-        VALUES (?1, ?2, ?3, strftime('%s', 'now'))
+        INSERT INTO forward_proxy_key_affinity (key_id, primary_proxy_key, secondary_proxy_key, locked, updated_at)
+        VALUES (?1, ?2, ?3, ?4, strftime('%s', 'now'))
         ON CONFLICT(key_id) DO UPDATE SET
             primary_proxy_key = excluded.primary_proxy_key,
             secondary_proxy_key = excluded.secondary_proxy_key,
+            locked = excluded.locked,
             updated_at = strftime('%s', 'now')
         "#,
     )
     .bind(key_id)
     .bind(&affinity.primary_proxy_key)
     .bind(&affinity.secondary_proxy_key)
+    .bind(if affinity.locked { 1i64 } else { 0i64 })
     .execute(pool)
     .await?;
     Ok(())
@@ -773,6 +799,7 @@ pub async fn load_forward_proxy_key_affinity(
         .map(|record| ForwardProxyAffinityRecord {
             primary_proxy_key: record.primary_proxy_key,
             secondary_proxy_key: record.secondary_proxy_key,
+            locked: record.locked,
             updated_at: backend_time.now_ts(),
         }))
 }
@@ -788,41 +815,48 @@ pub async fn save_forward_proxy_key_affinity(
         &ForwardProxyKeyAffinity {
             primary_proxy_key: record.primary_proxy_key.clone(),
             secondary_proxy_key: record.secondary_proxy_key.clone(),
+            locked: record.locked,
         },
     )
     .await
 }
 
-pub async fn sync_manager_runtime_to_store(
-    key_store: &KeyStore,
-    manager: &ForwardProxyManager,
-) -> Result<(), ProxyError> {
-    let snapshot = manager.snapshot_runtime();
-    let deadline = key_store.backend_time.deadline_after(Duration::from_secs(10));
-    let mut retry_attempt = 0usize;
-    loop {
-        match persist_forward_proxy_runtime_snapshot(&key_store.pool, snapshot.clone()).await {
-            Ok(()) => return Ok(()),
-            Err(err) => {
-                if crate::store::sleep_before_sqlite_transient_write_retry(
-                    &key_store.backend_time,
-                    "forward proxy runtime snapshot sync",
-                    retry_attempt,
-                    deadline,
-                    &err,
-                )
-                .await
-                {
-                    retry_attempt += 1;
-                    continue;
-                }
-                return Err(err);
-            }
-        }
+pub async fn list_forward_proxy_key_affinity(
+    pool: &SqlitePool,
+) -> Result<Vec<(String, ForwardProxyAffinityRecord)>, ProxyError> {
+    let rows = sqlx::query(
+        r#"
+        SELECT key_id, primary_proxy_key, secondary_proxy_key,
+               COALESCE(locked, 0) AS locked, COALESCE(updated_at, 0) AS updated_at
+        FROM forward_proxy_key_affinity
+        ORDER BY key_id
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut items = Vec::with_capacity(rows.len());
+    for row in rows {
+        let key_id: String = row.try_get("key_id")?;
+        items.push((
+            key_id,
+            ForwardProxyAffinityRecord {
+                primary_proxy_key: row
+                    .try_get("primary_proxy_key")
+                    .ok()
+                    .filter(|value: &String| !value.trim().is_empty()),
+                secondary_proxy_key: row
+                    .try_get("secondary_proxy_key")
+                    .ok()
+                    .filter(|value: &String| !value.trim().is_empty()),
+                locked: row.try_get::<i64, _>("locked").ok().unwrap_or(0) != 0,
+                updated_at: row.try_get::<i64, _>("updated_at").ok().unwrap_or(0),
+            },
+        ));
     }
+    Ok(items)
 }
 
-async fn load_forward_proxy_assignment_counts(
+pub async fn load_forward_proxy_assignment_counts(
     pool: &SqlitePool,
 ) -> Result<HashMap<String, ForwardProxyAssignmentCounts>, ProxyError> {
     let rows = sqlx::query(
@@ -857,6 +891,35 @@ async fn load_forward_proxy_assignment_counts(
         );
     }
     Ok(counts)
+}
+
+pub async fn sync_manager_runtime_to_store(
+    key_store: &KeyStore,
+    manager: &ForwardProxyManager,
+) -> Result<(), ProxyError> {
+    let snapshot = manager.snapshot_runtime();
+    let deadline = key_store.backend_time.deadline_after(Duration::from_secs(10));
+    let mut retry_attempt = 0usize;
+    loop {
+        match persist_forward_proxy_runtime_snapshot(&key_store.pool, snapshot.clone()).await {
+            Ok(()) => return Ok(()),
+            Err(err) => {
+                if crate::store::sleep_before_sqlite_transient_write_retry(
+                    &key_store.backend_time,
+                    "forward proxy runtime snapshot sync",
+                    retry_attempt,
+                    deadline,
+                    &err,
+                )
+                .await
+                {
+                    retry_attempt += 1;
+                    continue;
+                }
+                return Err(err);
+            }
+        }
+    }
 }
 
 #[derive(Debug, FromRow)]

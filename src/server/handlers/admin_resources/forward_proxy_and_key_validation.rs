@@ -751,6 +751,169 @@ async fn get_forward_proxy_dashboard_summary(
         })
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForwardProxyKeyAffinityItemView {
+    key_id: String,
+    primary_proxy_key: Option<String>,
+    secondary_proxy_key: Option<String>,
+    locked: bool,
+    updated_at: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForwardProxyKeyAffinityListView {
+    items: Vec<ForwardProxyKeyAffinityItemView>,
+    assignment_counts: Vec<ForwardProxyAssignmentCountView>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ForwardProxyAssignmentCountView {
+    proxy_key: String,
+    primary: i64,
+    secondary: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PutForwardProxyKeyAffinityPayload {
+    #[serde(default)]
+    primary_proxy_key: Option<String>,
+    #[serde(default)]
+    secondary_proxy_key: Option<String>,
+    #[serde(default)]
+    locked: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RebalanceForwardProxyKeyAffinityPayload {
+    #[serde(default = "default_true")]
+    only_unlocked: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RebalanceForwardProxyKeyAffinityResponse {
+    updated: usize,
+}
+
+async fn get_forward_proxy_key_affinity(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> Result<Json<ForwardProxyKeyAffinityListView>, (StatusCode, String)> {
+    if !is_admin_request(state.as_ref(), &headers).await {
+        return Err((StatusCode::FORBIDDEN, "forbidden".to_string()));
+    }
+    let items = state
+        .proxy
+        .list_forward_proxy_key_affinity()
+        .await
+        .map_err(|err| {
+            eprintln!("list forward proxy key affinity error: {err}");
+            (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+        })?;
+    let counts = state
+        .proxy
+        .list_forward_proxy_assignment_counts()
+        .await
+        .map_err(|err| {
+            eprintln!("list forward proxy assignment counts error: {err}");
+            (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+        })?;
+    let mut assignment_counts = counts
+        .into_iter()
+        .map(|(proxy_key, count)| ForwardProxyAssignmentCountView {
+            proxy_key,
+            primary: count.primary,
+            secondary: count.secondary,
+        })
+        .collect::<Vec<_>>();
+    assignment_counts.sort_by(|a, b| b.primary.cmp(&a.primary).then(a.proxy_key.cmp(&b.proxy_key)));
+    Ok(Json(ForwardProxyKeyAffinityListView {
+        items: items
+            .into_iter()
+            .map(|(key_id, record)| ForwardProxyKeyAffinityItemView {
+                key_id,
+                primary_proxy_key: record.primary_proxy_key,
+                secondary_proxy_key: record.secondary_proxy_key,
+                locked: record.locked,
+                updated_at: record.updated_at,
+            })
+            .collect(),
+        assignment_counts,
+    }))
+}
+
+async fn put_forward_proxy_key_affinity(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    axum::extract::Path(key_id): axum::extract::Path<String>,
+    Json(payload): Json<PutForwardProxyKeyAffinityPayload>,
+) -> Result<Json<ForwardProxyKeyAffinityItemView>, (StatusCode, String)> {
+    if !is_admin_request(state.as_ref(), &headers).await {
+        return Err((StatusCode::FORBIDDEN, "forbidden".to_string()));
+    }
+    if require_full_master_write(state.as_ref()).await.is_err() {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "master write unavailable".to_string(),
+        ));
+    }
+    let record = state
+        .proxy
+        .put_forward_proxy_key_affinity(
+            &key_id,
+            payload.primary_proxy_key,
+            payload.secondary_proxy_key,
+            payload.locked,
+        )
+        .await
+        .map_err(|err| {
+            eprintln!("put forward proxy key affinity error: {err}");
+            (StatusCode::BAD_REQUEST, err.to_string())
+        })?;
+    Ok(Json(ForwardProxyKeyAffinityItemView {
+        key_id,
+        primary_proxy_key: record.primary_proxy_key,
+        secondary_proxy_key: record.secondary_proxy_key,
+        locked: record.locked,
+        updated_at: record.updated_at,
+    }))
+}
+
+async fn post_forward_proxy_key_affinity_rebalance(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    payload: Option<Json<RebalanceForwardProxyKeyAffinityPayload>>,
+) -> Result<Json<RebalanceForwardProxyKeyAffinityResponse>, (StatusCode, String)> {
+    if !is_admin_request(state.as_ref(), &headers).await {
+        return Err((StatusCode::FORBIDDEN, "forbidden".to_string()));
+    }
+    if require_full_master_write(state.as_ref()).await.is_err() {
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "master write unavailable".to_string(),
+        ));
+    }
+    let only_unlocked = payload.map(|p| p.only_unlocked).unwrap_or(true);
+    let updated = state
+        .proxy
+        .rebalance_forward_proxy_key_affinity(only_unlocked)
+        .await
+        .map_err(|err| {
+            eprintln!("rebalance forward proxy key affinity error: {err}");
+            (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
+        })?;
+    Ok(Json(RebalanceForwardProxyKeyAffinityResponse { updated }))
+}
+
 fn truncate_detail(mut input: String, max_len: usize) -> String {
     if input.len() <= max_len {
         return input;

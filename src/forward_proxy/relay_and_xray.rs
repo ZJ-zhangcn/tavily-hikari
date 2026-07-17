@@ -239,15 +239,10 @@ pub struct ForwardProxyRuntimeConfig {
 }
 
 #[derive(Debug, Clone)]
-pub struct ForwardProxyAssignmentCounts {
-    pub primary: i64,
-    pub secondary: i64,
-}
-
-#[derive(Debug, Clone)]
 struct ForwardProxyKeyAffinity {
     primary_proxy_key: Option<String>,
     secondary_proxy_key: Option<String>,
+    locked: bool,
 }
 
 #[derive(Debug, Clone)]

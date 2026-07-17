@@ -535,6 +535,19 @@ impl ForwardProxyManager {
         allow_direct: bool,
         limit: usize,
     ) -> Vec<ForwardProxyEndpoint> {
+        self.rank_candidates_for_subject_with_load(subject, exclude, allow_direct, limit, None)
+    }
+
+    /// Rank endpoints for a subject. When `assignment_counts` is provided, prefer nodes with
+    /// fewer primary assignments so keys do not all stick to the highest-weight egress.
+    pub fn rank_candidates_for_subject_with_load(
+        &self,
+        subject: &str,
+        exclude: &HashSet<String>,
+        allow_direct: bool,
+        limit: usize,
+        assignment_counts: Option<&HashMap<String, ForwardProxyAssignmentCounts>>,
+    ) -> Vec<ForwardProxyEndpoint> {
         let seed = stable_hash_u64(subject);
         let mut candidates = self
             .endpoints
@@ -547,7 +560,13 @@ impl ForwardProxyManager {
                 if !runtime.available || !runtime.weight.is_finite() {
                     return None;
                 }
+                let load = assignment_counts
+                    .and_then(|counts| counts.get(&endpoint.key))
+                    .map(|counts| counts.primary as f64 + counts.secondary as f64 * 0.25)
+                    .unwrap_or(0.0);
                 let score = runtime.weight + runtime.success_ema * 4.0
+                    // Prefer under-assigned nodes strongly over pure weight winners.
+                    - load * 10.0
                     - runtime
                         .latency_ema_ms
                         .map(|latency| (latency / 1000.0).min(1.5))

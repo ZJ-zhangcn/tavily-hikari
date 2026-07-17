@@ -560,10 +560,18 @@ impl TavilyProxy {
         allow_direct: bool,
         limit: usize,
     ) -> Result<Vec<forward_proxy::ForwardProxyEndpoint>, ProxyError> {
+        let assignment_counts =
+            forward_proxy::load_forward_proxy_assignment_counts(&self.key_store.pool).await?;
         let ranked = {
             let mut manager = self.forward_proxy.lock().await;
             manager.ensure_non_zero_weight();
-            manager.rank_candidates_for_subject(subject, exclude, allow_direct, limit)
+            manager.rank_candidates_for_subject_with_load(
+                subject,
+                exclude,
+                allow_direct,
+                limit,
+                Some(&assignment_counts),
+            )
         };
         let normalized_registration_ip = affinity.registration_ip.and_then(normalize_ip_string);
         let normalized_registration_region = affinity
@@ -688,6 +696,11 @@ impl TavilyProxy {
         let registration_region = state.registration_region;
         let has_registration_metadata = registration_ip.is_some() || registration_region.is_some();
         let now = self.backend_time.now_ts();
+        // Manual locks: keep stored binding as-is (admin owns reassignment).
+        if record.locked {
+            record.updated_at = now;
+            return Ok(record);
+        }
         {
             let mut manager = self.forward_proxy.lock().await;
             manager.ensure_non_zero_weight();
@@ -807,6 +820,9 @@ impl TavilyProxy {
         succeeded_proxy_key: &str,
     ) -> Result<(), ProxyError> {
         let state = self.load_proxy_affinity_state(api_key_id).await?;
+        if state.record.locked {
+            return Ok(());
+        }
         if state.has_explicit_empty_marker {
             let mut exclude = HashSet::new();
             exclude.insert(succeeded_proxy_key.to_string());
@@ -831,6 +847,7 @@ impl TavilyProxy {
                 forward_proxy::ForwardProxyAffinityRecord {
                     primary_proxy_key: Some(succeeded_proxy_key.to_string()),
                     secondary_proxy_key,
+                    locked: false,
                     updated_at: self.backend_time.now_ts(),
                 },
             )
@@ -1433,6 +1450,7 @@ impl TavilyProxy {
             forward_proxy::ForwardProxyAffinityRecord {
                 primary_proxy_key,
                 secondary_proxy_key,
+                locked: false,
                 updated_at: self.backend_time.now_ts(),
             },
             primary
@@ -1512,6 +1530,7 @@ impl TavilyProxy {
         Ok(forward_proxy::ForwardProxyAffinityRecord {
             primary_proxy_key: Some(preferred_primary_proxy_key.to_string()),
             secondary_proxy_key,
+            locked: false,
             updated_at: self.backend_time.now_ts(),
         })
     }
@@ -1948,8 +1967,85 @@ impl TavilyProxy {
                 billing_subject.to_string(),
             ),
         })
-}
+    }
 
+    pub async fn list_forward_proxy_key_affinity(
+        &self,
+    ) -> Result<Vec<(String, forward_proxy::ForwardProxyAffinityRecord)>, ProxyError> {
+        forward_proxy::list_forward_proxy_key_affinity(&self.key_store.pool).await
+    }
+
+    pub async fn list_forward_proxy_assignment_counts(
+        &self,
+    ) -> Result<HashMap<String, forward_proxy::ForwardProxyAssignmentCounts>, ProxyError> {
+        forward_proxy::load_forward_proxy_assignment_counts(&self.key_store.pool).await
+    }
+
+    pub async fn put_forward_proxy_key_affinity(
+        &self,
+        key_id: &str,
+        primary_proxy_key: Option<String>,
+        secondary_proxy_key: Option<String>,
+        locked: Option<bool>,
+    ) -> Result<forward_proxy::ForwardProxyAffinityRecord, ProxyError> {
+        let key_id = key_id.trim();
+        if key_id.is_empty() {
+            return Err(ProxyError::Other("keyId must not be empty".to_string()));
+        }
+        let mut record = self.load_proxy_affinity_record(key_id).await?;
+        if let Some(primary) = primary_proxy_key {
+            let trimmed = primary.trim().to_string();
+            record.primary_proxy_key = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            };
+        }
+        if let Some(secondary) = secondary_proxy_key {
+            let trimmed = secondary.trim().to_string();
+            record.secondary_proxy_key = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            };
+        }
+        if let Some(locked) = locked {
+            record.locked = locked;
+        }
+        if record.primary_proxy_key == record.secondary_proxy_key {
+            record.secondary_proxy_key = None;
+        }
+        record.updated_at = self.backend_time.now_ts();
+        self.store_proxy_affinity_record(key_id, record.clone())
+            .await?;
+        Ok(record)
+    }
+
+    pub async fn rebalance_forward_proxy_key_affinity(
+        &self,
+        only_unlocked: bool,
+    ) -> Result<usize, ProxyError> {
+        let items = self.list_forward_proxy_key_affinity().await?;
+        let mut updated = 0usize;
+        for (key_id, record) in items {
+            if only_unlocked && record.locked {
+                continue;
+            }
+            // Force reassignment: clear bindings while preserving lock flag (false for unlocked path).
+            let blank = forward_proxy::ForwardProxyAffinityRecord {
+                primary_proxy_key: None,
+                secondary_proxy_key: None,
+                locked: false,
+                updated_at: self.backend_time.now_ts(),
+            };
+            self.store_proxy_affinity_record(&key_id, blank).await?;
+            let next = self.resolve_proxy_affinity_record(&key_id, true).await?;
+            if next.primary_proxy_key.is_some() || next.secondary_proxy_key.is_some() {
+                updated += 1;
+            }
+        }
+        Ok(updated)
+    }
 }
 
 #[allow(clippy::items_after_test_module)]
