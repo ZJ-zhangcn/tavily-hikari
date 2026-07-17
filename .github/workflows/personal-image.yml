@@ -29,6 +29,9 @@ jobs:
         with:
           bun-version: latest
 
+      - name: Install Pillow for PWA assets
+        run: python3 -m pip install --user Pillow
+
       - name: Build web assets
         working-directory: web
         run: |
