@@ -15,6 +15,7 @@
 @import './styles/user-console-recharge.css';
 @import './styles/user-console-recent-requests.css';
 @import './styles/admin.css';
+@import './styles/admin-mcp-session-bindings.css';
 @import './styles/admin-rankings.css';
 @import './styles/ha-status.css';
 @import './styles/admin-announcements.css';
