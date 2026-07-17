@@ -26,6 +26,7 @@
   max-width: min(100%, 640px);
 }
 .admin-compact-intro-actions .users-search-controls { justify-content: flex-end; width: min(100%, 520px); }
+
 .admin-header-filter-slot {
   display: flex;
   min-width: 0;
