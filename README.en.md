@@ -1,0 +1,468 @@
+# Tavily Hikari
+
+[English] | [中文](README.md)
+
+
+[![Release](https://img.shields.io/github/v/release/IvanLi-CN/tavily-hikari?logo=github)](https://github.com/IvanLi-CN/tavily-hikari/releases)
+[![CI Pipeline](https://github.com/IvanLi-CN/tavily-hikari/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/IvanLi-CN/tavily-hikari/actions/workflows/ci.yml)
+[![Rust](https://img.shields.io/badge/Rust-1.91%2B-orange?logo=rust)](rust-toolchain.toml)
+[![Frontend](https://img.shields.io/badge/Vite-5.x-646CFF?logo=vite&logoColor=white)](web/package.json)
+[![Docs](https://img.shields.io/badge/docs-github--pages-1f6feb)](https://ivanli-cn.github.io/tavily-hikari/)
+[![Docs-zh](https://img.shields.io/badge/docs-zh--CN-blue)](README.md)
+
+![Tavily Hikari social preview](docs/assets/tavily-hikari-social-preview.png)
+
+Tavily Hikari is a Rust + Axum proxy for Tavily's MCP endpoint. It multiplexes multiple API keys, anonymizes upstream traffic, stores full audit logs in SQLite, and ships with a React + Vite web console for realtime visibility.
+
+> Looking for the Chinese documentation? Check [`README.zh-CN.md`](README.md).
+
+## Docs & Storybook
+
+- Public docs site: [ivanli-cn.github.io/tavily-hikari](https://ivanli-cn.github.io/tavily-hikari/)
+- Storybook: [ivanli-cn.github.io/tavily-hikari/storybook.html](https://ivanli-cn.github.io/tavily-hikari/storybook.html)
+- Local docs-site: `cd docs-site && bun install --frozen-lockfile && bun run dev`
+- Local Storybook: `cd web && bun install --frozen-lockfile && bun run storybook`
+
+## Worktree Bootstrap
+
+- Run `bun install --frozen-lockfile` once in the primary worktree. The root `prepare` script installs the shared `post-checkout` hook and refreshes `lefthook` commit hooks when the `lefthook` binary is available on `PATH`.
+- The first checkout into a linked worktree now performs a best-effort bootstrap: copy missing root `.env` / `.env.*` files from the primary worktree, install missing root / `web` / `docs-site` Bun dependencies, and run `cargo fetch --locked`.
+- Automatic bootstrap never blocks checkout. Missing `lefthook`, `bun`, `cargo`, or source env files only emit warnings.
+- For an explicit repair, run `bun run worktree:setup`. It forces the same bootstrap steps again and fails only when an available restore command itself fails.
+- The bootstrap intentionally does not restore `*.db`, `web/dist`, `web/storybook-static`, `downloads/`, browser caches, Playwright install state, or other runtime artifacts.
+
+## Why Tavily Hikari
+
+- **Key pool with fairness** – SQLite keeps last-used timestamps and assigns each access token a short‑lived “home” key; new or expired affinities are resolved via least‑recently‑used selection across active keys to keep wear balanced.
+- **Short IDs and secret isolation** – every Tavily key receives a 4-char nanoid. The real token is only retrievable via admin APIs/UI.
+- **Health-aware routing** – status code 432 automatically marks keys as `exhausted` until the next UTC month or manual recovery.
+- **High-anonymity forwarding** – outbound Tavily HTTP, Rebalance MCP HTTP, and Control MCP requests now share strict header allowlists; Tavily HTTP strips `User-Agent`, `X-Project-ID` is policy-controlled (`accessToken` by default), and Control MCP only sends a configured `User-Agent` when the administrator explicitly sets one. See [`docs/high-anonymity-proxy.md`](docs/high-anonymity-proxy.md).
+- **Segmented reconciliation for anonymized billing** – when `accessToken` mode is active and both rebalance switches are enabled, Hikari records real `(token, key, period)` usage, settles each full business period once, and applies signed quota adjustments back to the original window.
+- **Full audit trail** – `request_logs` persists method/path/query, upstream responses, error payloads, and the list of forwarded/dropped headers.
+- **Operator UI** – the SPA in `web/` visualizes key health, request logs, and admin actions (soft delete, restore, reveal real keys).
+- **Admin system status** – `/admin/system-settings/status` shows the configured/effective upstream identity policy, activation gates, settlement queue state, and recent reconciliation adjustments without exposing raw upstream credentials.
+- **Path-based web console routes** – the user console now uses `/console`, `/console/dashboard`, `/console/tokens`, and `/console/tokens/:id`; homepage token bootstrap intentionally remains hash-based (`/#<token>` or `/#<token-id>`) so full tokens never move into path/query logging surfaces.
+- **Split PWA identities** – the public/user web app installs from `/`, `/console`, `/login`, and `/registration-paused`, while the admin web app installs only from `/admin/*`; both can reopen their shell offline, but live data and mutations stay network-only.
+- **Repo-local Relay Mesh brand assets** – the favicon, touch icons, public/admin PWA icons, and docs-site logo all derive from checked-in approved Relay Mesh lockup/icon assets, so the brand layer stays consistent without runtime image/CDN dependencies.
+- **CI + Release** – GitHub Actions runs lint/tests; releases are driven by PR intent labels and publish `ghcr.io/ivanli-cn/tavily-hikari:<tag>` with prebuilt web assets.
+
+## Architecture Snapshot
+
+```
+Client → Tavily Hikari (Axum) ──┬─> Tavily upstream (/mcp)
+                                ├─> SQLite (api_keys, request_logs)
+                                └─> Web SPA (React/Vite)
+```
+
+- **Backend**: Rust 2024 edition, Axum, SQLx, Tokio, Clap.
+- **Data**: SQLite single-file DB with `api_keys` + `request_logs`.
+- **Frontend**: React 18, TanStack Router, Tailwind CSS, shadcn/ui (Radix), Vite 5 (served from `web/dist` or via Vite dev server).
+
+## Quick Start
+
+### Local dev
+
+```bash
+# Start backend (high port recommended during dev)
+DEV_OPEN_ADMIN=true cargo run -- --bind 127.0.0.1 --port 58087
+
+# Optional: start SPA dev server
+cd web && bun install --frozen-lockfile && bun run --bun dev -- --host 127.0.0.1 --port 55173
+
+# Register Tavily keys via admin API in local dev mode
+curl -X POST http://127.0.0.1:58087/api/keys \
+  -H "Content-Type: application/json" \
+  -d '{"api_key":"key_a"}'
+```
+
+Visit `http://127.0.0.1:58087/health` for a health check or `http://127.0.0.1:55173` for the console. Keys should be managed via the admin API or SPA instead of environment variables.
+
+### Pure web demo
+
+Run the SPA with browser-local API and SSE mocks when you need to show the product without a
+backend, database, or real Tavily upstream:
+
+```bash
+scripts/start-web-demo.sh
+```
+
+The demo listens on `http://127.0.0.1:55174` by default. It serves the normal Public,
+User Console, Admin, Login, and Registration Paused pages while `VITE_DEMO_MODE=true`
+intercepts `/api/*` and `/mcp` inside the browser.
+
+### Docker
+
+```bash
+docker run --rm \
+  -p 8787:8787 \
+  -v $(pwd)/data:/srv/app/data \
+  ghcr.io/ivanli-cn/tavily-hikari:latest
+```
+
+The container listens on `0.0.0.0:8787`, serves `web/dist`, and persists data in `/srv/app/data/tavily_proxy.db`. Once it is up, register keys via the admin API/console.
+
+### Binary release
+
+GitHub Releases attach Linux `tar.gz` builds for `linux/amd64` and `linux/arm64`, plus matching `SHA256` files. The release binary carries the web UI inside the executable, so you do not need a separate `web/dist` directory at runtime.
+
+### Docker Compose
+
+```bash
+docker compose up -d
+
+# Seed initial keys after enabling an admin auth mode.
+curl -X POST http://127.0.0.1:8787/api/keys \
+  -H "Content-Type: application/json" \
+  -d '{"api_key":"key_a"}'
+```
+
+The stock [`docker-compose.yml`](docker-compose.yml) exposes port 8787 and mounts a `tavily-hikari-data` volume. Override any CLI flag with additional environment variables if needed.
+
+## CLI Flags & Environment Variables
+
+| Flag / Env                                                                          | Description                                                                                                          |
+| ----------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `--keys` / `TAVILY_API_KEYS`                                                        | Optional helper for bootstrapping or local experiments. In production, prefer the admin API/UI to manage keys.       |
+| `--upstream` / `TAVILY_UPSTREAM`                                                    | Tavily MCP upstream endpoint (default `https://mcp.tavily.com/mcp`); path-prefixed reverse-proxy URLs are supported. |
+| `--bind` / `PROXY_BIND`                                                             | Listen address (default `127.0.0.1`).                                                                                |
+| `--port` / `PROXY_PORT`                                                             | Listen port (default `8787`).                                                                                        |
+| `--db-path` / `PROXY_DB_PATH`                                                       | SQLite file path (default `tavily_proxy.db`).                                                                        |
+| `--log-format` / `RUNTIME_LOG_FORMAT`                                               | Runtime log formatter (`json` by default, `text` for fallback grep workflows).                                       |
+| `--low-quota-depletion-threshold` / `LOW_QUOTA_DEPLETION_THRESHOLD`                 | Remaining-credit threshold for keeping 432-exhausted upstream keys out of normal monthly pools (default `15`).       |
+| `--static-dir` / `WEB_STATIC_DIR`                                                   | Directory for static assets; auto-detected if `web/dist` exists.                                                     |
+| `--forward-auth-header` / `FORWARD_AUTH_HEADER`                                     | Request header that carries the authenticated user identity (e.g., `Remote-Email`).                                  |
+| `--forward-auth-admin-value` / `FORWARD_AUTH_ADMIN_VALUE`                           | Header value that grants admin privileges; leave empty to disable.                                                   |
+| `--forward-auth-nickname-header` / `FORWARD_AUTH_NICKNAME_HEADER`                   | Optional header for displaying a friendly name in the UI (e.g., `Remote-Name`).                                      |
+| `--admin-mode-name` / `ADMIN_MODE_NAME`                                             | Override nickname when ForwardAuth headers are missing.                                                              |
+| `--admin-auth-forward-enabled` / `ADMIN_AUTH_FORWARD_ENABLED`                       | Boolean switch to enable legacy ForwardAuth checks (default `false`; full legacy header config auto-enables it).     |
+| `--admin-auth-builtin-enabled` / `ADMIN_AUTH_BUILTIN_ENABLED`                       | Boolean switch to enable built-in admin login (cookie session) (default `false`).                                    |
+| `--admin-auth-builtin-password-hash` / `ADMIN_AUTH_BUILTIN_PASSWORD_HASH`           | Built-in admin password hash (PHC string, recommended).                                                              |
+| `--admin-auth-builtin-password` / `ADMIN_AUTH_BUILTIN_PASSWORD`                     | Built-in admin password (deprecated; prefer password hash).                                                          |
+| `--dev-open-admin` / `DEV_OPEN_ADMIN`                                               | Boolean flag to bypass admin checks in local/dev setups (default `false`).                                           |
+| `--linuxdo-oauth-enabled` / `LINUXDO_OAUTH_ENABLED`                                 | Enable Linux DO Connect OAuth2 login for end users (default `false`).                                                |
+| `--linuxdo-oauth-client-id` / `LINUXDO_OAUTH_CLIENT_ID`                             | Linux DO OAuth2 client ID (`connect.linux.do` app).                                                                  |
+| `--linuxdo-oauth-client-secret` / `LINUXDO_OAUTH_CLIENT_SECRET`                     | Linux DO OAuth2 client secret.                                                                                       |
+| `--linuxdo-oauth-authorize-url` / `LINUXDO_OAUTH_AUTHORIZE_URL`                     | OAuth2 authorize endpoint (default `https://connect.linux.do/oauth2/authorize`).                                     |
+| `--linuxdo-oauth-token-url` / `LINUXDO_OAUTH_TOKEN_URL`                             | OAuth2 token endpoint (default `https://connect.linux.do/oauth2/token`).                                             |
+| `--linuxdo-oauth-userinfo-url` / `LINUXDO_OAUTH_USERINFO_URL`                       | OAuth2 user profile endpoint (default `https://connect.linux.do/api/user`).                                          |
+| `--linuxdo-oauth-scope` / `LINUXDO_OAUTH_SCOPE`                                     | OAuth scope (default `user`).                                                                                        |
+| `--linuxdo-oauth-redirect-url` / `LINUXDO_OAUTH_REDIRECT_URL`                       | Frontend callback URL on this service (for example `https://tavily.ivanli.cc/console/oauth/linuxdo/callback`).       |
+| `--linuxdo-oauth-refresh-token-crypt-key` / `LINUXDO_OAUTH_REFRESH_TOKEN_CRYPT_KEY` | Encrypts persisted LinuxDo refresh tokens (32 raw bytes or base64/base64url encoded 32-byte key).                    |
+| `--linuxdo-oauth-user-sync-enabled` / `LINUXDO_OAUTH_USER_SYNC_ENABLED`             | Enable the daily LinuxDo offline user sync scheduler (default `true`).                                               |
+| `--linuxdo-oauth-user-sync-at` / `LINUXDO_OAUTH_USER_SYNC_AT`                       | Daily LinuxDo offline sync time in server local time, format `HH:mm` (default `06:20`).                              |
+| `--linuxdo-credit-enabled` / `LINUXDO_CREDIT_ENABLED`                               | Enable the Linux.do Credit recharge payment flow (default `false`).                                                  |
+| `--linuxdo-credit-client-id` / `LINUXDO_CREDIT_CLIENT_ID`                           | Linux.do Credit application client ID.                                                                               |
+| `--linuxdo-credit-client-secret` / `LINUXDO_CREDIT_CLIENT_SECRET`                   | Linux.do Credit application client secret.                                                                           |
+| `--linuxdo-credit-merchant-private-key` / `LINUXDO_CREDIT_MERCHANT_PRIVATE_KEY`     | Ed25519 merchant private key for Linux.do Credit LDC signing.                                                        |
+| `--linuxdo-credit-submit-url` / `LINUXDO_CREDIT_SUBMIT_URL`                         | Linux.do Credit LDC submit endpoint (default `https://credit.linux.do/epay/pay/submit.php`).                         |
+| `--linuxdo-credit-notify-url` / `LINUXDO_CREDIT_NOTIFY_URL`                         | Optional order-level notify URL, usually `https://<your-host>/api/linuxdo-credit/notify`.                            |
+| `--linuxdo-credit-return-url` / `LINUXDO_CREDIT_RETURN_URL`                         | Optional browser return URL after payment, usually `https://<your-host>/console/dashboard`.                          |
+| `--linuxdo-credit-test-price-enabled` / `LINUXDO_CREDIT_TEST_PRICE_ENABLED`         | Enable the test offer where `1 LDC` buys `1` monthly credit (default `false`).                                       |
+| `--user-session-max-age-secs` / `USER_SESSION_MAX_AGE_SECS`                         | End-user login cookie max age in seconds (default `1209600`, 14 days).                                               |
+| `--oauth-login-state-ttl-secs` / `OAUTH_LOGIN_STATE_TTL_SECS`                       | One-time OAuth state token TTL in seconds (default `600`).                                                           |
+
+If `--keys`/`TAVILY_API_KEYS` is supplied, the database sync logic adds or revives keys listed there and soft deletes the rest. Otherwise, the admin workflow fully controls key state.
+
+- `TAVILY_UPSTREAM` is interpreted as the full MCP endpoint. If your reverse proxy keeps Tavily under a path prefix, include the final `/mcp` path in the configured URL.
+- `TAVILY_USAGE_BASE` may include a path prefix. Hikari appends `/search`, `/extract`, `/crawl`, `/map`, `/research`, `/research/{id}`, and `/usage` under that prefix.
+
+## HTTP API Cheat Sheet
+
+| Method   | Path                   | Description                                                       | Auth         |
+| -------- | ---------------------- | ----------------------------------------------------------------- | ------------ |
+| `GET`    | `/health`              | Liveness plus xray readiness after startup grace.                 | none         |
+| `GET`    | `/api/summary`         | High-level success/failure stats and last activity.               | none         |
+| `GET`    | `/api/keys`            | Lists short IDs, status, and counters.                            | Admin        |
+| `GET`    | `/api/logs?page=1`     | Recent proxy logs (paginated, default 20 per page).               | Admin        |
+| `POST`   | `/api/tavily/search`   | Tavily `/search` proxy via Hikari key pool (Cherry Studio, etc.). | Hikari token |
+| `POST`   | `/api/keys`            | Admin: add/restore a key. Body `{ "api_key": "..." }`.            | Admin        |
+| `DELETE` | `/api/keys/:id`        | Admin: soft-delete key by short ID.                               | Admin        |
+| `GET`    | `/api/keys/:id/secret` | Admin: reveal the real Tavily key.                                | Admin        |
+
+### Cherry Studio integration
+
+Tavily Hikari also exposes a Tavily HTTP façade so Cherry Studio and other HTTP clients can talk to Tavily through Hikari’s key pool and per-token quotas instead of calling Tavily directly.
+
+- Base URL: `https://<your Hikari host>/api/tavily`
+- API key: Hikari access token `th-<id>-<secret>` created from the user dashboard
+
+Cherry Studio setup:
+
+1. Create an access token (for example `th-xxxx-xxxxxxxxxxxx`) from the Tavily Hikari **user dashboard** and copy it.
+2. In Cherry Studio, open **Settings → Web Search**.
+3. Choose the provider **Tavily (API key)**.
+4. Set **API URL** to `https://<your Hikari host>/api/tavily` (for local dev it is usually `http://127.0.0.1:58087/api/tavily`).
+5. Set **API key** to the Hikari access token from step 1 (the full `th-xxxx-xxxxxxxxxxxx` value), **not** your Tavily official API key.
+6. Optionally tune result count, answer/date options, etc.; Cherry Studio will pass these fields through to Tavily while Hikari rotates Tavily keys and enforces token quotas.
+
+> Do not put your Tavily API key directly into Cherry Studio. Always route traffic through Hikari by using its access token.
+
+### CLI + Agent Skills integration
+
+Install the GitHub Release-distributed wrapper with your Hikari origin and Hikari access token:
+
+```bash
+curl -fsSL "https://github.com/IvanLi-CN/tavily-hikari/releases/latest/download/install-tvly-hikari.sh" | bash -s -- \
+  --base-url "https://<your Hikari host>" \
+  --token "th-<id>-<secret>"
+```
+
+Then run official Tavily CLI commands through Hikari:
+
+```bash
+tvly-hikari search "latest AI agent news" --json
+tvly-hikari extract https://example.com --json
+tvly-hikari crawl https://example.com/docs --json
+tvly-hikari map https://example.com/docs --json
+tvly-hikari research "compare MCP and CLI agent search" --json
+```
+
+Optional Agent Skills install:
+
+```bash
+npx skills add https://github.com/IvanLi-CN/tavily-hikari --global
+```
+
+`tvly-hikari` stores the Hikari token in `~/.config/tavily-hikari-cli/config.json` with `0600`
+permissions and injects `TAVILY_API_BASE_URL=https://<your Hikari host>/api/tavily` plus
+`TAVILY_API_KEY=th-<id>-<secret>` for the official `tvly` command. The token is not a raw Tavily
+API key.
+
+For the full HTTP proxy design and acceptance criteria, see [`docs/tavily-http-api-proxy.md`](docs/tavily-http-api-proxy.md).
+
+## Key Lifecycle & Observability
+
+- `exhausted` status is triggered automatically when upstream returns 432; scheduler skips those keys until UTC month rollover or manual recovery.
+- Each access token maintains a soft affinity to a single API key for a short time window. Within that window, the proxy prefers the same key when it remains active; when affinity expires or the key becomes exhausted/disabled, the next key is chosen by a global least‑recently‑used scheduler to keep load balanced across healthy keys. If all are disabled, the proxy falls back to the oldest disabled entries.
+- `request_logs` captures request metadata, upstream payloads, and dropped/forwarded header sets for postmortem analysis.
+- Runtime process logs are separate from `request_logs`. By default Hikari emits JSON lines on stderr via `tracing`; use `RUNTIME_LOG_FORMAT=text` (or `--log-format text`) only when you explicitly need grep-friendly local fallback output.
+- Stable runtime event fields include `component`, `event`, and per-path fields such as `operation`, `job_type`, `attempt`, `backoff_ms`, `path`, `method`, and `err`. Secrets, full tokens, cookies, and raw sensitive headers are intentionally excluded.
+- `RUST_LOG` still controls filtering. Typical operator flows are `docker logs ... | jq -c` in JSON mode and `RUNTIME_LOG_FORMAT=text RUST_LOG=info cargo run ... | rg "component=db|event=operation_"` in fallback text mode.
+- High-anonymity behavior (header allowlist, origin rewrite, etc.) is detailed in [`docs/high-anonymity-proxy.md`](docs/high-anonymity-proxy.md).
+
+## Admin Authentication
+
+For production deployments, prefer passkey admin login. It keeps the administrator trust boundary inside Hikari instead of trusting a user identity header forwarded by a reverse proxy:
+
+```bash
+export ADMIN_AUTH_PASSKEY_ENABLED=true
+export ADMIN_PASSKEY_RP_ID=tavily.example.com
+export ADMIN_PASSKEY_RP_ORIGIN=https://tavily.example.com
+```
+
+After deployment, create a one-time enrollment URL on the server:
+
+```bash
+tavily-hikari admin passkey reset-url --base-url https://tavily.example.com
+```
+
+Open the printed URL once to register the first admin passkey.
+
+### Legacy ForwardAuth Integration
+
+ForwardAuth support is retained for explicitly managed trusted networks, but it is disabled by default and should not be used as the only public admin trust boundary. If you enable it, configure the following environment variables (or CLI flags) to match your identity provider:
+
+```bash
+export ADMIN_AUTH_FORWARD_ENABLED=true
+export FORWARD_AUTH_HEADER=Remote-Email
+export FORWARD_AUTH_ADMIN_VALUE=admin@example.com
+export FORWARD_AUTH_NICKNAME_HEADER=Remote-Name
+```
+
+- Existing deployments that already set both `FORWARD_AUTH_HEADER` and `FORWARD_AUTH_ADMIN_VALUE` continue to enable ForwardAuth automatically for compatibility; new deployments should set `ADMIN_AUTH_FORWARD_ENABLED=true` explicitly when using this mode.
+- Requests must include the header defined by `FORWARD_AUTH_HEADER`. If its value equals `FORWARD_AUTH_ADMIN_VALUE`, the caller is treated as an admin and can hit `/api/keys/*` privileged endpoints.
+- Do not expose Hikari directly to the public internet with ForwardAuth enabled unless the edge proxy strips any client-supplied identity headers before authentication.
+- `FORWARD_AUTH_NICKNAME_HEADER` (optional) is surfaced in the UI to show who is operating the console. When absent, the backend falls back to `ADMIN_MODE_NAME` (if provided) or hides the nickname.
+- For purely local experiments you can set `DEV_OPEN_ADMIN=true`, but never enable it in production.
+
+## Built-in Admin Login
+
+Tavily Hikari can also expose a built-in admin login page backed by an HttpOnly cookie session.
+
+```bash
+export ADMIN_AUTH_BUILTIN_ENABLED=true
+echo -n 'change-me' | cargo run --quiet --bin admin_password_hash
+export ADMIN_AUTH_BUILTIN_PASSWORD_HASH='<phc-string>'
+# Optional: enable ForwardAuth only when the upstream proxy boundary is trusted.
+# export ADMIN_AUTH_FORWARD_ENABLED=true
+```
+
+- When built-in login is enabled and the browser is not signed in, the public homepage shows an **Admin Login** button.
+- Successful login sets an HttpOnly cookie (`hikari_admin_session`) and unlocks admin-only APIs + `/admin`.
+- For production, prefer passkey login. Built-in password login is intended as a break-glass path for small/self-hosted deployments.
+  - Avoid storing plaintext passwords in env vars. Prefer `ADMIN_AUTH_BUILTIN_PASSWORD_HASH` (PHC string) and use a strong password.
+  - Sessions are stored in-memory and expire server-side (aligned with cookie `Max-Age`, default 14 days). Restarting the process logs users out.
+  - The in-memory session store is bounded (evicts oldest sessions when the cap is exceeded) to avoid unbounded growth.
+  - If you terminate TLS at a reverse proxy, set `X-Forwarded-Proto: https` (or `Forwarded: proto=https`) so the backend can mark the session cookie as `Secure`.
+
+Deployment example (Caddy as gateway): see `examples/forwardauth-caddy/`.
+
+## Linux DO OAuth Login (User Flow)
+
+Tavily Hikari can expose Linux DO Connect OAuth2 login for regular users, independent from admin auth.
+
+```bash
+export LINUXDO_OAUTH_ENABLED=true
+export LINUXDO_OAUTH_CLIENT_ID='<your-linuxdo-client-id>'
+export LINUXDO_OAUTH_CLIENT_SECRET='<your-linuxdo-client-secret>'
+export LINUXDO_OAUTH_REDIRECT_URL='https://tavily.ivanli.cc/console/oauth/linuxdo/callback'
+export LINUXDO_OAUTH_REFRESH_TOKEN_CRYPT_KEY='<32-byte-secret-or-base64>'
+export LINUXDO_OAUTH_USER_SYNC_ENABLED=true
+export LINUXDO_OAUTH_USER_SYNC_AT='06:20'
+```
+
+- Homepage behavior:
+  - When not logged in, area ① shows a **Sign in with Linux DO** button.
+  - After login, area ① is hidden and area ② auto-fills the user's bound `th-...` token.
+- Callback handoff behavior:
+  - LinuxDo should redirect the browser to `/console/oauth/linuxdo/callback`, not the legacy backend callback path.
+  - The callback page stays inside the `/console` shell, shows a provider-specific "connecting" state, then posts `code` + `state` to `POST /auth/linuxdo/finalize`.
+  - Successful finalize sets the user session cookie and automatically enters `/console`.
+  - Provider denial, invalid/expired state, timeout, and upstream failures stay on the callback page with fresh restart + home CTAs.
+  - When new-user registration is paused, finalize redirects to `/registration-paused` instead of showing a generic failure card.
+- Token policy:
+  - First Linux DO login automatically creates and binds one Hikari access token.
+  - Later logins reuse the same binding; no extra token is created.
+  - If the bound token is disabled/deleted, `/api/user/token` returns an error (`404` or `409`) and does not auto-regenerate.
+- Quota policy:
+  - New user accounts no longer receive built-in base quota on first login.
+  - Effective quota for new accounts comes from system/user tags only.
+  - A newly created account without any quota-granting tags stays at `0/0/0/0` until an admin assigns tags or appends a base quota ledger row.
+- Offline profile sync:
+  - After a successful LinuxDo login, Hikari stores the latest non-empty `refresh_token` in encrypted form.
+  - The server runs a daily offline sync at `06:20` in the server's local time by default; the scheduler refreshes each eligible LinuxDo profile and rebinds the matching `linuxdo_l*` system tag.
+  - `LINUXDO_OAUTH_REFRESH_TOKEN_CRYPT_KEY` accepts either exactly 32 raw bytes or a base64/base64url string that decodes to 32 bytes.
+  - If the crypt key is missing or invalid, login still works, but refresh-token persistence and the daily LinuxDo sync become no-op.
+  - Existing LinuxDo accounts that were created before refresh tokens started being stored are not picked up automatically; those users need to sign in once again to join the daily sync.
+  - Sync failures such as `invalid_grant`, transport errors, or userinfo mismatches keep the previous trust level, existing user session, and current `linuxdo_l*` tag until the next successful refresh or a user re-login.
+- New endpoints:
+  - `GET /auth/linuxdo`
+  - `POST /auth/linuxdo/finalize`
+  - `GET /auth/linuxdo/callback` (diagnostics only; no longer the official login completion path)
+  - `GET /api/user/token`
+  - `POST /api/user/logout`
+
+## Linux.do Credit Recharge (Payment)
+
+Tavily Hikari can let logged-in Linux DO users buy additional monthly quota through Linux.do
+Credit LDC payments. This requires Linux DO OAuth login to be enabled first, because recharge
+orders are attached to the logged-in user account.
+
+```bash
+export LINUXDO_CREDIT_ENABLED=true
+export LINUXDO_CREDIT_CLIENT_ID='<your-linuxdo-credit-client-id>'
+export LINUXDO_CREDIT_CLIENT_SECRET='<your-linuxdo-credit-client-secret>'
+export LINUXDO_CREDIT_MERCHANT_PRIVATE_KEY='<ed25519-private-key>'
+export LINUXDO_CREDIT_NOTIFY_URL='https://<your-hikari-host>/api/linuxdo-credit/notify'
+export LINUXDO_CREDIT_RETURN_URL='https://<your-hikari-host>/console/dashboard'
+```
+
+- `LINUXDO_CREDIT_MERCHANT_PRIVATE_KEY` is used to sign official LDC order creation requests. The
+  backend accepts Ed25519 private material as base64/base64url/hex seed or PKCS#8 DER/PEM.
+- `LINUXDO_CREDIT_NOTIFY_URL` must be publicly reachable by Linux.do Credit. Successful signed
+  notifications mark pending orders as paid and apply quota entitlements idempotently.
+- `LINUXDO_CREDIT_RETURN_URL` is the browser landing page after payment. The user console can
+  refresh order state after returning.
+- `LINUXDO_CREDIT_SUBMIT_URL` defaults to the official Linux.do Credit LDC endpoint and usually
+  does not need to be changed.
+- `LINUXDO_CREDIT_TEST_PRICE_ENABLED=true` exposes a test offer where `1 LDC` buys `1` monthly
+  credit. Keep it disabled for normal paid operation.
+
+After the process starts with the payment credentials, open the admin system settings and enable
+**Enable recharge**. Keep **Allow non-admin recharge** disabled while testing with an admin session;
+turn it on only when regular users should see the recharge card and create payment orders. When
+**Enable recharge** is off, the user console hides the recharge entry and the backend rejects new
+order creation while still accepting already-paid callbacks.
+
+## Frontend Highlights
+
+- Built with React 18, TanStack Router, shadcn/ui (Radix), Tailwind, Iconify.
+- Displays live key table, request log stream, and admin-only actions (copy real key, restore, delete).
+- Admin routes are path-based (`/admin/dashboard`, `/admin/tokens/:id`, `/admin/keys/:id`); legacy hash routes are removed.
+- Public and admin PWA caches are intentionally separated so ordinary users do not accumulate persistent admin shell caches or an admin install identity.
+- `scripts/write-version.mjs` stamps the build version into the UI during CI releases.
+- `bun run dev` (forced through Bun runtime via `web/bunfig.toml`) proxies `/api`, `/mcp`, and `/health` to the backend to avoid CORS hassle during development.
+
+## Screenshots
+
+Operator and integration views of Tavily Hikari.
+
+### MCP Client Setup
+
+![MCP client setup in Codex CLI](docs/assets/mcp-setup-codex-cli.png)
+
+### Admin Dashboard
+
+![Admin overview with key table and metrics](docs/assets/admin-dashboard-cn.png)
+
+### User Dashboard
+
+![User dashboard showing monthly success, today count, key pool status, and recent requests](docs/assets/user-dashboard-en.png)
+
+## MCP Clients
+
+Tavily Hikari speaks standard MCP over HTTP and works with popular clients:
+
+- [Codex CLI](https://developers.openai.com/codex/cli/reference/)
+- [Claude Code CLI](https://www.npmjs.com/package/@anthropic-ai/claude-code)
+- [VS Code — Use MCP servers](https://code.visualstudio.com/docs/copilot/customization/mcp-servers)
+- [GitHub Copilot — GitHub MCP Server](https://docs.github.com/en/copilot/how-tos/provide-context/use-mcp/set-up-the-github-mcp-server)
+- [Claude Desktop](https://claude.com/download)
+- [Cursor](https://cursor.com/)
+- [Windsurf](https://windsurf.com/)
+- Any MCP client supporting HTTP + Bearer token auth
+
+Example (Codex CLI — ~/.codex/config.toml):
+
+```
+experimental_use_rmcp_client = true
+
+[mcp_servers.tavily_hikari]
+url = "https://<your-host>/mcp"
+bearer_token_env_var = "TAVILY_HIKARI_TOKEN"
+```
+
+Then set the token and verify:
+
+```
+export TAVILY_HIKARI_TOKEN="<token>"
+codex mcp list | grep tavily_hikari
+```
+
+## Development
+
+- Rust toolchain pinned to 1.91.0 via `rust-toolchain.toml`.
+- Repo tooling (Bun, pinned via `.bun-version`): `bun install --frozen-lockfile`, `bun run hooks:install`, `bun run worktree:setup`, `bun run test:worktree-bootstrap`.
+- Common commands: `cargo fmt`, `cargo clippy -- -D warnings`, `cargo test --locked --all-features`, `cargo run -- --help`.
+- Frontend (Bun, pinned via `.bun-version`): `bun install --frozen-lockfile`, `bun run dev`, `bun run demo`, `bun run build` (uses Bun-forced `tsc -b` + `vite build`; see `web/bunfig.toml`).
+- Hooks: `bun install --frozen-lockfile` or `bun run hooks:install` installs the shared `post-checkout` hook; if the `lefthook` binary is available on `PATH`, it also refreshes automatic `cargo fmt`, `cargo clippy`, `bunx --bun dprint fmt`, and `bunx --bun commitlint --edit` commit hooks.
+- No-node proof: run `bun run validate:no-node-runtime` to verify the repo build/hook paths still pass when a failing `node` shim is prepended to `PATH`.
+- CI: `.github/workflows/ci.yml` runs the linked-worktree bootstrap smoke, lint/tests/build, and release prerequisites.
+- Release: `.github/workflows/release.yml` runs after main CI succeeds and publishes tags, GitHub Releases, Linux binary assets, GHCR images, and an upserted PR release comment.
+
+## Release (PR labels)
+
+Releases are label-driven:
+
+- Every PR must have exactly one intent label: `type:patch`, `type:minor`, `type:major`, `type:docs`, or `type:skip`.
+- Every PR must have exactly one channel label: `channel:stable` or `channel:rc`.
+- When a PR is merged into `main` and CI passes, the release workflow computes the next stable semver (`X.Y.Z`) and publishes:
+  - Git tag + GitHub Release
+  - A marker-based PR comment linking the published release/version
+  - GHCR image tags:
+    - stable (`channel:stable`): `latest`, `vX.Y.Z`
+    - prerelease (`channel:rc`): `vX.Y.Z-rc.<sha7>` (no `latest`)
+  - Web assets are built once per release run and reused by both Docker and binary release jobs
+- If the release fails on a first-attempt transient Docker Hub / BuildKit fetch outage, the repo-local notifier auto-reruns failed Docker jobs once and suppresses the first Telegram alert; if the rerun still fails, the later attempt alerts normally.
+- If a commit cannot be mapped to exactly one PR, release is skipped (conservative default).
+
+## Deployment Notes
+
+1. Only expose `/mcp`, `/api/*`, and static assets; everything else returns 404.
+2. Protect admin APIs/UI with passkey login or another trusted admin boundary so regular users never see real keys.
+3. Follow the header sanitization guidance in [`docs/high-anonymity-proxy.md`](docs/high-anonymity-proxy.md) when operating in high-anonymity environments.
+4. Persist `tavily_proxy.db` via volumes or external storage and export `request_logs` for compliance if needed.
+
+## License
+
+Distributed under the [MIT License](LICENSE). Keep the license notice intact when copying or distributing the software.
