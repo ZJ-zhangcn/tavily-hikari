@@ -11,7 +11,7 @@ Fork 自 [`IvanLi-CN/tavily-hikari`](https://github.com/IvanLi-CN/tavily-hikari)
 | 镜像 | `ghcr.io/zj-zhangcn/tavily-hikari:personal` |
 | 同时打标 | `:<12位sha>` |
 | 构建 | 推送本分支 → Actions `Personal Image` |
-| 自用域名示例 | `https://travily-pool.942645.xyz`（以你实际反代为准） |
+| 自用域名示例 | https://travily-pool.942645.xyz （以实际反代为准） |
 
 更细的产品笔记见仓库内 [`PERSONAL.md`](PERSONAL.md)。
 
