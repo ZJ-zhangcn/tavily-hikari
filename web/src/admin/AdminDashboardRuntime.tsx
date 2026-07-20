@@ -28,6 +28,7 @@ import NotFoundFallbackPreview from '../components/NotFoundFallbackPreview'
 import HaStatusBanner from '../components/HaStatusBanner'
 import OfflineStatusBanner from '../components/OfflineStatusBanner'
 import { ConnectedUpdateAvailableBanner } from '../components/UpdateAvailableBanner'
+import { buildOctoRillReleaseLink, formatVersionDisplay } from '../lib/releaseLinks'
 import HaSourceSettingsDialog from './HaSourceSettingsDialog'
 import HaNodeDetailPanel from './HaNodeDetailPanel'
 import { AdminSidebarUtilityCard, AdminSidebarUtilityStack } from '../components/AdminSidebarUtility'
@@ -6577,7 +6578,8 @@ function AdminDashboard(): JSX.Element {
   const usersTotalPages = useMemo(() => Math.max(1, Math.ceil(usersTotal / USERS_PER_PAGE)), [usersTotal])
   const showShadowDailyUsageColumn =
     systemSettings?.upstreamPreciseReconciliationEnabled === false
-    || (systemSettings == null && users.some((item) => item.shadowDailyCreditsUsed != null))
+    || (systemSettings == null
+      && users.some((item) => item.shadowDailyAvailability != null || item.shadowDailyCreditsUsed != null))
   const unboundTokenUsageTotalPages = useMemo(
     () => Math.max(1, Math.ceil(unboundTokenUsageTotal / USERS_PER_PAGE)),
     [unboundTokenUsageTotal],
@@ -8439,15 +8441,18 @@ function AdminDashboard(): JSX.Element {
           {version ? (
             (() => {
               const raw = version.backend || ''
-              const clean = raw.replace(/-.+$/, '')
-              const tag = clean.startsWith('v') ? clean : `v${clean}`
-              const href = `https://github.com/IvanLi-CN/tavily-hikari/releases/tag/${tag}`
+              const release = buildOctoRillReleaseLink(raw)
+              const displayVersion = formatVersionDisplay(raw)
               return (
                 <>
                   {footerStrings.tagPrefix}
-                  <a href={href} className="footer-link" target="_blank" rel="noreferrer">
-                    {`v${raw}`}
-                  </a>
+                  {release ? (
+                    <a href={release.href} className="footer-link" target="_blank" rel="noreferrer">
+                      {release.label}
+                    </a>
+                  ) : (
+                    <span>{displayVersion ?? raw}</span>
+                  )}
                 </>
               )
             })()
@@ -12313,6 +12318,7 @@ function AdminDashboard(): JSX.Element {
                       const shadowDailyUsage = buildShadowDailyUsageStack({
                         actualUsed: item.dailyCreditsUsed,
                         shadowUsed: item.shadowDailyCreditsUsed,
+                        shadowAvailability: item.shadowDailyAvailability,
                         limit: item.dailyCreditsLimit,
                         usersStrings,
                         formatNumber,
@@ -12388,6 +12394,7 @@ function AdminDashboard(): JSX.Element {
                   const shadowDailyUsage = buildShadowDailyUsageStack({
                     actualUsed: item.dailyCreditsUsed,
                     shadowUsed: item.shadowDailyCreditsUsed,
+                    shadowAvailability: item.shadowDailyAvailability,
                     limit: item.dailyCreditsLimit,
                     usersStrings,
                     formatNumber,
