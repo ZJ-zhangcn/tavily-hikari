@@ -891,6 +891,27 @@ pub(crate) async fn open_sqlite_pool_forced_observability_with_busy_timeout(
     .await
 }
 
+pub(crate) async fn open_admin_read_flush_pool(
+    operation: &'static str,
+    context: &str,
+    core_database_path: &str,
+    observability_database_path: Option<&str>,
+) -> Result<SqlitePool, ProxyError> {
+    instrument_db_operation(
+        operation,
+        Some(context),
+        open_sqlite_pool_forced_observability_with_busy_timeout(
+            core_database_path,
+            observability_database_path,
+            true,
+            false,
+            1,
+            SQLITE_ADMIN_READ_FLUSH_BUSY_TIMEOUT,
+        ),
+    )
+    .await
+}
+
 async fn select_observability_attach_path(
     conn: &mut sqlx::SqliteConnection,
     core_database_path: &str,

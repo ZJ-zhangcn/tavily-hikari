@@ -648,17 +648,11 @@ impl KeyStore {
         )
         .await?;
         let observability_database_path = attached_database_path(&pool, "observability").await?;
-        let read_flush_pool = instrument_db_operation(
+        let read_flush_pool = open_admin_read_flush_pool(
             "sqlite startup open read flush pool",
-            Some(startup_context.as_str()),
-            open_sqlite_pool_forced_observability_with_busy_timeout(
-                &layout.core_database_path,
-                observability_database_path.as_deref(),
-                true,
-                false,
-                1,
-                SQLITE_ADMIN_READ_FLUSH_BUSY_TIMEOUT,
-            ),
+            startup_context.as_str(),
+            &layout.core_database_path,
+            observability_database_path.as_deref(),
         )
         .await?;
         if let Some(attached_path) = observability_database_path.as_deref()
@@ -731,17 +725,11 @@ impl KeyStore {
         )
         .await?;
         let observability_database_path = attached_database_path(&pool, "observability").await?;
-        let read_flush_pool = instrument_db_operation(
+        let read_flush_pool = open_admin_read_flush_pool(
             "sqlite request logs gc open read flush pool",
-            Some(gc_context.as_str()),
-            open_sqlite_pool_forced_observability_with_busy_timeout(
-                &layout.core_database_path,
-                observability_database_path.as_deref(),
-                true,
-                false,
-                1,
-                SQLITE_ADMIN_READ_FLUSH_BUSY_TIMEOUT,
-            ),
+            gc_context.as_str(),
+            &layout.core_database_path,
+            observability_database_path.as_deref(),
         )
         .await?;
         if let Some(attached_path) = observability_database_path.as_deref()
