@@ -401,7 +401,7 @@ export const EN: TranslationShape = {
         },
         alerts: {
           title: 'Alerts',
-          description: 'Review 429s, upstream usage-limit 432 events, blocked upstream keys, local rate limits, and quota exhaustion with shared filters.',
+          description: 'Review 429s, upstream usage-limit 432 events, blocked upstream keys, API key exhaustion, job failures, local rate limits, and quota exhaustion with shared filters.',
           sections: {
             rules: 'Alert rules',
             thresholds: 'Threshold policy',
