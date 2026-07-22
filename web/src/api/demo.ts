@@ -2551,6 +2551,14 @@ class DemoEventSource {
 
 const activeEventSources = new Set<DemoEventSource>()
 
+function overrideWindowEventSource(eventSource: typeof EventSource): void {
+  Object.defineProperty(window, 'EventSource', {
+    configurable: true,
+    writable: true,
+    value: eventSource,
+  })
+}
+
 export function installDemoRuntime(): void {
   if (!isDemoMode() || typeof window === 'undefined' || window.__tavilyHikariDemoInstalled) return
   window.__tavilyHikariDemoInstalled = true
@@ -2563,5 +2571,5 @@ export function installDemoRuntime(): void {
     return originalFetch(input, init)
   }
   window.__tavilyHikariDemoEventSource = window.EventSource
-  window.EventSource = DemoEventSource as unknown as typeof EventSource
+  overrideWindowEventSource(DemoEventSource as unknown as typeof EventSource)
 }
