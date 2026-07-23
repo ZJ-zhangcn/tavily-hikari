@@ -163,7 +163,7 @@ describe('AdminUserRankingsPage rendering contracts', () => {
     const { container, root } = await mountRankingsPageWithProps({
       snapshot: {
         ...rankingsStorySnapshot,
-        generatedAt: 0,
+        generatedAt: 1_700_000_000,
         stale: true,
       },
       connectionState: 'degraded',

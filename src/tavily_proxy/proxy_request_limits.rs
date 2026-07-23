@@ -455,7 +455,7 @@ impl TavilyProxy {
                     .collect::<Vec<_>>(),
             )
             .await?;
-        let all_user_stats = self.get_admin_user_list_stats().await?;
+        let total_users = self.key_store.count_total_users().await?;
         let rows = active_rows
             .into_iter()
             .map(|row| {
@@ -474,7 +474,7 @@ impl TavilyProxy {
         let mut row_pressures = rows.iter().map(|row| row.pressure).collect::<Vec<_>>();
         row_pressures.sort_unstable();
         let active_users = rows.len() as i64;
-        let zero_pressure_users = all_user_stats.total_users.saturating_sub(active_users);
+        let zero_pressure_users = total_users.saturating_sub(active_users);
         let current_pressure = rows.iter().map(|row| row.pressure).sum::<i64>();
 
         let server_7d_warmup_hours = SERVER_7D_MA_WINDOWS

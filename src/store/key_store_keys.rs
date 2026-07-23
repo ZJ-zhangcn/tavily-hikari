@@ -103,8 +103,7 @@ impl KeyStore {
         &self,
         since_bucket_start: i64,
     ) -> Result<i64, ProxyError> {
-        self.best_effort_flush_request_stats_writes_for_read("count_active_users_since_bucket")
-            .await?;
+        self.flush_request_stats_writes().await?;
         sqlx::query_scalar::<_, i64>(
             r#"SELECT COUNT(DISTINCT user_id)
                FROM account_usage_rollup_buckets

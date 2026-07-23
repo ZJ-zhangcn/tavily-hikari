@@ -795,7 +795,9 @@ export function RankingsMeta({
   language,
 }: RankingsMetaProps): JSX.Element {
   const lastUpdated =
-    snapshot && snapshot.generatedAt > 0 ? formatTimestamp(snapshot.generatedAt, language) : null
+    snapshot && !snapshot.stale && snapshot.generatedAt > 0
+      ? formatTimestamp(snapshot.generatedAt, language)
+      : null
   const refreshCopy = strings.refreshEvery.replace(
     '{seconds}',
     String(snapshot?.refreshIntervalSecs ?? DEFAULT_RANKINGS_REFRESH_INTERVAL_SECS),

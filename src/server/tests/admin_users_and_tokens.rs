@@ -3668,10 +3668,7 @@ use super::upstream_support_and_manual_jobs::*;
             rankings_json
                 .get("generatedAt")
                 .and_then(|value| value.as_i64()),
-            rankings_json
-                .get("generatedAt")
-                .and_then(|value| value.as_i64())
-                .filter(|value| *value > 0)
+            Some(0)
         );
         assert_eq!(
             rankings_json
@@ -3713,10 +3710,7 @@ use super::upstream_support_and_manual_jobs::*;
             snapshot_json
                 .get("generatedAt")
                 .and_then(|value| value.as_i64()),
-            snapshot_json
-                .get("generatedAt")
-                .and_then(|value| value.as_i64())
-                .filter(|value| *value > 0)
+            Some(0)
         );
         assert_eq!(
             snapshot_json

@@ -254,7 +254,7 @@ fn build_user_rankings_snapshot_view(
     cfg: &LinuxDoOAuthOptions,
 ) -> UserRankingsSnapshotView {
     UserRankingsSnapshotView {
-        generated_at: snapshot.generated_at,
+        generated_at: if stale { 0 } else { snapshot.generated_at },
         refresh_interval_secs: snapshot.refresh_interval_secs,
         stale,
         last24h: build_user_ranking_window_view(snapshot.last24h, cfg),
@@ -1806,7 +1806,7 @@ async fn load_dashboard_overview_snapshot(
         if let Ok(snapshot) = result.as_ref() {
             cache.cached = Some(CachedDashboardOverviewSnapshot {
                 snapshot: snapshot.clone(),
-                freshness: freshness.clone(),
+                freshness: snapshot.freshness.clone(),
             });
             tavily_hikari::emit_low_memory_protection_decision(
                 "admin_read",

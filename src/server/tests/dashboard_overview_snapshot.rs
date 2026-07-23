@@ -70,7 +70,7 @@ async fn compute_signatures_reuses_dashboard_boundary_contract() {
 }
 
 #[tokio::test]
-async fn dashboard_overview_snapshot_caches_probe_freshness_separately_from_emitted_snapshot() {
+async fn dashboard_overview_snapshot_caches_rebuilt_freshness_after_emitted_snapshot() {
     let db_path = temp_db_path("dashboard-overview-cache-key-freshness");
     let db_str = db_path.to_string_lossy().to_string();
     let proxy = TavilyProxy::with_endpoint(
@@ -126,16 +126,16 @@ async fn dashboard_overview_snapshot_caches_probe_freshness_separately_from_emit
     let cache = cache_handle.lock().await;
     let cached = cache.cached.as_ref().expect("cached overview snapshot");
     assert_eq!(
-        cached.freshness, probe_sig.freshness,
-        "shared overview cache should stay keyed by the pre-rebuild probe freshness"
+        cached.freshness, emitted_sig.freshness,
+        "shared overview cache should advance to the rebuilt freshness emitted to SSE clients"
     );
     assert_eq!(
         cached.snapshot.freshness, emitted_sig.freshness,
         "cached snapshot payload should keep the rebuilt freshness emitted to SSE clients"
     );
-    assert_ne!(
+    assert_eq!(
         cached.freshness, cached.snapshot.freshness,
-        "cache key freshness and emitted snapshot freshness must stay separable when pending rollups are flushed during rebuild"
+        "cache key freshness should stay aligned with the rebuilt snapshot freshness after pending rollups flush"
     );
 
     let _ = std::fs::remove_file(db_path);
@@ -565,6 +565,21 @@ async fn dashboard_snapshot_event_uses_rebuilt_freshness_after_pending_rollups()
         emitted_sig.freshness.pending_dashboard_rollup_signature,
         probe_sig.freshness.pending_dashboard_rollup_signature,
         "emitted snapshot freshness should reflect the rebuilt post-flush state, not the stale pre-rebuild probe",
+    );
+
+    reset_dashboard_overview_build_count(&state).await;
+    let cached = load_dashboard_overview_snapshot(&state)
+        .await
+        .expect("cached overview snapshot after flush-backed rebuild");
+    assert_eq!(
+        dashboard_overview_build_count(&state).await,
+        0,
+        "the first request after a flush-backed rebuild should reuse the cached snapshot instead of rebuilding again",
+    );
+    assert_eq!(
+        cached.freshness,
+        emitted_sig.freshness,
+        "shared cache entries should be keyed by the rebuilt freshness token",
     );
 
     let _ = std::fs::remove_file(db_path);

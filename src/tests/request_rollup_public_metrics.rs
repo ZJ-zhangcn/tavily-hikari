@@ -967,3 +967,53 @@ async fn analysis_pressure_snapshot_returns_promptly_when_flush_hits_write_lock(
     let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
     let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
 }
+
+#[tokio::test]
+async fn admin_user_list_stats_wait_for_fresh_rollups_before_reporting_active_users() {
+    let db_path = temp_db_path("admin-user-list-stats-fresh-rollups");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = public_metrics_proxy(&db_str, "tvly-admin-user-list-stats-fresh").await;
+
+    let user = proxy
+        .upsert_oauth_account(&OAuthAccountProfile {
+            provider: "linuxdo".to_string(),
+            provider_user_id: "admin-user-list-stats".to_string(),
+            username: Some("admin_user_list_stats".to_string()),
+            name: Some("Admin User List Stats".to_string()),
+            avatar_template: None,
+            active: true,
+            trust_level: Some(1),
+            raw_payload_json: None,
+        })
+        .await
+        .expect("upsert active user");
+
+    proxy
+        .key_store
+        .enqueue_request_stats_rollup_for_user_for_test(
+            &user.user_id,
+            proxy.backend_time().now_ts(),
+            OUTCOME_SUCCESS,
+        )
+        .await;
+
+    let mut lock_conn = open_write_lock_connection(&db_str).await;
+    let release_writer = async {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        sqlx::query("ROLLBACK")
+            .execute(&mut lock_conn)
+            .await
+            .expect("release writer lock");
+        lock_conn.close().await.expect("close lock connection");
+    };
+    let (stats, ()) = tokio::join!(proxy.get_admin_user_list_stats(), release_writer);
+    let stats = stats.expect("admin user list stats");
+
+    assert_eq!(stats.total_users, 1);
+    assert_eq!(stats.active_users_90d, 1);
+    assert_eq!(stats.window_days, 90);
+
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+}
