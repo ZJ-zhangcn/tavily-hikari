@@ -262,7 +262,7 @@ use super::upstream_support_and_manual_jobs::*;
     }
 
     #[tokio::test]
-    async fn list_users_reports_shadow_daily_usage_as_confirmed_or_unavailable() {
+    async fn list_users_reports_shadow_daily_usage_as_confirmed_or_projected() {
         let db_path = temp_db_path("admin-users-shadow-daily-availability");
         let db_str = db_path.to_string_lossy().to_string();
         let proxy = TavilyProxy::with_options(
@@ -324,6 +324,32 @@ use super::upstream_support_and_manual_jobs::*;
             })
             .await
             .expect("upsert charlie");
+        let dana = proxy
+            .upsert_oauth_account(&OAuthAccountProfile {
+                provider: "linuxdo".to_string(),
+                provider_user_id: "admin-users-shadow-dana".to_string(),
+                username: Some("shadow-dana".to_string()),
+                name: Some("Shadow Dana".to_string()),
+                avatar_template: None,
+                active: true,
+                trust_level: Some(0),
+                raw_payload_json: None,
+            })
+            .await
+            .expect("upsert dana");
+        let erin = proxy
+            .upsert_oauth_account(&OAuthAccountProfile {
+                provider: "linuxdo".to_string(),
+                provider_user_id: "admin-users-shadow-erin".to_string(),
+                username: Some("shadow-erin".to_string()),
+                name: Some("Shadow Erin".to_string()),
+                avatar_template: None,
+                active: true,
+                trust_level: Some(0),
+                raw_payload_json: None,
+            })
+            .await
+            .expect("upsert erin");
 
         let alice_token = proxy
             .ensure_user_token_binding(&alice.user_id, Some("shadow-alice-token"))
@@ -337,6 +363,10 @@ use super::upstream_support_and_manual_jobs::*;
             .ensure_user_token_binding(&charlie.user_id, Some("shadow-charlie-token"))
             .await
             .expect("bind charlie token");
+        let dana_token = proxy
+            .ensure_user_token_binding(&dana.user_id, Some("shadow-dana-token"))
+            .await
+            .expect("bind dana token");
 
         proxy
             .charge_token_quota(&alice_token.id, 100)
@@ -350,6 +380,10 @@ use super::upstream_support_and_manual_jobs::*;
             .charge_token_quota(&charlie_token.id, 10)
             .await
             .expect("charge charlie quota");
+        proxy
+            .charge_token_quota(&dana_token.id, 40)
+            .await
+            .expect("charge dana quota");
 
         let pool = SqlitePoolOptions::new()
             .min_connections(1)
@@ -364,6 +398,86 @@ use super::upstream_support_and_manual_jobs::*;
             .await
             .expect("open shadow adjustment pool");
         let now = proxy.backend_time().now_ts();
+        let current_period = tavily_hikari::business_period_for_timestamp(now);
+        let current_date = current_period
+            .code
+            .split('/')
+            .next()
+            .expect("current reconciliation date")
+            .to_string();
+        let period_codes = [
+            format!("{current_date}/S1"),
+            format!("{current_date}/S2"),
+            format!("{current_date}/S3"),
+        ];
+        for (
+            token_id,
+            key_id,
+            period_code,
+            project_id,
+            billing_subject,
+            period_start,
+            period_end,
+        ) in [
+            (
+                alice_token.id.as_str(),
+                "key-shadow-alice",
+                period_codes[0].as_str(),
+                "project-shadow-alice",
+                format!("account:{}", alice.user_id),
+                current_period.starts_at,
+                current_period.starts_at + 300,
+            ),
+            (
+                bob_token.id.as_str(),
+                "key-shadow-bob",
+                period_codes[0].as_str(),
+                "project-shadow-bob",
+                format!("account:{}", bob.user_id),
+                current_period.starts_at + 600,
+                current_period.starts_at + 900,
+            ),
+            (
+                dana_token.id.as_str(),
+                "key-shadow-dana-a",
+                period_codes[0].as_str(),
+                "project-shadow-dana-a",
+                format!("account:{}", dana.user_id),
+                current_period.starts_at + 1_200,
+                current_period.starts_at + 1_500,
+            ),
+            (
+                dana_token.id.as_str(),
+                "key-shadow-dana-b",
+                period_codes[1].as_str(),
+                "project-shadow-dana-b",
+                format!("account:{}", dana.user_id),
+                current_period.starts_at + 1_800,
+                current_period.starts_at + 2_100,
+            ),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO upstream_reconciliation_usage (
+                    token_id, key_id, period_code, project_id, billing_subject, settlement_mode,
+                    period_start, period_end, request_count, first_used_at, last_used_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, 'shadow', ?, ?, 1, ?, ?, ?)
+                "#,
+            )
+            .bind(token_id)
+            .bind(key_id)
+            .bind(period_code)
+            .bind(project_id)
+            .bind(billing_subject)
+            .bind(period_start)
+            .bind(period_end)
+            .bind(period_start)
+            .bind(period_end)
+            .bind(period_end)
+            .execute(&pool)
+            .await
+            .expect("insert shadow usage row");
+        }
         let attributed_at = now.saturating_sub(60);
         sqlx::query(
             r#"
@@ -373,10 +487,10 @@ use super::upstream_support_and_manual_jobs::*;
             ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
             "#,
         )
-        .bind(format!("v1:{}:2026-07-14/S2", alice_token.id))
+        .bind(format!("v1:{}:{}", alice_token.id, period_codes[0]))
         .bind(&alice_token.id)
         .bind(format!("account:{}", alice.user_id))
-        .bind("2026-07-14/S2")
+        .bind(&period_codes[0])
         .bind(5_i64)
         .bind(attributed_at)
         .bind(now)
@@ -392,10 +506,10 @@ use super::upstream_support_and_manual_jobs::*;
             ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
             "#,
         )
-        .bind(format!("v1:{}:2026-07-14/S2", bob_token.id))
+        .bind(format!("v1:{}:{}", bob_token.id, period_codes[0]))
         .bind(&bob_token.id)
         .bind(format!("account:{}", bob.user_id))
-        .bind("2026-07-14/S2")
+        .bind(&period_codes[0])
         .bind(0_i64)
         .bind(attributed_at)
         .bind(now)
@@ -403,6 +517,119 @@ use super::upstream_support_and_manual_jobs::*;
         .execute(&pool)
         .await
         .expect("insert bob shadow adjustment");
+        sqlx::query(
+            r#"
+            INSERT INTO billing_reconciliation_shadow_adjustments (
+                settlement_key, token_id, billing_subject, period_code, delta_credits,
+                attributed_at, degraded_reason, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+            "#,
+        )
+        .bind(format!("v1:{}:{}", dana_token.id, period_codes[0]))
+        .bind(&dana_token.id)
+        .bind(format!("account:{}", dana.user_id))
+        .bind(&period_codes[0])
+        .bind(-2_i64)
+        .bind(attributed_at)
+        .bind(now)
+        .bind(now)
+        .execute(&pool)
+        .await
+        .expect("insert dana shadow adjustment");
+        for (
+            settlement_key,
+            token_id,
+            period_code,
+            project_id,
+            billing_subject,
+            period_start,
+            period_end,
+            status,
+            delta_credits,
+            degraded_reason,
+            next_attempt_at,
+        ) in [
+            (
+                format!("v1:{}:{}", alice_token.id, period_codes[0]),
+                alice_token.id.clone(),
+                period_codes[0].clone(),
+                "project-shadow-alice".to_string(),
+                format!("account:{}", alice.user_id),
+                current_period.starts_at,
+                current_period.starts_at + 300,
+                "shadow_settled".to_string(),
+                5_i64,
+                None,
+                None,
+            ),
+            (
+                format!("v1:{}:{}", bob_token.id, period_codes[0]),
+                bob_token.id.clone(),
+                period_codes[0].clone(),
+                "project-shadow-bob".to_string(),
+                format!("account:{}", bob.user_id),
+                current_period.starts_at + 600,
+                current_period.starts_at + 900,
+                "shadow_degraded".to_string(),
+                0_i64,
+                Some("research_timeout_24h".to_string()),
+                None,
+            ),
+            (
+                format!("v1:{}:{}", dana_token.id, period_codes[0]),
+                dana_token.id.clone(),
+                period_codes[0].clone(),
+                "project-shadow-dana-a".to_string(),
+                format!("account:{}", dana.user_id),
+                current_period.starts_at + 1_200,
+                current_period.starts_at + 1_500,
+                "shadow_settled".to_string(),
+                -2_i64,
+                None,
+                None,
+            ),
+            (
+                format!("v1:{}:{}", dana_token.id, period_codes[1]),
+                dana_token.id.clone(),
+                period_codes[1].clone(),
+                "project-shadow-dana-b".to_string(),
+                format!("account:{}", dana.user_id),
+                current_period.starts_at + 1_800,
+                current_period.starts_at + 2_100,
+                "rate_limited".to_string(),
+                0_i64,
+                Some("upstream429".to_string()),
+                Some(now + 300),
+            ),
+        ] {
+            sqlx::query(
+                r#"
+                INSERT INTO upstream_reconciliation_settlements (
+                    settlement_key, token_id, period_code, project_id, billing_subject,
+                    period_start, period_end, status, upstream_usage, local_billed_credits,
+                    delta_credits, degraded_reason, next_attempt_at, attempt_count,
+                    created_at, updated_at, settled_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, 1, ?, ?, ?)
+                "#,
+            )
+            .bind(settlement_key)
+            .bind(token_id)
+            .bind(period_code)
+            .bind(project_id)
+            .bind(billing_subject)
+            .bind(period_start)
+            .bind(period_end)
+            .bind(status)
+            .bind(delta_credits)
+            .bind(degraded_reason)
+            .bind(next_attempt_at)
+            .bind(now)
+            .bind(now)
+            .bind(now)
+            .execute(&pool)
+            .await
+            .expect("insert reconciliation settlement");
+        }
 
         let addr = spawn_admin_users_server(proxy, true).await;
         let client = Client::new();
@@ -439,10 +666,30 @@ use super::upstream_support_and_manual_jobs::*;
             .iter()
             .find(|item| item["userId"].as_str() == Some(charlie.user_id.as_str()))
             .expect("charlie row");
-        assert_eq!(charlie_item["shadowDailyCreditsUsed"], serde_json::Value::Null);
+        assert_eq!(charlie_item["shadowDailyCreditsUsed"].as_i64(), Some(10));
         assert_eq!(
             charlie_item["shadowDailyAvailability"].as_str(),
-            Some("unavailable")
+            Some("projected")
+        );
+
+        let dana_item = items
+            .iter()
+            .find(|item| item["userId"].as_str() == Some(dana.user_id.as_str()))
+            .expect("dana row");
+        assert_eq!(dana_item["shadowDailyCreditsUsed"].as_i64(), Some(38));
+        assert_eq!(
+            dana_item["shadowDailyAvailability"].as_str(),
+            Some("projected")
+        );
+
+        let erin_item = items
+            .iter()
+            .find(|item| item["userId"].as_str() == Some(erin.user_id.as_str()))
+            .expect("erin row");
+        assert_eq!(erin_item["shadowDailyCreditsUsed"].as_i64(), Some(0));
+        assert_eq!(
+            erin_item["shadowDailyAvailability"].as_str(),
+            Some("confirmed")
         );
 
         let _ = std::fs::remove_file(&db_path);

@@ -460,15 +460,15 @@ async fn list_users(
             })?
     };
     let shadow_compare_enabled = !system_settings.upstream_precise_reconciliation_enabled;
-    let shadow_daily_usage = if page_user_ids.is_empty() || !shadow_compare_enabled {
+    let shadow_daily_projection = if page_user_ids.is_empty() || !shadow_compare_enabled {
         std::collections::HashMap::new()
     } else {
         state
             .proxy
-            .shadow_daily_reconciled_usage_for_accounts(&page_user_ids)
+            .shadow_daily_projection_for_accounts(&page_user_ids)
             .await
             .map_err(|err| {
-                eprintln!("list admin user shadow daily usage error: {err}");
+                eprintln!("list admin user shadow daily projection error: {err}");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?
     };
@@ -487,13 +487,25 @@ async fn list_users(
             .copied()
             .unwrap_or_default();
         let (shadow_daily_credits_used, shadow_daily_availability) = if shadow_compare_enabled {
-            match shadow_daily_usage.get(&row.user.user_id) {
-                Some(delta) => (
-                    Some(row.summary.daily_credits_used.saturating_add(*delta)),
-                    Some(AdminUserShadowDailyAvailability::Confirmed),
+            let projection = shadow_daily_projection.get(&row.user.user_id);
+            let shadow_daily_credits_used = Some(
+                row.summary.daily_credits_used.saturating_add(
+                    projection
+                        .map(|value| value.confirmed_delta_credits)
+                        .unwrap_or_default(),
                 ),
-                None => (None, Some(AdminUserShadowDailyAvailability::Unavailable)),
-            }
+            );
+            let shadow_daily_availability = if projection.is_some_and(|value| value.all_shadow_windows_terminal)
+                || (projection.is_none() && row.summary.daily_credits_used == 0)
+            {
+                Some(AdminUserShadowDailyAvailability::Confirmed)
+            } else {
+                Some(AdminUserShadowDailyAvailability::Projected)
+            };
+            (
+                shadow_daily_credits_used,
+                shadow_daily_availability,
+            )
         } else {
             (None, None)
         };

@@ -7,6 +7,24 @@ pub(crate) const RECONCILIATION_RETRY_REASON_LOCAL_USAGE_RATE_LIMIT: &str =
     "local_usage_rate_limit";
 pub(crate) const RECONCILIATION_RETRY_REASON_UPSTREAM_429: &str = "upstream429";
 pub(crate) const RECONCILIATION_RETRY_REASON_OTHER: &str = "other";
+const RECONCILIATION_RECENT_LANE_BUDGET: i64 = 12;
+const RECONCILIATION_BACKLOG_LANE_BUDGET: i64 = 8;
+
+enum ReconciliationCandidateScope {
+    Recent { start: i64, end: i64 },
+    Backlog { before: i64 },
+}
+
+type UpstreamReconciliationCandidateRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    i64,
+    i64,
+);
 
 fn upstream_reconciliation_shadow_ready(settings: &SystemSettings) -> bool {
     settings.upstream_project_id_mode == UpstreamProjectIdMode::AccessToken
@@ -205,48 +223,12 @@ impl KeyStore {
         Ok(changed > 0)
     }
 
-    pub(crate) async fn next_upstream_reconciliation_candidates(
+    fn build_upstream_reconciliation_candidates(
         &self,
-        limit: i64,
-    ) -> Result<Vec<UpstreamReconciliationCandidate>, ProxyError> {
-        let now = self.backend_time.now_ts();
-        let rows = sqlx::query_as::<_, (String, String, String, String, String, i64, i64, i64)>(
-            r#"
-            SELECT
-                u.token_id,
-                u.period_code,
-                MIN(u.project_id),
-                MIN(u.billing_subject),
-                MIN(u.settlement_mode),
-                MIN(u.period_start),
-                MAX(u.period_end),
-                COALESCE((
-                    SELECT COUNT(*)
-                    FROM upstream_reconciliation_research r
-                    WHERE r.token_id = u.token_id
-                      AND r.period_code = u.period_code
-                      AND r.terminal_at IS NULL
-                ), 0)
-            FROM upstream_reconciliation_usage u
-            LEFT JOIN upstream_reconciliation_settlements s
-              ON s.settlement_key = 'v1:' || u.token_id || ':' || u.period_code
-            WHERE u.period_end + 600 <= ?
-              AND (s.settlement_key IS NULL OR (
-                    s.status IN ('pending', 'waiting', 'rate_limited')
-                    AND COALESCE(s.next_attempt_at, 0) <= ?
-              ))
-            GROUP BY u.token_id, u.period_code
-            ORDER BY MAX(u.period_end) ASC
-            LIMIT ?
-            "#,
-        )
-        .bind(now)
-        .bind(now)
-        .bind(limit.max(1))
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(rows
-            .into_iter()
+        rows: Vec<UpstreamReconciliationCandidateRow>,
+        now: i64,
+    ) -> Vec<UpstreamReconciliationCandidate> {
+        rows.into_iter()
             .filter_map(
                 |(
                     token_id,
@@ -276,7 +258,154 @@ impl KeyStore {
                     })
                 },
             )
-            .collect())
+            .collect()
+    }
+
+    async fn query_upstream_reconciliation_candidates(
+        &self,
+        now: i64,
+        limit: i64,
+        newest_first: bool,
+        scope: ReconciliationCandidateScope,
+    ) -> Result<Vec<UpstreamReconciliationCandidate>, ProxyError> {
+        let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            r#"
+            SELECT
+                u.token_id,
+                u.period_code,
+                MIN(u.project_id),
+                MIN(u.billing_subject),
+                MIN(u.settlement_mode),
+                MIN(u.period_start),
+                MAX(u.period_end),
+                COALESCE((
+                    SELECT COUNT(*)
+                    FROM upstream_reconciliation_research r
+                    WHERE r.token_id = u.token_id
+                      AND r.period_code = u.period_code
+                      AND r.terminal_at IS NULL
+                ), 0)
+            FROM upstream_reconciliation_usage u
+            LEFT JOIN upstream_reconciliation_settlements s
+              ON s.settlement_key = 'v1:' || u.token_id || ':' || u.period_code
+            WHERE u.period_end + 600 <= "#,
+        );
+        query
+            .push_bind(now)
+            .push(
+                r#"
+              AND (s.settlement_key IS NULL OR (
+                    s.status IN ('pending', 'waiting', 'rate_limited')
+                    AND COALESCE(s.next_attempt_at, 0) <= "#,
+            )
+            .push_bind(now)
+            .push(" ))");
+        match scope {
+            ReconciliationCandidateScope::Recent { start, end } => {
+                query
+                    .push(" AND u.period_start >= ")
+                    .push_bind(start)
+                    .push(" AND u.period_start < ")
+                    .push_bind(end);
+            }
+            ReconciliationCandidateScope::Backlog { before } => {
+                query
+                    .push(" AND u.period_start < ")
+                    .push_bind(before);
+            }
+        }
+        query
+            .push(
+                r#"
+            GROUP BY u.token_id, u.period_code
+            ORDER BY MAX(u.period_end) "#,
+            )
+            .push(if newest_first { "DESC" } else { "ASC" })
+            .push(" LIMIT ")
+            .push_bind(limit.max(1));
+        let rows = query
+            .build_query_as::<UpstreamReconciliationCandidateRow>()
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(self.build_upstream_reconciliation_candidates(rows, now))
+    }
+
+    pub(crate) async fn next_upstream_reconciliation_candidates(
+        &self,
+        limit: i64,
+    ) -> Result<UpstreamReconciliationCandidateBatch, ProxyError> {
+        let now = self.backend_time.now_ts();
+        let total_limit = limit.max(1);
+        let day_window = server_local_day_window_utc(self.backend_time.now_utc().with_timezone(&Local));
+        let recent_start = day_window.start.saturating_sub(SECS_PER_DAY);
+        let recent_end = day_window.end;
+        let recent_lane_budget = total_limit.min(RECONCILIATION_RECENT_LANE_BUDGET);
+        let backlog_lane_budget =
+            total_limit.saturating_sub(recent_lane_budget).min(RECONCILIATION_BACKLOG_LANE_BUDGET);
+        let recent_candidates = self
+            .query_upstream_reconciliation_candidates(
+                now,
+                total_limit,
+                true,
+                ReconciliationCandidateScope::Recent {
+                    start: recent_start,
+                    end: recent_end,
+                },
+            )
+            .await?;
+        let backlog_candidates = self
+            .query_upstream_reconciliation_candidates(
+                now,
+                total_limit,
+                false,
+                ReconciliationCandidateScope::Backlog {
+                    before: recent_start,
+                },
+            )
+            .await?;
+
+        let mut recent_candidate_count =
+            std::cmp::min(recent_candidates.len() as i64, recent_lane_budget);
+        let mut backlog_candidate_count = std::cmp::min(
+            backlog_candidates.len() as i64,
+            std::cmp::min(
+                backlog_lane_budget,
+                total_limit.saturating_sub(recent_candidate_count),
+            ),
+        );
+        let mut remaining_capacity =
+            total_limit.saturating_sub(recent_candidate_count + backlog_candidate_count);
+        let extra_recent_available =
+            (recent_candidates.len() as i64).saturating_sub(recent_candidate_count);
+        let extra_recent = std::cmp::min(extra_recent_available, remaining_capacity);
+        recent_candidate_count += extra_recent;
+        remaining_capacity = remaining_capacity.saturating_sub(extra_recent);
+        let extra_backlog_available =
+            (backlog_candidates.len() as i64).saturating_sub(backlog_candidate_count);
+        let extra_backlog = std::cmp::min(extra_backlog_available, remaining_capacity);
+        backlog_candidate_count += extra_backlog;
+
+        let mut candidates =
+            Vec::with_capacity((recent_candidate_count + backlog_candidate_count) as usize);
+        candidates.extend(
+            recent_candidates
+                .iter()
+                .take(recent_candidate_count as usize)
+                .cloned(),
+        );
+        candidates.extend(
+            backlog_candidates
+                .iter()
+                .take(backlog_candidate_count as usize)
+                .cloned(),
+        );
+        Ok(UpstreamReconciliationCandidateBatch {
+            candidates,
+            recent_lane_budget,
+            backlog_lane_budget,
+            recent_candidate_count,
+            backlog_candidate_count,
+        })
     }
 
     pub(crate) async fn reconciliation_key_ids(
@@ -921,36 +1050,113 @@ impl KeyStore {
         Ok((pending_research, queued, degraded))
     }
 
+    pub(crate) async fn shadow_daily_projection_for_accounts(
+        &self,
+        user_ids: &[String],
+        day_start: i64,
+        day_end: i64,
+    ) -> Result<HashMap<String, AccountShadowDailyProjection>, ProxyError> {
+        if user_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+        let mut projections = HashMap::<String, AccountShadowDailyProjection>::new();
+        let mut delta_query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "SELECT SUBSTR(billing_subject, 9) AS user_id, COALESCE(SUM(delta_credits), 0) \
+             FROM billing_reconciliation_shadow_adjustments \
+             WHERE billing_subject IN (",
+        );
+        {
+            let mut separated = delta_query.separated(", ");
+            user_ids.iter().for_each(|user_id| {
+                separated.push_bind(format!("account:{user_id}"));
+            });
+        }
+        delta_query
+            .push(") AND attributed_at >= ")
+            .push_bind(day_start)
+            .push(" AND attributed_at < ")
+            .push_bind(day_end)
+            .push(" GROUP BY billing_subject");
+        let delta_rows = delta_query
+            .build_query_as::<(String, i64)>()
+            .fetch_all(&self.pool)
+            .await?;
+        for (user_id, confirmed_delta_credits) in delta_rows {
+            projections.insert(
+                user_id,
+                AccountShadowDailyProjection {
+                    confirmed_delta_credits,
+                    has_shadow_window: false,
+                    all_shadow_windows_terminal: false,
+                },
+            );
+        }
+
+        let mut window_query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "WITH relevant_windows AS (\
+             SELECT u.token_id, u.period_code, u.billing_subject \
+             FROM upstream_reconciliation_usage u \
+             WHERE u.settlement_mode = ",
+        );
+        window_query
+            .push_bind(RECONCILIATION_SETTLEMENT_MODE_SHADOW)
+            .push(" AND u.billing_subject IN (");
+        {
+            let mut separated = window_query.separated(", ");
+            user_ids.iter().for_each(|user_id| {
+                separated.push_bind(format!("account:{user_id}"));
+            });
+        }
+        window_query
+            .push(") AND u.period_start >= ")
+            .push_bind(day_start)
+            .push(" AND u.period_start < ")
+            .push_bind(day_end)
+            .push(
+                " GROUP BY u.token_id, u.period_code, u.billing_subject) \
+                 SELECT SUBSTR(w.billing_subject, 9) AS user_id, COUNT(*) AS total_windows, \
+                 COALESCE(SUM(CASE WHEN s.status IN (",
+            )
+            .push_bind(RECONCILIATION_STATUS_SHADOW_SETTLED)
+            .push(", ")
+            .push_bind(RECONCILIATION_STATUS_SHADOW_DEGRADED)
+            .push(
+                ") THEN 1 ELSE 0 END), 0) AS terminal_windows \
+                 FROM relevant_windows w \
+                 LEFT JOIN upstream_reconciliation_settlements s \
+                   ON s.settlement_key = 'v1:' || w.token_id || ':' || w.period_code \
+                 GROUP BY w.billing_subject",
+            );
+        let window_rows = window_query
+            .build_query_as::<(String, i64, i64)>()
+            .fetch_all(&self.pool)
+            .await?;
+        for (user_id, total_windows, terminal_windows) in window_rows {
+            let entry = projections
+                .entry(user_id)
+                .or_insert(AccountShadowDailyProjection {
+                    confirmed_delta_credits: 0,
+                    has_shadow_window: false,
+                    all_shadow_windows_terminal: false,
+                });
+            entry.has_shadow_window = total_windows > 0;
+            entry.all_shadow_windows_terminal =
+                total_windows > 0 && total_windows == terminal_windows;
+        }
+        Ok(projections)
+    }
+
     pub(crate) async fn shadow_daily_reconciled_usage_for_accounts(
         &self,
         user_ids: &[String],
         day_start: i64,
         day_end: i64,
     ) -> Result<HashMap<String, i64>, ProxyError> {
-        if user_ids.is_empty() {
-            return Ok(HashMap::new());
-        }
-        let mut query = QueryBuilder::new(
-            "SELECT SUBSTR(billing_subject, 9) AS user_id, COALESCE(SUM(delta_credits), 0) \
-             FROM billing_reconciliation_shadow_adjustments \
-             WHERE billing_subject IN (",
-        );
-        {
-            let mut separated = query.separated(", ");
-            user_ids.iter().for_each(|user_id| {
-                separated.push_bind(format!("account:{user_id}"));
-            });
-        }
-        query
-            .push(") AND attributed_at >= ")
-            .push_bind(day_start)
-            .push(" AND attributed_at < ")
-            .push_bind(day_end)
-            .push(" GROUP BY billing_subject");
-        let rows = query
-            .build_query_as::<(String, i64)>()
-            .fetch_all(&self.pool)
-            .await?;
-        Ok(rows.into_iter().collect())
+        Ok(self
+            .shadow_daily_projection_for_accounts(user_ids, day_start, day_end)
+            .await?
+            .into_iter()
+            .map(|(user_id, projection)| (user_id, projection.confirmed_delta_credits))
+            .collect())
     }
 }
