@@ -583,6 +583,66 @@ async fn admin_summary_returns_promptly_while_full_budget_flush_is_inflight() {
 }
 
 #[tokio::test]
+async fn admin_summary_falls_back_when_successful_flush_exceeds_read_budget() {
+    let db_path = temp_db_path("admin-summary-slow-successful-flush-fallback");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = public_metrics_proxy(&db_str, "tvly-admin-summary-slow-flush").await;
+
+    let key_id = proxy
+        .list_api_key_metrics()
+        .await
+        .expect("list key metrics")
+        .into_iter()
+        .next()
+        .expect("seeded key")
+        .id;
+    let created_at = proxy.backend_time().now_ts().saturating_sub(1);
+    proxy
+        .key_store
+        .enqueue_request_stats_rollup_for_test(Some(&key_id), created_at, OUTCOME_SUCCESS)
+        .await;
+
+    let pause = proxy
+        .key_store
+        .request_stats_coalescer
+        .install_post_flush_pause()
+        .await;
+    let proxy_for_summary = proxy.clone();
+    let summary_handle = tokio::spawn(async move { proxy_for_summary.summary().await });
+
+    tokio::time::timeout(Duration::from_secs(1), pause.arrived.notified())
+        .await
+        .expect("flush reached post-flush pause");
+
+    let summary = tokio::time::timeout(Duration::from_secs(1), summary_handle)
+        .await
+        .expect("summary should honor the admin read budget")
+        .expect("summary task join")
+        .expect("summary fallback should succeed");
+    assert!(
+        !pause.released.load(std::sync::atomic::Ordering::SeqCst),
+        "summary should return before the slow successful flush task is released"
+    );
+
+    pause
+        .released
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    pause.release.notify_waiters();
+
+    let summary_after = proxy.summary().await.expect("summary after pause release");
+    assert!(
+        summary.total_requests <= summary_after.total_requests,
+        "summary should not regress while the slow flush finishes in the background"
+    );
+    assert_eq!(summary_after.total_requests, 1);
+    assert_eq!(summary_after.success_count, 1);
+
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+}
+
+#[tokio::test]
 async fn admin_user_rankings_snapshot_returns_promptly_when_flush_hits_write_lock() {
     let db_path = temp_db_path("admin-user-rankings-write-lock-fallback");
     let db_str = db_path.to_string_lossy().to_string();
