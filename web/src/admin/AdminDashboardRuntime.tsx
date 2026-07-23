@@ -2886,6 +2886,7 @@ function AdminDashboard(): JSX.Element {
         if (signal?.aborted) return
         setRankingsSnapshot(snapshot)
         setRankingsError(null)
+        setRankingsConnectionState(snapshot.stale ? 'degraded' : 'live')
       } catch (err) {
         if ((err as Error).name === 'AbortError') return
         setRankingsError(err instanceof Error ? err.message : 'Unexpected error occurred')
@@ -4569,7 +4570,7 @@ function AdminDashboard(): JSX.Element {
           setRankingsSnapshot(nextSnapshot)
           setRankingsLoading(false)
           setRankingsError(null)
-          setRankingsConnectionState('live')
+          setRankingsConnectionState(nextSnapshot.stale ? 'degraded' : 'live')
         } catch (parseError) {
           console.error('Rankings SSE parse error', parseError)
           setRankingsConnectionState('degraded')

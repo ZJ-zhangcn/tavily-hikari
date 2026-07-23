@@ -1577,6 +1577,18 @@ pub struct UserRankingsSnapshot {
     pub last30d: UserRankingWindow,
 }
 
+impl UserRankingsSnapshot {
+    pub fn empty(generated_at: i64, refresh_interval_secs: i64) -> Self {
+        Self {
+            generated_at,
+            refresh_interval_secs,
+            last24h: UserRankingWindow::default(),
+            last7d: UserRankingWindow::default(),
+            last30d: UserRankingWindow::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DashboardHourlyRequestBucket {

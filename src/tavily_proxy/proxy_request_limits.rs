@@ -169,7 +169,9 @@ impl TavilyProxy {
             .await
     }
 
-    pub async fn user_rankings_snapshot(&self) -> Result<UserRankingsSnapshot, ProxyError> {
+    async fn user_rankings_snapshot_internal(
+        &self,
+    ) -> Result<(UserRankingsSnapshot, RequestStatsReadFreshness), ProxyError> {
         const USER_RANKINGS_CACHE_TTL: Duration = Duration::from_secs(10);
         const USER_RANKINGS_REFRESH_INTERVAL_SECS: i64 = 10;
 
@@ -183,7 +185,7 @@ impl TavilyProxy {
                         .saturating_duration_since(cached.generated_at)
                         < USER_RANKINGS_CACHE_TTL
                 {
-                    return Ok(cached.value.clone());
+                    return Ok((cached.value.clone(), RequestStatsReadFreshness::Fresh));
                 }
                 if cache.loading {
                     Some(cache.notify.clone().notified_owned())
@@ -209,16 +211,88 @@ impl TavilyProxy {
                 .await;
             let mut cache = self.user_rankings_cache.lock().await;
             cache.loading = false;
-            if let Ok((value, RequestStatsReadFreshness::Fresh)) = snapshot.as_ref() {
-                cache.cached = Some(CachedUserRankingsSnapshot {
-                    generated_at: self.backend_time.instant_now(),
-                    value: value.clone(),
-                });
-            }
+            let result = match snapshot {
+                Ok((value, RequestStatsReadFreshness::Fresh)) => {
+                    cache.cached = Some(CachedUserRankingsSnapshot {
+                        generated_at: self.backend_time.instant_now(),
+                        value: value.clone(),
+                    });
+                    Ok((value, RequestStatsReadFreshness::Fresh))
+                }
+                Ok((_, RequestStatsReadFreshness::DurableFallback)) => Ok((
+                    cache
+                        .cached
+                        .as_ref()
+                        .map(|cached| cached.value.clone())
+                        .unwrap_or_else(|| {
+                            UserRankingsSnapshot::empty(0, USER_RANKINGS_REFRESH_INTERVAL_SECS)
+                        }),
+                    RequestStatsReadFreshness::DurableFallback,
+                )),
+                Err(err) => Err(err),
+            };
             cache.notify.notify_waiters();
             load_guard.disarm();
-            return snapshot.map(|(value, _)| value);
+            return result;
         }
+    }
+
+    pub async fn user_rankings_snapshot_with_stale_flag(
+        &self,
+    ) -> Result<(UserRankingsSnapshot, bool), ProxyError> {
+        self.user_rankings_snapshot_internal()
+            .await
+            .map(|(snapshot, freshness)| {
+                (
+                    snapshot,
+                    matches!(freshness, RequestStatsReadFreshness::DurableFallback),
+                )
+            })
+    }
+
+    pub async fn user_rankings_snapshot(&self) -> Result<UserRankingsSnapshot, ProxyError> {
+        self.user_rankings_snapshot_with_stale_flag()
+            .await
+            .map(|(snapshot, _stale)| snapshot)
+    }
+
+    #[doc(hidden)]
+    pub async fn enqueue_user_rankings_rollup_for_test(
+        &self,
+        user_id: &str,
+        created_at: i64,
+        result_status: &str,
+    ) {
+        let mut state = self.key_store.request_stats_coalescer.state.lock().await;
+        let entry = state
+            .pending_account_request_rollups
+            .entry(AccountRequestRollupKey {
+                user_id: user_id.to_string(),
+                five_minute_bucket_start: created_at - created_at.rem_euclid(SECS_PER_FIVE_MINUTES),
+                day_bucket_start: local_day_bucket_start_utc_ts(created_at),
+            })
+            .or_default();
+        entry.request_count += 1;
+        if result_status == OUTCOME_SUCCESS {
+            entry.primary_success += 1;
+        }
+        state.oldest_pending_created_at = Some(
+            state
+                .oldest_pending_created_at
+                .map(|current| current.min(created_at))
+                .unwrap_or(created_at),
+        );
+        state.newest_pending_created_at = Some(
+            state
+                .newest_pending_created_at
+                .map(|current| current.max(created_at))
+                .unwrap_or(created_at),
+        );
+        if RequestStatsCoalescer::pending_key_count(&state) > 0 && state.flush_deadline.is_none() {
+            state.flush_deadline = Some(Instant::now() + RequestStatsCoalescer::FLUSH_INTERVAL);
+        }
+        drop(state);
+        self.key_store.request_stats_coalescer.wake.notify_one();
     }
 
     pub async fn analysis_pressure_snapshot(&self) -> Result<AnalysisPressureSnapshot, ProxyError> {

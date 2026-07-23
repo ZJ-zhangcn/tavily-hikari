@@ -101,6 +101,7 @@ struct UserRankingWindowView {
 struct UserRankingsSnapshotView {
     generated_at: i64,
     refresh_interval_secs: i64,
+    stale: bool,
     last24h: UserRankingWindowView,
     last7d: UserRankingWindowView,
     last30d: UserRankingWindowView,
@@ -249,11 +250,13 @@ fn build_user_ranking_window_view(
 
 fn build_user_rankings_snapshot_view(
     snapshot: tavily_hikari::UserRankingsSnapshot,
+    stale: bool,
     cfg: &LinuxDoOAuthOptions,
 ) -> UserRankingsSnapshotView {
     UserRankingsSnapshotView {
         generated_at: snapshot.generated_at,
         refresh_interval_secs: snapshot.refresh_interval_secs,
+        stale,
         last24h: build_user_ranking_window_view(snapshot.last24h, cfg),
         last7d: build_user_ranking_window_view(snapshot.last7d, cfg),
         last30d: build_user_ranking_window_view(snapshot.last30d, cfg),
@@ -289,9 +292,9 @@ async fn get_user_rankings(
 
     state
         .proxy
-        .user_rankings_snapshot()
+        .user_rankings_snapshot_with_stale_flag()
         .await
-        .map(|snapshot| Json(build_user_rankings_snapshot_view(snapshot, &state.linuxdo_oauth)))
+        .map(|(snapshot, stale)| Json(build_user_rankings_snapshot_view(snapshot, stale, &state.linuxdo_oauth)))
         .map_err(|err| {
             eprintln!("user rankings error: {err}");
             StatusCode::INTERNAL_SERVER_ERROR
@@ -309,9 +312,10 @@ async fn sse_user_rankings(
 
     let stream = stream! {
         loop {
-            match state.proxy.user_rankings_snapshot().await {
-                Ok(snapshot) => {
-                    let view = build_user_rankings_snapshot_view(snapshot, &state.linuxdo_oauth);
+            match state.proxy.user_rankings_snapshot_with_stale_flag().await {
+                Ok((snapshot, stale)) => {
+                    let view =
+                        build_user_rankings_snapshot_view(snapshot, stale, &state.linuxdo_oauth);
                     match serde_json::to_string(&view) {
                         Ok(json) => yield Ok(Event::default().event("snapshot").data(json)),
                         Err(_) => yield Ok(Event::default().event("degraded").data("{}")),

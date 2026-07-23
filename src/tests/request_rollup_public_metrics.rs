@@ -821,16 +821,53 @@ async fn admin_user_rankings_snapshot_returns_promptly_when_flush_hits_write_loc
         .now_ts()
         .saturating_sub(SECS_PER_FIVE_MINUTES + 1);
 
+    sqlx::query(
+        r#"
+        INSERT INTO request_logs (
+            method,
+            path,
+            status_code,
+            tavily_status_code,
+            result_status,
+            request_kind_key,
+            request_kind_label,
+            response_body,
+            created_at,
+            request_user_id,
+            visibility,
+            remote_addr,
+            client_ip,
+            client_ip_source,
+            client_ip_trusted,
+            ip_headers
+        ) VALUES (
+            'POST', '/api/tavily/search', 200, 200, 'success', 'api:search', 'HTTP | search', NULL, ?, ?, ?, NULL, ?, 'cf-connecting-ip', 1, NULL
+        )
+        "#,
+    )
+    .bind(created_at)
+    .bind(&user.user_id)
+    .bind(REQUEST_LOG_VISIBILITY_VISIBLE)
+    .bind("198.51.100.24")
+    .execute(&proxy.key_store.pool)
+    .await
+    .expect("insert durable request log for rankings fallback");
+
     proxy
         .key_store
         .enqueue_request_stats_rollup_for_user_for_test(&user.user_id, created_at, OUTCOME_SUCCESS)
         .await;
 
     let mut lock_conn = open_write_lock_connection(&db_str).await;
-    let snapshot = tokio::time::timeout(Duration::from_secs(1), proxy.user_rankings_snapshot())
-        .await
-        .expect("rankings snapshot should return promptly under write contention")
-        .expect("rankings fallback should succeed");
+    let (snapshot, stale) = tokio::time::timeout(
+        Duration::from_secs(1),
+        proxy.user_rankings_snapshot_with_stale_flag(),
+    )
+    .await
+    .expect("rankings snapshot should return promptly under write contention")
+    .expect("rankings fallback should succeed");
+    assert!(stale);
+    assert_eq!(snapshot.generated_at, 0);
     assert!(snapshot.last24h.primary_success_top.is_empty());
     assert!(snapshot.last24h.business_credits_top.is_empty());
     assert!(snapshot.last24h.unique_ip_top.is_empty());
@@ -859,6 +896,15 @@ async fn admin_user_rankings_snapshot_returns_promptly_when_flush_hits_write_loc
             .map(|row| (row.user.user_id.as_str(), row.value)),
         Some((user.user_id.as_str(), 1)),
         "fallback snapshots must not remain cached after the durable flush succeeds"
+    );
+    assert_eq!(
+        refreshed
+            .last24h
+            .unique_ip_top
+            .first()
+            .map(|row| (row.user.user_id.as_str(), row.value)),
+        Some((user.user_id.as_str(), 1)),
+        "fresh snapshots should surface the durable request log once contention clears"
     );
 
     let _ = std::fs::remove_file(&db_path);
