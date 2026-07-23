@@ -113,16 +113,17 @@ impl KeyStore {
 
             if let Some(deadline) = inflight_wait_deadline {
                 let remaining = deadline.saturating_duration_since(self.backend_time.instant_now());
-                if remaining.is_zero() {
-                    return Err(request_stats_flush_wait_budget_exhausted_error());
-                }
-                let flush_task = tokio::spawn(Self::flush_request_stats_writes_drained_batch(
+                let flush_task = Self::spawn_request_stats_flush_drained_batch_task(
                     self.request_stats_coalescer.clone(),
                     self.backend_time.clone(),
                     pool.clone(),
                     retry_budget,
                     drained,
-                ));
+                );
+                if remaining.is_zero() {
+                    std::mem::drop(flush_task);
+                    return Err(request_stats_flush_wait_budget_exhausted_error());
+                }
                 return match tokio::time::timeout(remaining, flush_task).await {
                     Ok(Ok(result)) => result,
                     Ok(Err(err)) => Err(ProxyError::Other(format!(
@@ -141,6 +142,36 @@ impl KeyStore {
             )
             .await?;
         }
+    }
+
+    fn spawn_request_stats_flush_drained_batch_task(
+        request_stats_coalescer: RequestStatsCoalescer,
+        backend_time: BackendTime,
+        pool: SqlitePool,
+        retry_budget: Duration,
+        drained: DrainedRequestStatsFlushBatch,
+    ) -> tokio::task::JoinHandle<Result<(), ProxyError>> {
+        tokio::spawn(Self::flush_request_stats_writes_drained_batch(
+            request_stats_coalescer,
+            backend_time,
+            pool,
+            retry_budget,
+            drained,
+        ))
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn flush_request_stats_writes_with_wait_policy_for_test(
+        &self,
+        retry_budget: Duration,
+        inflight_wait_deadline: Option<Instant>,
+    ) -> Result<(), ProxyError> {
+        self.flush_request_stats_writes_with_wait_policy(
+            &self.read_flush_pool,
+            retry_budget,
+            inflight_wait_deadline,
+        )
+        .await
     }
 
     async fn flush_request_stats_writes_drained_batch(

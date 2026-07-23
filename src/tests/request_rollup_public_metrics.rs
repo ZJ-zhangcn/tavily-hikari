@@ -643,6 +643,76 @@ async fn admin_summary_falls_back_when_successful_flush_exceeds_read_budget() {
 }
 
 #[tokio::test]
+async fn admin_read_budget_expiry_after_drain_keeps_background_flush_progressing() {
+    let db_path = temp_db_path("admin-read-budget-expiry-drain-detach");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = public_metrics_proxy(&db_str, "tvly-admin-read-budget-expiry").await;
+
+    let key_id = proxy
+        .list_api_key_metrics()
+        .await
+        .expect("list key metrics")
+        .into_iter()
+        .next()
+        .expect("seeded key")
+        .id;
+    proxy
+        .key_store
+        .enqueue_request_stats_rollup_for_test(
+            Some(&key_id),
+            proxy.backend_time().now_ts().saturating_sub(1),
+            OUTCOME_SUCCESS,
+        )
+        .await;
+
+    let err = proxy
+        .key_store
+        .flush_request_stats_writes_with_wait_policy_for_test(
+            Duration::from_millis(250),
+            Some(tokio::time::Instant::now()),
+        )
+        .await
+        .expect_err("expired admin read budget should return a wait-budget error");
+    assert!(
+        matches!(err, ProxyError::Other(ref message) if message == "request stats flush wait budget exhausted"),
+        "unexpected error after budget expiry: {err}"
+    );
+
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        proxy
+            .key_store
+            .request_stats_coalescer
+            .wait_until_not_flushing(),
+    )
+    .await
+    .expect("detached flush should eventually clear the inflight state");
+
+    let summary_after = proxy
+        .summary_without_flush()
+        .await
+        .expect("summary after detached flush");
+    assert_eq!(summary_after.total_requests, 1);
+    assert_eq!(summary_after.success_count, 1);
+
+    let state = proxy.key_store.request_stats_coalescer.state.lock().await;
+    assert!(
+        !state.flushing,
+        "background flush should not leave the coalescer stuck in flushing=true"
+    );
+    assert!(state.pending_dashboard_rollups.is_empty());
+    assert!(state.pending_api_key_usage.is_empty());
+    assert!(state.pending_auth_token_activity.is_empty());
+    assert!(state.pending_account_request_rollups.is_empty());
+    assert!(state.pending_request_log_catalog.is_empty());
+
+    drop(state);
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+}
+
+#[tokio::test]
 async fn admin_user_rankings_snapshot_returns_promptly_when_flush_hits_write_lock() {
     let db_path = temp_db_path("admin-user-rankings-write-lock-fallback");
     let db_str = db_path.to_string_lossy().to_string();
