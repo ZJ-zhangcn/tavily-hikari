@@ -1019,6 +1019,7 @@ pub struct AccountShadowDailyProjection {
     pub confirmed_delta_credits: i64,
     pub observed_window_count: i64,
     pub resolved_window_count: i64,
+    pub shadow_settled_credits_used: i64,
     pub shadow_observed_window_count: i64,
     pub shadow_resolved_window_count: i64,
 }

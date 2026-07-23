@@ -828,6 +828,82 @@ async fn next_upstream_reconciliation_candidates_keep_recent_refill_ahead_of_bac
 }
 
 #[tokio::test]
+async fn next_upstream_reconciliation_candidates_treat_midnight_closing_s3_as_recent() {
+    let db_path = reconciliation_test_db_path();
+    let db_string = db_path.to_string_lossy().to_string();
+    let now = local_ts(2026, 7, 15, 12, 0);
+    let (backend_time, _) = BackendTime::manual_from_ts(now);
+    let proxy = TavilyProxy::with_options_and_time(
+        vec!["tvly-reconciliation-recent-s3-boundary"],
+        "http://127.0.0.1:9",
+        &db_string,
+        TavilyProxyOptions::from_database_path(&db_string),
+        backend_time,
+    )
+    .await
+    .expect("create proxy");
+    let key_id = proxy
+        .add_or_undelete_key("tvly-reconciliation-recent-s3-boundary")
+        .await
+        .expect("create upstream key");
+
+    sqlx::query(
+        r#"
+        INSERT INTO upstream_reconciliation_usage (
+            token_id, key_id, period_code, project_id, billing_subject, period_start, period_end,
+            request_count, first_used_at, last_used_at, updated_at, settlement_mode
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 'shadow')
+        "#,
+    )
+    .bind("token-recent-s3-boundary")
+    .bind(&key_id)
+    .bind("2026-07-13/S3")
+    .bind("project-recent-s3-boundary")
+    .bind("account:user-recent-s3-boundary")
+    .bind(local_ts(2026, 7, 13, 22, 0))
+    .bind(local_ts(2026, 7, 14, 0, 0))
+    .bind(local_ts(2026, 7, 13, 22, 5))
+    .bind(local_ts(2026, 7, 14, 0, 0))
+    .bind(local_ts(2026, 7, 14, 0, 0))
+    .execute(&proxy.key_store.pool)
+    .await
+    .expect("insert midnight-closing s3 usage");
+    sqlx::query(
+        r#"
+        INSERT INTO upstream_reconciliation_usage (
+            token_id, key_id, period_code, project_id, billing_subject, period_start, period_end,
+            request_count, first_used_at, last_used_at, updated_at, settlement_mode
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 'shadow')
+        "#,
+    )
+    .bind("token-backlog-older")
+    .bind(&key_id)
+    .bind("2026-07-12/S2")
+    .bind("project-backlog-older")
+    .bind("account:user-backlog-older")
+    .bind(local_ts(2026, 7, 12, 11, 0))
+    .bind(local_ts(2026, 7, 12, 22, 0))
+    .bind(local_ts(2026, 7, 12, 11, 5))
+    .bind(local_ts(2026, 7, 12, 22, 0))
+    .bind(local_ts(2026, 7, 12, 22, 0))
+    .execute(&proxy.key_store.pool)
+    .await
+    .expect("insert older backlog usage");
+
+    let batch = proxy
+        .key_store
+        .next_upstream_reconciliation_candidates(20)
+        .await
+        .expect("load candidate batch");
+    assert_eq!(batch.recent_candidate_count, 1);
+    assert_eq!(batch.backlog_candidate_count, 1);
+    assert_eq!(batch.candidates[0].token_id, "token-recent-s3-boundary");
+    assert_eq!(batch.candidates[1].token_id, "token-backlog-older");
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
 async fn next_upstream_reconciliation_candidates_skip_pending_recent_rows_before_limiting() {
     let db_path = reconciliation_test_db_path();
     let db_string = db_path.to_string_lossy().to_string();

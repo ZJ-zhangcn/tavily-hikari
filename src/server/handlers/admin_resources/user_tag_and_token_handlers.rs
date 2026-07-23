@@ -506,11 +506,15 @@ async fn list_users(
         let show_shadow_projection =
             shadow_compare_active || has_persisted_shadow_projection;
         let (shadow_daily_credits_used, shadow_daily_availability) = if show_shadow_projection {
-            let shadow_daily_credits_used = Some(
+            let shadow_daily_credits_used = Some(if shadow_compare_active {
                 row.summary.daily_credits_used.saturating_add(
                     projection.map(|value| value.confirmed_delta_credits).unwrap_or_default(),
-                ),
-            );
+                )
+            } else {
+                projection
+                    .map(|value| value.shadow_settled_credits_used)
+                    .unwrap_or_default()
+            });
             let shadow_daily_availability = if projection.is_some_and(|value| {
                 value.observed_window_count > 0
                     && value.observed_window_count == value.resolved_window_count

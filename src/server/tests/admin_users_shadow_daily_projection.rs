@@ -1032,7 +1032,7 @@ async fn list_users_keeps_persisted_shadow_projection_after_gates_turn_off() {
             period_start, period_end, status, upstream_usage, local_billed_credits,
             delta_credits, degraded_reason, next_attempt_at, attempt_count,
             created_at, updated_at, settled_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'shadow_settled', 0, 0, ?, NULL, NULL, 1, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'shadow_settled', ?, ?, ?, NULL, NULL, 1, ?, ?, ?)
         "#,
     )
     .bind(format!("v1:{}:{}", token.id, current_period.code))
@@ -1042,6 +1042,8 @@ async fn list_users_keeps_persisted_shadow_projection_after_gates_turn_off() {
     .bind(format!("account:{}", user.user_id))
     .bind(current_period.starts_at)
     .bind(current_period.starts_at + 300)
+    .bind(13_i64)
+    .bind(9_i64)
     .bind(4_i64)
     .bind(now)
     .bind(now)
@@ -1056,6 +1058,10 @@ async fn list_users_keeps_persisted_shadow_projection_after_gates_turn_off() {
         .set_system_settings(&settings)
         .await
         .expect("disable gate after shadow settles");
+    proxy
+        .charge_token_quota(&token.id, 5)
+        .await
+        .expect("charge post-disable local-only quota");
 
     let addr = spawn_admin_users_server(proxy, true).await;
     let response = Client::new()

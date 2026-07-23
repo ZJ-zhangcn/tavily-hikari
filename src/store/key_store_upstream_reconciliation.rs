@@ -115,7 +115,17 @@ impl KeyStore {
         if !settings.upstream_precise_reconciliation_enabled {
             return Ok(true);
         }
-        Ok(!self.refresh_upstream_reconciliation_epoch().await?.0)
+        let now = self.backend_time.now_ts();
+        let active_upstream_mcp_sessions = self.count_active_upstream_mcp_sessions(now).await?;
+        if active_upstream_mcp_sessions > 0 {
+            return Ok(true);
+        }
+        let ready_after = self
+            .get_meta_i64(META_KEY_UPSTREAM_RECONCILIATION_READY_AFTER_V1)
+            .await?
+            .filter(|value| *value > 0)
+            .unwrap_or_else(|| business_period_for_timestamp(now).ends_at);
+        Ok(now < ready_after)
     }
 
     pub(crate) async fn upstream_reconciliation_runtime_markers(
@@ -327,14 +337,14 @@ impl KeyStore {
         match scope {
             ReconciliationCandidateScope::Recent { start, end } => {
                 query
-                    .push(" AND u.period_start >= ")
+                    .push(" AND u.period_end >= ")
                     .push_bind(start)
-                    .push(" AND u.period_start < ")
+                    .push(" AND u.period_end < ")
                     .push_bind(end);
             }
             ReconciliationCandidateScope::Backlog { before } => {
                 query
-                    .push(" AND u.period_start < ")
+                    .push(" AND u.period_end < ")
                     .push_bind(before);
             }
         }
@@ -1177,6 +1187,7 @@ impl KeyStore {
                     confirmed_delta_credits,
                     observed_window_count: 0,
                     resolved_window_count: 0,
+                    shadow_settled_credits_used: 0,
                     shadow_observed_window_count: 0,
                     shadow_resolved_window_count: 0,
                 },
@@ -1204,36 +1215,45 @@ impl KeyStore {
             .push(" AND u.period_start < ")
             .push_bind(day_end)
             .push(
-                " GROUP BY u.token_id, u.period_code, u.billing_subject) \
-                 SELECT SUBSTR(w.billing_subject, 9) AS user_id, COUNT(*) AS total_windows, \
+                    " GROUP BY u.token_id, u.period_code, u.billing_subject) \
+                     SELECT SUBSTR(w.billing_subject, 9) AS user_id, COUNT(*) AS total_windows, \
+                     COALESCE(SUM(CASE WHEN s.status IN (",
+            )
+            .push_bind(RECONCILIATION_STATUS_SHADOW_SETTLED)
+            .push(", ")
+            .push_bind(RECONCILIATION_STATUS_SHADOW_DEGRADED)
+            .push(
+                ") THEN 1 ELSE 0 END), 0) AS terminal_windows, \
                  COALESCE(SUM(CASE WHEN s.status IN (",
             )
             .push_bind(RECONCILIATION_STATUS_SHADOW_SETTLED)
             .push(", ")
             .push_bind(RECONCILIATION_STATUS_SHADOW_DEGRADED)
             .push(
-                ") THEN 1 ELSE 0 END), 0) AS terminal_windows \
+                ") THEN COALESCE(s.upstream_usage, 0) ELSE 0 END), 0) AS settled_shadow_usage \
                  FROM relevant_windows w \
                  LEFT JOIN upstream_reconciliation_settlements s \
                    ON s.settlement_key = 'v1:' || w.token_id || ':' || w.period_code \
                  GROUP BY w.billing_subject",
             );
         let shadow_window_rows = shadow_window_query
-            .build_query_as::<(String, i64, i64)>()
+            .build_query_as::<(String, i64, i64, i64)>()
             .fetch_all(&self.pool)
             .await?;
-        for (user_id, total_windows, terminal_windows) in shadow_window_rows {
+        for (user_id, total_windows, terminal_windows, settled_shadow_usage) in shadow_window_rows {
             let entry = projections
                 .entry(user_id)
                 .or_insert(AccountShadowDailyProjection {
                     confirmed_delta_credits: 0,
                     observed_window_count: 0,
                     resolved_window_count: 0,
+                    shadow_settled_credits_used: 0,
                     shadow_observed_window_count: 0,
                     shadow_resolved_window_count: 0,
                 });
             entry.observed_window_count += total_windows;
             entry.resolved_window_count += terminal_windows;
+            entry.shadow_settled_credits_used += settled_shadow_usage;
             entry.shadow_observed_window_count += total_windows;
             entry.shadow_resolved_window_count += terminal_windows;
         }
@@ -1293,6 +1313,7 @@ impl KeyStore {
                     confirmed_delta_credits: 0,
                     observed_window_count: 0,
                     resolved_window_count: 0,
+                    shadow_settled_credits_used: 0,
                     shadow_observed_window_count: 0,
                     shadow_resolved_window_count: 0,
                 });
