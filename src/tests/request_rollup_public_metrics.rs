@@ -713,6 +713,92 @@ async fn admin_read_budget_expiry_after_drain_keeps_background_flush_progressing
 }
 
 #[tokio::test]
+async fn admin_read_flush_drains_followup_batches_before_reporting_fresh() {
+    let db_path = temp_db_path("admin-read-followup-batch-fresh");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = public_metrics_proxy(&db_str, "tvly-admin-read-followup-batch").await;
+
+    let key_id = proxy
+        .list_api_key_metrics()
+        .await
+        .expect("list key metrics")
+        .into_iter()
+        .next()
+        .expect("seeded key")
+        .id;
+    let now = proxy.backend_time().now_ts();
+    let first_created_at = now.saturating_sub(60);
+    let second_created_at = now.saturating_sub(10);
+    proxy
+        .key_store
+        .enqueue_request_stats_rollup_for_test(Some(&key_id), first_created_at, OUTCOME_SUCCESS)
+        .await;
+
+    let pause = proxy
+        .key_store
+        .request_stats_coalescer
+        .install_post_flush_pause()
+        .await;
+    let store = proxy.key_store.clone();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    let read_flush_handle = tokio::spawn(async move {
+        store
+            .flush_request_stats_writes_with_wait_policy_for_test(
+                Duration::from_millis(250),
+                Some(deadline),
+            )
+            .await
+    });
+
+    tokio::time::timeout(Duration::from_secs(1), pause.arrived.notified())
+        .await
+        .expect("first drained batch reached post-flush pause");
+
+    proxy
+        .key_store
+        .enqueue_request_stats_rollup_for_test(Some(&key_id), second_created_at, OUTCOME_SUCCESS)
+        .await;
+
+    pause
+        .released
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    pause.release.notify_waiters();
+
+    tokio::time::timeout(Duration::from_secs(2), read_flush_handle)
+        .await
+        .expect("read-side flush should finish within the fresh-read budget window")
+        .expect("read-side flush join")
+        .expect("fresh read-side flush should drain the follow-up batch too");
+
+    let summary_after = proxy
+        .summary_without_flush()
+        .await
+        .expect("summary after draining follow-up batch");
+    assert_eq!(summary_after.total_requests, 2);
+    assert_eq!(summary_after.success_count, 2);
+    assert_eq!(
+        proxy
+            .key_store
+            .request_stats_coalescer
+            .pending_oldest_created_at()
+            .await,
+        None
+    );
+    assert_eq!(
+        proxy
+            .key_store
+            .request_stats_coalescer
+            .pending_newest_created_at()
+            .await,
+        None
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+}
+
+#[tokio::test]
 async fn admin_user_rankings_snapshot_returns_promptly_when_flush_hits_write_lock() {
     let db_path = temp_db_path("admin-user-rankings-write-lock-fallback");
     let db_str = db_path.to_string_lossy().to_string();

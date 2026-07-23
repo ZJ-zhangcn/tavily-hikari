@@ -124,13 +124,16 @@ impl KeyStore {
                     std::mem::drop(flush_task);
                     return Err(request_stats_flush_wait_budget_exhausted_error());
                 }
-                return match tokio::time::timeout(remaining, flush_task).await {
-                    Ok(Ok(result)) => result,
-                    Ok(Err(err)) => Err(ProxyError::Other(format!(
+                match tokio::time::timeout(remaining, flush_task).await {
+                    Ok(Ok(Ok(()))) => continue,
+                    Ok(Ok(Err(err))) => return Err(err),
+                    Ok(Err(err)) => {
+                        return Err(ProxyError::Other(format!(
                         "request stats flush task failed: {err}"
-                    ))),
-                    Err(_) => Err(request_stats_flush_wait_budget_exhausted_error()),
-                };
+                    )))
+                    }
+                    Err(_) => return Err(request_stats_flush_wait_budget_exhausted_error()),
+                }
             }
 
             Self::flush_request_stats_writes_drained_batch(
