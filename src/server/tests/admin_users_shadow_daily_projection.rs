@@ -545,3 +545,160 @@ async fn list_users_hides_shadow_projection_until_compare_ready() {
     let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
     let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
 }
+
+#[tokio::test]
+async fn list_users_keeps_persisted_shadow_projection_after_gates_turn_off() {
+    let db_path = temp_db_path("admin-users-shadow-daily-persisted-after-gates-off");
+    let db_str = db_path.to_string_lossy().to_string();
+    let proxy = TavilyProxy::with_options(
+        vec!["tvly-admin-users-shadow-persisted".to_string()],
+        DEFAULT_UPSTREAM,
+        &db_str,
+        tavily_hikari::TavilyProxyOptions::from_database_path(&db_str),
+    )
+    .await
+    .expect("proxy created");
+    let mut settings = proxy.get_system_settings().await.expect("load settings");
+    settings.upstream_project_id_mode = UpstreamProjectIdMode::AccessToken;
+    settings.api_rebalance_enabled = true;
+    settings.api_rebalance_percent = 100;
+    settings.rebalance_mcp_enabled = true;
+    settings.rebalance_mcp_session_percent = 100;
+    settings.upstream_precise_reconciliation_enabled = false;
+    proxy
+        .set_system_settings(&settings)
+        .await
+        .expect("save compare-only settings");
+
+    let user = proxy
+        .upsert_oauth_account(&OAuthAccountProfile {
+            provider: "linuxdo".to_string(),
+            provider_user_id: "admin-users-shadow-persisted".to_string(),
+            username: Some("shadow-persisted".to_string()),
+            name: Some("Shadow Persisted".to_string()),
+            avatar_template: None,
+            active: true,
+            trust_level: Some(1),
+            raw_payload_json: None,
+        })
+        .await
+        .expect("upsert user");
+    let token = proxy
+        .ensure_user_token_binding(&user.user_id, Some("shadow-persisted-token"))
+        .await
+        .expect("bind user token");
+    proxy
+        .charge_token_quota(&token.id, 9)
+        .await
+        .expect("charge user quota");
+
+    let pool = SqlitePoolOptions::new()
+        .min_connections(1)
+        .max_connections(1)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(&db_str)
+                .create_if_missing(true)
+                .journal_mode(SqliteJournalMode::Wal)
+                .busy_timeout(Duration::from_secs(5)),
+        )
+        .await
+        .expect("open reconciliation pool");
+    let now = proxy.backend_time().now_ts();
+    let current_period = tavily_hikari::business_period_for_timestamp(now);
+
+    sqlx::query(
+        r#"
+        INSERT INTO upstream_reconciliation_usage (
+            token_id, key_id, period_code, project_id, billing_subject, settlement_mode,
+            period_start, period_end, request_count, first_used_at, last_used_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'shadow', ?, ?, 1, ?, ?, ?)
+        "#,
+    )
+    .bind(&token.id)
+    .bind("key-shadow-persisted")
+    .bind(&current_period.code)
+    .bind("project-shadow-persisted")
+    .bind(format!("account:{}", user.user_id))
+    .bind(current_period.starts_at)
+    .bind(current_period.starts_at + 300)
+    .bind(current_period.starts_at)
+    .bind(current_period.starts_at + 300)
+    .bind(current_period.starts_at + 300)
+    .execute(&pool)
+    .await
+    .expect("insert shadow usage row");
+    sqlx::query(
+        r#"
+        INSERT INTO billing_reconciliation_shadow_adjustments (
+            settlement_key, token_id, billing_subject, period_code, delta_credits,
+            attributed_at, degraded_reason, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+        "#,
+    )
+    .bind(format!("v1:{}:{}", token.id, current_period.code))
+    .bind(&token.id)
+    .bind(format!("account:{}", user.user_id))
+    .bind(&current_period.code)
+    .bind(4_i64)
+    .bind(now.saturating_sub(60))
+    .bind(now)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .expect("insert shadow adjustment");
+    sqlx::query(
+        r#"
+        INSERT INTO upstream_reconciliation_settlements (
+            settlement_key, token_id, period_code, project_id, billing_subject,
+            period_start, period_end, status, upstream_usage, local_billed_credits,
+            delta_credits, degraded_reason, next_attempt_at, attempt_count,
+            created_at, updated_at, settled_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'shadow_settled', 0, 0, ?, NULL, NULL, 1, ?, ?, ?)
+        "#,
+    )
+    .bind(format!("v1:{}:{}", token.id, current_period.code))
+    .bind(&token.id)
+    .bind(&current_period.code)
+    .bind("project-shadow-persisted")
+    .bind(format!("account:{}", user.user_id))
+    .bind(current_period.starts_at)
+    .bind(current_period.starts_at + 300)
+    .bind(4_i64)
+    .bind(now)
+    .bind(now)
+    .bind(now)
+    .execute(&pool)
+    .await
+    .expect("insert shadow settlement");
+
+    settings.api_rebalance_enabled = false;
+    settings.api_rebalance_percent = 0;
+    proxy
+        .set_system_settings(&settings)
+        .await
+        .expect("disable gate after shadow settles");
+
+    let addr = spawn_admin_users_server(proxy, true).await;
+    let response = Client::new()
+        .get(format!("http://{addr}/api/users?page=1&per_page=20"))
+        .send()
+        .await
+        .expect("list users request");
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let body: serde_json::Value = response.json().await.expect("list users json");
+    let items = body["items"].as_array().expect("items array");
+    let user_item = items
+        .iter()
+        .find(|item| item["userId"].as_str() == Some(user.user_id.as_str()))
+        .expect("user row");
+    assert_eq!(user_item["shadowDailyCreditsUsed"].as_i64(), Some(13));
+    assert_eq!(
+        user_item["shadowDailyAvailability"].as_str(),
+        Some("confirmed")
+    );
+
+    let _ = std::fs::remove_file(&db_path);
+    let _ = std::fs::remove_file(db_path.with_extension("db-shm"));
+    let _ = std::fs::remove_file(db_path.with_extension("db-wal"));
+}

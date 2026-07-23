@@ -24,6 +24,7 @@ type UpstreamReconciliationCandidateRow = (
     i64,
     i64,
     i64,
+    String,
 );
 
 fn upstream_reconciliation_shadow_ready(settings: &SystemSettings) -> bool {
@@ -239,6 +240,7 @@ impl KeyStore {
                     period_start,
                     period_end,
                     pending_research,
+                    _scheduling_key_id,
                 )| {
                     let degraded = pending_research > 0
                         && now >= period_end.saturating_add(86_400);
@@ -279,6 +281,7 @@ impl KeyStore {
                 MIN(u.settlement_mode) AS settlement_mode,
                 MIN(u.period_start) AS period_start,
                 MAX(u.period_end) AS period_end,
+                MIN(u.key_id) AS scheduling_key_id,
                 COALESCE((
                     SELECT COUNT(*)
                     FROM upstream_reconciliation_research r
@@ -319,6 +322,34 @@ impl KeyStore {
             .push(
                 r#"
             GROUP BY u.token_id, u.period_code
+            )"#,
+            );
+        if newest_first {
+            query
+                .push(
+                    r#",
+            ranked_recent_candidates AS (
+                SELECT
+                    token_id,
+                    period_code,
+                    project_id,
+                    billing_subject,
+                    settlement_mode,
+                    period_start,
+                    period_end,
+                    pending_research,
+                    scheduling_key_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY scheduling_key_id
+                        ORDER BY period_end DESC
+                    ) AS key_slot
+                FROM candidate_windows
+                WHERE pending_research = 0
+                   OR period_end + 86400 <= "#,
+                )
+                .push_bind(now)
+                .push(
+                    r#"
             )
             SELECT
                 token_id,
@@ -328,16 +359,39 @@ impl KeyStore {
                 settlement_mode,
                 period_start,
                 period_end,
-                pending_research
+                pending_research,
+                scheduling_key_id
+            FROM ranked_recent_candidates
+            ORDER BY key_slot ASC, period_end DESC
+            LIMIT "#,
+                )
+                .push_bind(limit.max(1));
+        } else {
+            query
+                .push(
+                    r#"
+            SELECT
+                token_id,
+                period_code,
+                project_id,
+                billing_subject,
+                settlement_mode,
+                period_start,
+                period_end,
+                pending_research,
+                scheduling_key_id
             FROM candidate_windows
             WHERE pending_research = 0
                OR period_end + 86400 <= "#,
-            )
-            .push_bind(now)
-            .push(" ORDER BY period_end ")
-            .push(if newest_first { "DESC" } else { "ASC" })
-            .push(" LIMIT ")
-            .push_bind(limit.max(1));
+                )
+                .push_bind(now)
+                .push(
+                    r#"
+            ORDER BY period_end ASC
+            LIMIT "#,
+                )
+                .push_bind(limit.max(1));
+        }
         let rows = query
             .build_query_as::<UpstreamReconciliationCandidateRow>()
             .fetch_all(&self.pool)

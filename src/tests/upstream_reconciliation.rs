@@ -932,6 +932,112 @@ async fn next_upstream_reconciliation_candidates_skip_pending_recent_rows_before
 }
 
 #[tokio::test]
+async fn next_upstream_reconciliation_candidates_interleave_recent_keys_before_limiting() {
+    let db_path = reconciliation_test_db_path();
+    let db_string = db_path.to_string_lossy().to_string();
+    let now = local_ts(2026, 7, 15, 12, 0);
+    let (backend_time, _) = BackendTime::manual_from_ts(now);
+    let proxy = TavilyProxy::with_options_and_time(
+        vec![
+            "tvly-reconciliation-recent-interleave-hot",
+            "tvly-reconciliation-recent-interleave-cool",
+        ],
+        "http://127.0.0.1:9",
+        &db_string,
+        TavilyProxyOptions::from_database_path(&db_string),
+        backend_time,
+    )
+    .await
+    .expect("create proxy");
+    let hot_key_id = proxy
+        .add_or_undelete_key("tvly-reconciliation-recent-interleave-hot")
+        .await
+        .expect("create hot key");
+    let cool_key_id = proxy
+        .add_or_undelete_key("tvly-reconciliation-recent-interleave-cool")
+        .await
+        .expect("create cool key");
+
+    for index in 0..20 {
+        let period_end = now.saturating_sub(((index + 1) as i64) * 600);
+        let period_start = period_end.saturating_sub(300);
+        sqlx::query(
+            r#"
+            INSERT INTO upstream_reconciliation_usage (
+                token_id, key_id, period_code, project_id, billing_subject, period_start, period_end,
+                request_count, first_used_at, last_used_at, updated_at, settlement_mode
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 'shadow')
+            "#,
+        )
+        .bind(format!("token-recent-interleave-hot-{index:02}"))
+        .bind(&hot_key_id)
+        .bind(format!("2026-07-15/S2-hot-{index:02}"))
+        .bind(format!("project-recent-interleave-hot-{index:02}"))
+        .bind(format!("account:user-recent-interleave-hot-{index:02}"))
+        .bind(period_start)
+        .bind(period_end)
+        .bind(period_start)
+        .bind(period_end)
+        .bind(period_end)
+        .execute(&proxy.key_store.pool)
+        .await
+        .expect("insert hot recent usage");
+    }
+    let cool_period_start = local_ts(2026, 7, 14, 8, 0);
+    let cool_period_end = cool_period_start + 300;
+    sqlx::query(
+        r#"
+        INSERT INTO upstream_reconciliation_usage (
+            token_id, key_id, period_code, project_id, billing_subject, period_start, period_end,
+            request_count, first_used_at, last_used_at, updated_at, settlement_mode
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, 'shadow')
+        "#,
+    )
+    .bind("token-recent-interleave-cool")
+    .bind(&cool_key_id)
+    .bind("2026-07-14/S2-cool")
+    .bind("project-recent-interleave-cool")
+    .bind("account:user-recent-interleave-cool")
+    .bind(cool_period_start)
+    .bind(cool_period_end)
+    .bind(cool_period_start)
+    .bind(cool_period_end)
+    .bind(cool_period_end)
+    .execute(&proxy.key_store.pool)
+    .await
+    .expect("insert cool recent usage");
+
+    let batch = proxy
+        .key_store
+        .next_upstream_reconciliation_candidates(20)
+        .await
+        .expect("load candidate batch");
+    assert_eq!(batch.recent_candidate_count, 20);
+    assert_eq!(batch.backlog_candidate_count, 0);
+    assert_eq!(batch.candidates.len(), 20);
+    assert_eq!(
+        batch
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.token_id == "token-recent-interleave-cool")
+            .count(),
+        1
+    );
+    assert_eq!(
+        batch
+            .candidates
+            .iter()
+            .filter(|candidate| candidate
+                .token_id
+                .starts_with("token-recent-interleave-hot-"))
+            .count(),
+        19
+    );
+
+    let _ = std::fs::remove_file(db_path);
+}
+
+#[tokio::test]
 async fn s3_next_day_settlement_does_not_restore_current_hour_quota() {
     let db_path = reconciliation_test_db_path();
     let db_string = db_path.to_string_lossy().to_string();

@@ -465,7 +465,7 @@ async fn list_users(
             == tavily_hikari::UpstreamProjectIdMode::AccessToken
         && system_settings.api_rebalance_enabled
         && system_settings.rebalance_mcp_enabled;
-    let shadow_daily_projection = if page_user_ids.is_empty() || !shadow_projection_ready {
+    let shadow_daily_projection = if page_user_ids.is_empty() || !shadow_compare_enabled {
         std::collections::HashMap::new()
     } else {
         state
@@ -491,13 +491,13 @@ async fn list_users(
             .get(&row.user.user_id)
             .copied()
             .unwrap_or_default();
-        let (shadow_daily_credits_used, shadow_daily_availability) = if shadow_projection_ready {
-            let projection = shadow_daily_projection.get(&row.user.user_id);
+        let projection = shadow_daily_projection.get(&row.user.user_id);
+        let show_shadow_projection =
+            shadow_compare_enabled && (shadow_projection_ready || projection.is_some());
+        let (shadow_daily_credits_used, shadow_daily_availability) = if show_shadow_projection {
             let shadow_daily_credits_used = Some(
                 row.summary.daily_credits_used.saturating_add(
-                    projection
-                        .map(|value| value.confirmed_delta_credits)
-                        .unwrap_or_default(),
+                    projection.map(|value| value.confirmed_delta_credits).unwrap_or_default(),
                 ),
             );
             let shadow_daily_availability = if projection.is_some_and(|value| {
@@ -510,10 +510,7 @@ async fn list_users(
             } else {
                 Some(AdminUserShadowDailyAvailability::Projected)
             };
-            (
-                shadow_daily_credits_used,
-                shadow_daily_availability,
-            )
+            (shadow_daily_credits_used, shadow_daily_availability)
         } else {
             (None, None)
         };
