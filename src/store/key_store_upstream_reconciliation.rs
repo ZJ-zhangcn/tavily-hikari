@@ -270,21 +270,22 @@ impl KeyStore {
     ) -> Result<Vec<UpstreamReconciliationCandidate>, ProxyError> {
         let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
             r#"
+            WITH candidate_windows AS (
             SELECT
                 u.token_id,
-                u.period_code,
-                MIN(u.project_id),
-                MIN(u.billing_subject),
-                MIN(u.settlement_mode),
-                MIN(u.period_start),
-                MAX(u.period_end),
+                u.period_code AS period_code,
+                MIN(u.project_id) AS project_id,
+                MIN(u.billing_subject) AS billing_subject,
+                MIN(u.settlement_mode) AS settlement_mode,
+                MIN(u.period_start) AS period_start,
+                MAX(u.period_end) AS period_end,
                 COALESCE((
                     SELECT COUNT(*)
                     FROM upstream_reconciliation_research r
                     WHERE r.token_id = u.token_id
                       AND r.period_code = u.period_code
                       AND r.terminal_at IS NULL
-                ), 0)
+                ), 0) AS pending_research
             FROM upstream_reconciliation_usage u
             LEFT JOIN upstream_reconciliation_settlements s
               ON s.settlement_key = 'v1:' || u.token_id || ':' || u.period_code
@@ -318,8 +319,22 @@ impl KeyStore {
             .push(
                 r#"
             GROUP BY u.token_id, u.period_code
-            ORDER BY MAX(u.period_end) "#,
             )
+            SELECT
+                token_id,
+                period_code,
+                project_id,
+                billing_subject,
+                settlement_mode,
+                period_start,
+                period_end,
+                pending_research
+            FROM candidate_windows
+            WHERE pending_research = 0
+               OR period_end + 86400 <= "#,
+            )
+            .push_bind(now)
+            .push(" ORDER BY period_end ")
             .push(if newest_first { "DESC" } else { "ASC" })
             .push(" LIMIT ")
             .push_bind(limit.max(1));
@@ -1086,28 +1101,28 @@ impl KeyStore {
                 user_id,
                 AccountShadowDailyProjection {
                     confirmed_delta_credits,
-                    has_shadow_window: false,
-                    all_shadow_windows_terminal: false,
+                    observed_window_count: 0,
+                    resolved_window_count: 0,
                 },
             );
         }
 
-        let mut window_query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+        let mut shadow_window_query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
             "WITH relevant_windows AS (\
              SELECT u.token_id, u.period_code, u.billing_subject \
              FROM upstream_reconciliation_usage u \
              WHERE u.settlement_mode = ",
         );
-        window_query
+        shadow_window_query
             .push_bind(RECONCILIATION_SETTLEMENT_MODE_SHADOW)
             .push(" AND u.billing_subject IN (");
         {
-            let mut separated = window_query.separated(", ");
+            let mut separated = shadow_window_query.separated(", ");
             user_ids.iter().for_each(|user_id| {
                 separated.push_bind(format!("account:{user_id}"));
             });
         }
-        window_query
+        shadow_window_query
             .push(") AND u.period_start >= ")
             .push_bind(day_start)
             .push(" AND u.period_start < ")
@@ -1127,21 +1142,70 @@ impl KeyStore {
                    ON s.settlement_key = 'v1:' || w.token_id || ':' || w.period_code \
                  GROUP BY w.billing_subject",
             );
-        let window_rows = window_query
+        let shadow_window_rows = shadow_window_query
             .build_query_as::<(String, i64, i64)>()
             .fetch_all(&self.pool)
             .await?;
-        for (user_id, total_windows, terminal_windows) in window_rows {
+        for (user_id, total_windows, terminal_windows) in shadow_window_rows {
             let entry = projections
                 .entry(user_id)
                 .or_insert(AccountShadowDailyProjection {
                     confirmed_delta_credits: 0,
-                    has_shadow_window: false,
-                    all_shadow_windows_terminal: false,
+                    observed_window_count: 0,
+                    resolved_window_count: 0,
                 });
-            entry.has_shadow_window = total_windows > 0;
-            entry.all_shadow_windows_terminal =
-                total_windows > 0 && total_windows == terminal_windows;
+            entry.observed_window_count += total_windows;
+            entry.resolved_window_count += terminal_windows;
+        }
+
+        let mut actual_window_query = sqlx::QueryBuilder::<sqlx::Sqlite>::new(
+            "WITH actual_only_windows AS (\
+             SELECT u.token_id, u.period_code, u.billing_subject \
+             FROM upstream_reconciliation_usage u \
+             WHERE u.settlement_mode = ",
+        );
+        actual_window_query
+            .push_bind(RECONCILIATION_SETTLEMENT_MODE_ACTUAL)
+            .push(" AND u.billing_subject IN (");
+        {
+            let mut separated = actual_window_query.separated(", ");
+            user_ids.iter().for_each(|user_id| {
+                separated.push_bind(format!("account:{user_id}"));
+            });
+        }
+        actual_window_query
+            .push(") AND u.period_start >= ")
+            .push_bind(day_start)
+            .push(" AND u.period_start < ")
+            .push_bind(day_end)
+            .push(" AND NOT EXISTS (\
+                SELECT 1 \
+                FROM upstream_reconciliation_usage shadow \
+                WHERE shadow.token_id = u.token_id \
+                  AND shadow.period_code = u.period_code \
+                  AND shadow.billing_subject = u.billing_subject \
+                  AND shadow.settlement_mode = ")
+            .push_bind(RECONCILIATION_SETTLEMENT_MODE_SHADOW)
+            .push(
+                ") GROUP BY u.token_id, u.period_code, u.billing_subject) \
+                 SELECT SUBSTR(billing_subject, 9) AS user_id, COUNT(*) AS exact_windows \
+                 FROM actual_only_windows \
+                 GROUP BY billing_subject",
+            );
+        let actual_window_rows = actual_window_query
+            .build_query_as::<(String, i64)>()
+            .fetch_all(&self.pool)
+            .await?;
+        for (user_id, exact_windows) in actual_window_rows {
+            let entry = projections
+                .entry(user_id)
+                .or_insert(AccountShadowDailyProjection {
+                    confirmed_delta_credits: 0,
+                    observed_window_count: 0,
+                    resolved_window_count: 0,
+                });
+            entry.observed_window_count += exact_windows;
+            entry.resolved_window_count += exact_windows;
         }
         Ok(projections)
     }

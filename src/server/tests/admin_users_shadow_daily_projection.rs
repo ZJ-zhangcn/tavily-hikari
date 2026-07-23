@@ -92,6 +92,19 @@ async fn list_users_reports_shadow_daily_usage_as_confirmed_or_projected() {
         })
         .await
         .expect("upsert erin");
+    let frank = proxy
+        .upsert_oauth_account(&OAuthAccountProfile {
+            provider: "linuxdo".to_string(),
+            provider_user_id: "admin-users-shadow-frank".to_string(),
+            username: Some("shadow-frank".to_string()),
+            name: Some("Shadow Frank".to_string()),
+            avatar_template: None,
+            active: true,
+            trust_level: Some(0),
+            raw_payload_json: None,
+        })
+        .await
+        .expect("upsert frank");
 
     let alice_token = proxy
         .ensure_user_token_binding(&alice.user_id, Some("shadow-alice-token"))
@@ -109,6 +122,10 @@ async fn list_users_reports_shadow_daily_usage_as_confirmed_or_projected() {
         .ensure_user_token_binding(&dana.user_id, Some("shadow-dana-token"))
         .await
         .expect("bind dana token");
+    let frank_token = proxy
+        .ensure_user_token_binding(&frank.user_id, Some("shadow-frank-token"))
+        .await
+        .expect("bind frank token");
 
     proxy
         .charge_token_quota(&alice_token.id, 100)
@@ -126,6 +143,10 @@ async fn list_users_reports_shadow_daily_usage_as_confirmed_or_projected() {
         .charge_token_quota(&dana_token.id, 40)
         .await
         .expect("charge dana quota");
+    proxy
+        .charge_token_quota(&frank_token.id, 12)
+        .await
+        .expect("charge frank quota");
 
     let pool = SqlitePoolOptions::new()
         .min_connections(1)
@@ -212,6 +233,27 @@ async fn list_users_reports_shadow_daily_usage_as_confirmed_or_projected() {
         .await
         .expect("insert shadow usage row");
     }
+    sqlx::query(
+        r#"
+        INSERT INTO upstream_reconciliation_usage (
+            token_id, key_id, period_code, project_id, billing_subject, settlement_mode,
+            period_start, period_end, request_count, first_used_at, last_used_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, 'actual', ?, ?, 1, ?, ?, ?)
+        "#,
+    )
+    .bind(&frank_token.id)
+    .bind("key-actual-frank")
+    .bind(&period_codes[2])
+    .bind("project-actual-frank")
+    .bind(format!("account:{}", frank.user_id))
+    .bind(current_period.starts_at + 2_400)
+    .bind(current_period.starts_at + 2_700)
+    .bind(current_period.starts_at + 2_400)
+    .bind(current_period.starts_at + 2_700)
+    .bind(current_period.starts_at + 2_700)
+    .execute(&pool)
+    .await
+    .expect("insert frank actual usage row");
     let attributed_at = now.saturating_sub(60);
     sqlx::query(
         r#"
@@ -423,6 +465,16 @@ async fn list_users_reports_shadow_daily_usage_as_confirmed_or_projected() {
     assert_eq!(erin_item["shadowDailyCreditsUsed"].as_i64(), Some(0));
     assert_eq!(
         erin_item["shadowDailyAvailability"].as_str(),
+        Some("confirmed")
+    );
+
+    let frank_item = items
+        .iter()
+        .find(|item| item["userId"].as_str() == Some(frank.user_id.as_str()))
+        .expect("frank row");
+    assert_eq!(frank_item["shadowDailyCreditsUsed"].as_i64(), Some(12));
+    assert_eq!(
+        frank_item["shadowDailyAvailability"].as_str(),
         Some("confirmed")
     );
 

@@ -1017,8 +1017,8 @@ pub struct UpstreamReconciliationCandidate {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountShadowDailyProjection {
     pub confirmed_delta_credits: i64,
-    pub has_shadow_window: bool,
-    pub all_shadow_windows_terminal: bool,
+    pub observed_window_count: i64,
+    pub resolved_window_count: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

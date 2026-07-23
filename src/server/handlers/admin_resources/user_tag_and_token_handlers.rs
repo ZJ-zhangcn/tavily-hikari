@@ -495,7 +495,10 @@ async fn list_users(
                         .unwrap_or_default(),
                 ),
             );
-            let shadow_daily_availability = if projection.is_some_and(|value| value.all_shadow_windows_terminal)
+            let shadow_daily_availability = if projection.is_some_and(|value| {
+                value.observed_window_count > 0
+                    && value.observed_window_count == value.resolved_window_count
+            })
                 || (projection.is_none() && row.summary.daily_credits_used == 0)
             {
                 Some(AdminUserShadowDailyAvailability::Confirmed)
