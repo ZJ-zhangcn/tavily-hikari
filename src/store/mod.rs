@@ -2549,6 +2549,7 @@ pub(crate) struct RequestStatsCoalescerState {
     pub(crate) pending_account_request_rollups:
         HashMap<AccountRequestRollupKey, AccountUsageRollupDelta>,
     pub(crate) pending_request_log_catalog: HashMap<RequestLogCatalogRollupKey, i64>,
+    pub(crate) request_stats_version: u64,
     pub(crate) oldest_pending_created_at: Option<i64>,
     pub(crate) newest_pending_created_at: Option<i64>,
     pub(crate) flushing_oldest_created_at: Option<i64>,
@@ -2567,12 +2568,25 @@ pub(crate) struct RequestStatsCoalescer {
     pub(crate) post_flush_pause: Arc<Mutex<Option<RequestStatsPostFlushPause>>>,
 }
 
-#[cfg(test)]
 #[derive(Debug, Clone)]
-pub(crate) struct RequestStatsPostFlushPause {
+pub struct RequestStatsPostFlushPause {
     pub(crate) arrived: Arc<Notify>,
     pub(crate) release: Arc<Notify>,
     pub(crate) released: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl RequestStatsPostFlushPause {
+    #[doc(hidden)]
+    pub async fn wait_until_arrived(&self) {
+        self.arrived.notified().await;
+    }
+
+    #[doc(hidden)]
+    pub fn release(&self) {
+        self.released
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.release.notify_waiters();
+    }
 }
 
 impl Default for RequestStatsCoalescer {
@@ -2597,6 +2611,10 @@ impl RequestStatsCoalescer {
             + state.pending_auth_token_activity.len()
             + state.pending_account_request_rollups.len()
             + state.pending_request_log_catalog.len()
+    }
+
+    pub(crate) fn bump_request_stats_version(state: &mut RequestStatsCoalescerState) {
+        state.request_stats_version = state.request_stats_version.wrapping_add(1);
     }
 
     fn mark_flush_deadline_if_pending(state: &mut RequestStatsCoalescerState) {
@@ -2674,6 +2692,7 @@ impl RequestStatsCoalescer {
                     .entry(request_log_catalog_key)
                     .or_default() += 1;
             }
+            Self::bump_request_stats_version(&mut state);
             Self::note_pending_created_at(&mut state, created_at);
             Self::mark_flush_deadline_if_pending(&mut state);
         }
@@ -2696,6 +2715,7 @@ impl RequestStatsCoalescer {
                 0,
                 0,
             );
+            Self::bump_request_stats_version(&mut state);
             Self::note_pending_created_at(&mut state, created_at);
             Self::mark_flush_deadline_if_pending(&mut state);
         }
@@ -2751,6 +2771,7 @@ impl RequestStatsCoalescer {
                     .or_default()
                     .local_estimated_credits += credits;
             }
+            Self::bump_request_stats_version(&mut state);
             Self::note_pending_created_at(&mut state, created_at);
             Self::mark_flush_deadline_if_pending(&mut state);
         }
@@ -2843,31 +2864,31 @@ impl RequestStatsCoalescer {
         }
     }
 
+    pub(crate) fn try_has_pending_or_flushing_work(&self) -> bool {
+        self.state
+            .try_lock()
+            .map(|state| state.flushing || Self::pending_key_count(&state) > 0)
+            .unwrap_or(true)
+    }
+
+    pub(crate) fn try_request_stats_version(&self) -> Option<u64> {
+        self.state
+            .try_lock()
+            .ok()
+            .map(|state| state.request_stats_version)
+    }
+
     #[cfg(test)]
     pub(crate) async fn install_post_flush_pause(&self) -> RequestStatsPostFlushPause {
-        let pause = RequestStatsPostFlushPause {
-            arrived: Arc::new(Notify::new()),
-            release: Arc::new(Notify::new()),
-            released: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        };
+        let pause = new_request_stats_test_pause();
         let mut slot = self.post_flush_pause.lock().await;
         *slot = Some(pause.clone());
         pause
     }
 
     #[cfg(test)]
-    pub(crate) async fn take_post_flush_pause(&self) -> Option<RequestStatsPostFlushPause> {
-        self.post_flush_pause.lock().await.take()
-    }
-
-    #[cfg(test)]
     pub(crate) async fn wait_for_post_flush_pause_if_installed(&self) {
-        if let Some(pause) = self.take_post_flush_pause().await {
-            pause.arrived.notify_waiters();
-            while !pause.released.load(std::sync::atomic::Ordering::SeqCst) {
-                pause.release.notified().await;
-            }
-        }
+        wait_for_request_stats_test_pause_if_installed(&self.post_flush_pause).await;
     }
 }
 
@@ -2889,9 +2910,50 @@ pub(crate) struct KeyStore {
     pub(crate) admin_heavy_read_semaphore: Semaphore,
     #[cfg(test)]
     pub(crate) forced_pending_claim_miss_log_ids: Mutex<HashSet<i64>>,
+    #[cfg(debug_assertions)]
+    #[allow(dead_code)]
+    pub(crate) dashboard_overview_read_pause: Arc<Mutex<Option<RequestStatsPostFlushPause>>>,
     // Lightweight failpoint registry used by integration tests to simulate a lost quota
     // subject lease after precheck but before settlement.
     pub(crate) forced_quota_subject_lock_loss_subjects: std::sync::Mutex<HashSet<String>>,
+}
+
+#[cfg(any(test, debug_assertions))]
+fn new_request_stats_test_pause() -> RequestStatsPostFlushPause {
+    RequestStatsPostFlushPause {
+        arrived: Arc::new(Notify::new()),
+        release: Arc::new(Notify::new()),
+        released: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+    }
+}
+
+#[cfg(any(test, debug_assertions))]
+async fn wait_for_request_stats_test_pause_if_installed(
+    slot: &Arc<Mutex<Option<RequestStatsPostFlushPause>>>,
+) {
+    if let Some(pause) = slot.lock().await.take() {
+        pause.arrived.notify_waiters();
+        while !pause.released.load(std::sync::atomic::Ordering::SeqCst) {
+            pause.release.notified().await;
+        }
+    }
+}
+
+impl KeyStore {
+    #[cfg(debug_assertions)]
+    #[allow(dead_code)]
+    pub(crate) async fn install_dashboard_overview_read_pause(&self) -> RequestStatsPostFlushPause {
+        let pause = new_request_stats_test_pause();
+        let mut slot = self.dashboard_overview_read_pause.lock().await;
+        *slot = Some(pause.clone());
+        pause
+    }
+
+    #[cfg(debug_assertions)]
+    #[allow(dead_code)]
+    pub(crate) async fn wait_for_dashboard_overview_read_pause_if_installed(&self) {
+        wait_for_request_stats_test_pause_if_installed(&self.dashboard_overview_read_pause).await;
+    }
 }
 
 include!("key_store_bootstrap.rs");

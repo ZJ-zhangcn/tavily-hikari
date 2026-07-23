@@ -61,6 +61,7 @@ impl KeyStore {
             OUTCOME_ERROR | OUTCOME_QUOTA_EXHAUSTED => {}
             _ => {}
         }
+        RequestStatsCoalescer::bump_request_stats_version(&mut state);
         RequestStatsCoalescer::note_pending_created_at(&mut state, created_at);
         RequestStatsCoalescer::mark_flush_deadline_if_pending(&mut state);
         drop(state);

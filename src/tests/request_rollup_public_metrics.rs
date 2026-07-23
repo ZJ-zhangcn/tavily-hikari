@@ -853,6 +853,21 @@ async fn admin_user_rankings_snapshot_returns_promptly_when_flush_hits_write_loc
     .await
     .expect("insert durable request log for rankings fallback");
 
+    let (cached_snapshot, cached_stale) = proxy
+        .user_rankings_snapshot_with_stale_flag()
+        .await
+        .expect("initial rankings snapshot");
+    assert!(!cached_stale);
+    assert_eq!(
+        cached_snapshot
+            .last24h
+            .unique_ip_top
+            .first()
+            .map(|row| (row.user.user_id.as_str(), row.value)),
+        Some((user.user_id.as_str(), 1)),
+        "initial cache warm should include the durable unique-ip ranking"
+    );
+
     proxy
         .key_store
         .enqueue_request_stats_rollup_for_user_for_test(&user.user_id, created_at, OUTCOME_SUCCESS)

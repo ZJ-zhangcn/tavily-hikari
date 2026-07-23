@@ -680,6 +680,8 @@ impl KeyStore {
             admin_heavy_read_semaphore: Semaphore::new(ADMIN_HEAVY_READ_CONCURRENCY),
             #[cfg(test)]
             forced_pending_claim_miss_log_ids: Mutex::new(HashSet::new()),
+            #[cfg(debug_assertions)]
+            dashboard_overview_read_pause: Arc::new(Mutex::new(None)),
             forced_quota_subject_lock_loss_subjects: std::sync::Mutex::new(HashSet::new()),
         };
         instrument_db_operation(
@@ -757,6 +759,8 @@ impl KeyStore {
             admin_heavy_read_semaphore: Semaphore::new(ADMIN_HEAVY_READ_CONCURRENCY),
             #[cfg(test)]
             forced_pending_claim_miss_log_ids: Mutex::new(HashSet::new()),
+            #[cfg(debug_assertions)]
+            dashboard_overview_read_pause: Arc::new(Mutex::new(None)),
             forced_quota_subject_lock_loss_subjects: std::sync::Mutex::new(HashSet::new()),
         };
         instrument_db_operation(
